@@ -38,7 +38,16 @@ export default function Orders() {
                   <TableCell className="text-center font-semibold text-foreground">{order.id}</TableCell>
                   <TableCell className="text-center text-muted-foreground text-sm">{order.createdAt}</TableCell>
                   <TableCell className="text-center text-muted-foreground">{order.customerName}</TableCell>
-                  <TableCell className="text-center text-muted-foreground max-w-[200px] truncate">{order.items}</TableCell>
+                  <TableCell className="text-center max-w-[200px]">
+                    <div className="flex flex-col items-center gap-1">
+                      <span className="font-medium text-foreground text-sm">
+                        {order.items.replace(/^\d+\s*/, '')}
+                      </span>
+                      <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px] text-primary hover:text-primary/80">
+                        Más detalles
+                      </Button>
+                    </div>
+                  </TableCell>
                   <TableCell className="text-center text-muted-foreground">${order.totalCost.toLocaleString()}</TableCell>
                   <TableCell className="text-center font-medium text-foreground">${order.revenue.toLocaleString()}</TableCell>
                   <TableCell className="text-center">
