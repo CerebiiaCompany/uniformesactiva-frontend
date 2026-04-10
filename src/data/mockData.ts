@@ -32,6 +32,11 @@ export interface ProductVariation {
   notes?: string;
 }
 
+export interface StatusHistoryEntry {
+  status: "pending" | "in_production" | "delivered";
+  timestamp: string;
+}
+
 export interface Order {
   id: string;
   customerId: string;
@@ -49,6 +54,7 @@ export interface Order {
   paymentStatus: "si" | "no";
   paymentReceipt?: string;
   productVariations: ProductVariation[];
+  statusHistory: StatusHistoryEntry[];
 }
 
 export interface ProductionOrder {
