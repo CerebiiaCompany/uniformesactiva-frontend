@@ -53,7 +53,7 @@ export default function Orders() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {orders.map((order) => (
+              {ordersList.map((order) => (
                 <TableRow key={order.id} className="hover:bg-muted/50 cursor-pointer">
                   <TableCell className="text-center font-semibold text-foreground">{order.id}</TableCell>
                   <TableCell className="text-center text-muted-foreground text-sm">{order.createdAt}</TableCell>
