@@ -1,17 +1,31 @@
 import { useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { StatusBadge } from "@/components/StatusBadge";
-import { orders, Order } from "@/data/mockData";
+import { orders as initialOrders, Order, StatusHistoryEntry } from "@/data/mockData";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Plus, FileText, Package, Ruler, Palette, Shirt, Layers, Hash } from "lucide-react";
+import { Plus, FileText, Package, Ruler, Palette, Shirt, Layers, Hash, Settings } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { OrderStatusPanel } from "@/components/OrderStatusPanel";
 
 export default function Orders() {
+  const [ordersList, setOrdersList] = useState<Order[]>(initialOrders);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [statusPanelOrder, setStatusPanelOrder] = useState<Order | null>(null);
+
+  const handleStatusChange = (orderId: string, newStatus: Order["status"], newHistory: StatusHistoryEntry[]) => {
+    setOrdersList((prev) =>
+      prev.map((o) =>
+        o.id === orderId ? { ...o, status: newStatus, statusHistory: newHistory } : o
+      )
+    );
+    setStatusPanelOrder((prev) =>
+      prev && prev.id === orderId ? { ...prev, status: newStatus, statusHistory: newHistory } : prev
+    );
+  };
 
   return (
     <AppLayout title="Órdenes" subtitle="Gestión centralizada de órdenes">
@@ -39,7 +53,7 @@ export default function Orders() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {orders.map((order) => (
+              {ordersList.map((order) => (
                 <TableRow key={order.id} className="hover:bg-muted/50 cursor-pointer">
                   <TableCell className="text-center font-semibold text-foreground">{order.id}</TableCell>
                   <TableCell className="text-center text-muted-foreground text-sm">{order.createdAt}</TableCell>
@@ -69,7 +83,23 @@ export default function Orders() {
                       {order.margin}%
                     </span>
                   </TableCell>
-                  <TableCell className="text-center"><StatusBadge status={order.status} /></TableCell>
+                  <TableCell className="text-center">
+                    <div className="flex flex-col items-center gap-1">
+                      <StatusBadge status={order.status} />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-[11px] text-primary hover:text-primary/80 gap-1"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setStatusPanelOrder(order);
+                        }}
+                      >
+                        <Settings className="h-3 w-3" />
+                        Modificar estados
+                      </Button>
+                    </div>
+                  </TableCell>
                   <TableCell className="text-center">
                     <div className="flex items-center justify-center gap-1.5">
                       {order.paymentStatus === "si" ? (
@@ -182,6 +212,14 @@ export default function Orders() {
           ))}
         </DialogContent>
       </Dialog>
+
+      {/* Panel lateral de estados */}
+      <OrderStatusPanel
+        order={statusPanelOrder}
+        open={!!statusPanelOrder}
+        onOpenChange={(open) => !open && setStatusPanelOrder(null)}
+        onStatusChange={handleStatusChange}
+      />
     </AppLayout>
   );
 }
