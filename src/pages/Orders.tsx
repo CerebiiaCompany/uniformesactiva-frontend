@@ -228,8 +228,8 @@ export default function Orders() {
       {/* Panel lateral de estados */}
       <OrderStatusPanel
         order={statusPanelOrder}
-        open={!!statusPanelOrder}
-        onOpenChange={(open) => !open && setStatusPanelOrder(null)}
+        open={statusPanelOpen}
+        onOpenChange={(open) => { if (!open) closeStatusPanel(); }}
         onStatusChange={handleStatusChange}
       />
     </AppLayout>
