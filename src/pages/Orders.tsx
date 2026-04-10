@@ -21,6 +21,7 @@ export default function Orders() {
             <TableHeader>
               <TableRow>
                 <TableHead className="text-center">ID</TableHead>
+                <TableHead className="text-center">Fecha de inicio</TableHead>
                 <TableHead className="text-center">Cliente</TableHead>
                 <TableHead className="text-center">Artículos</TableHead>
                 <TableHead className="text-center">Costo</TableHead>
@@ -35,6 +36,7 @@ export default function Orders() {
               {orders.map((order) => (
                 <TableRow key={order.id} className="hover:bg-muted/50 cursor-pointer">
                   <TableCell className="text-center font-semibold text-foreground">{order.id}</TableCell>
+                  <TableCell className="text-center text-muted-foreground text-sm">{order.createdAt}</TableCell>
                   <TableCell className="text-center text-muted-foreground">{order.customerName}</TableCell>
                   <TableCell className="text-center text-muted-foreground max-w-[200px] truncate">{order.items}</TableCell>
                   <TableCell className="text-center text-muted-foreground">${order.totalCost.toLocaleString()}</TableCell>
