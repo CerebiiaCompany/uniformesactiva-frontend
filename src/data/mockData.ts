@@ -33,6 +33,8 @@ export interface Order {
   productionStage: string;
   dueDate: string;
   createdAt: string;
+  paymentStatus: "si" | "no";
+  paymentReceipt?: string;
 }
 
 export interface ProductionOrder {
