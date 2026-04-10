@@ -15,6 +15,18 @@ export default function Orders() {
   const [ordersList, setOrdersList] = useState<Order[]>(initialOrders);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [statusPanelOrder, setStatusPanelOrder] = useState<Order | null>(null);
+  const [statusPanelOpen, setStatusPanelOpen] = useState(false);
+
+  const openStatusPanel = (order: Order) => {
+    setStatusPanelOrder(order);
+    setStatusPanelOpen(true);
+  };
+
+  const closeStatusPanel = () => {
+    setStatusPanelOpen(false);
+    // Keep order data during close animation, clear after animation ends
+    setTimeout(() => setStatusPanelOrder(null), 600);
+  };
 
   const handleStatusChange = (orderId: string, newStatus: Order["status"], newHistory: StatusHistoryEntry[]) => {
     setOrdersList((prev) =>
