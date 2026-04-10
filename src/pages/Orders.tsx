@@ -83,7 +83,23 @@ export default function Orders() {
                       {order.margin}%
                     </span>
                   </TableCell>
-                  <TableCell className="text-center"><StatusBadge status={order.status} /></TableCell>
+                  <TableCell className="text-center">
+                    <div className="flex flex-col items-center gap-1">
+                      <StatusBadge status={order.status} />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-[11px] text-primary hover:text-primary/80 gap-1"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setStatusPanelOrder(order);
+                        }}
+                      >
+                        <Settings className="h-3 w-3" />
+                        Modificar estados
+                      </Button>
+                    </div>
+                  </TableCell>
                   <TableCell className="text-center">
                     <div className="flex items-center justify-center gap-1.5">
                       {order.paymentStatus === "si" ? (
@@ -196,6 +212,14 @@ export default function Orders() {
           ))}
         </DialogContent>
       </Dialog>
+
+      {/* Panel lateral de estados */}
+      <OrderStatusPanel
+        order={statusPanelOrder}
+        open={!!statusPanelOrder}
+        onOpenChange={(open) => !open && setStatusPanelOrder(null)}
+        onStatusChange={handleStatusChange}
+      />
     </AppLayout>
   );
 }
