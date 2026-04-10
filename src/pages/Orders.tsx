@@ -104,7 +104,7 @@ export default function Orders() {
                         className="h-6 px-2 text-[11px] text-primary hover:text-primary/80 gap-1"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setStatusPanelOrder(order);
+                          openStatusPanel(order);
                         }}
                       >
                         <Settings className="h-3 w-3" />
