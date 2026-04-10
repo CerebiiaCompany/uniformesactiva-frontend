@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils";
 
 type StatusType =
   | "draft" | "sent" | "approved" | "rejected"
-  | "pending" | "in_production" | "quality_control" | "delivered"
+  | "pending" | "in_production" | "delivered"
   | "design" | "cutting" | "sewing" | "embroidery" | "quality" | "dispatch";
 
 const statusConfig: Record<StatusType, { label: string; className: string }> = {
@@ -12,7 +12,6 @@ const statusConfig: Record<StatusType, { label: string; className: string }> = {
   rejected: { label: "Rechazada", className: "bg-destructive/15 text-destructive" },
   pending: { label: "Pendiente", className: "bg-warning/15 text-warning" },
   in_production: { label: "En producción", className: "bg-info/15 text-info" },
-  quality_control: { label: "Control calidad", className: "bg-accent/15 text-accent" },
   delivered: { label: "Entregado", className: "bg-success/15 text-success" },
   design: { label: "Diseño", className: "bg-info/15 text-info" },
   cutting: { label: "Corte", className: "bg-warning/15 text-warning" },

@@ -42,7 +42,7 @@ export interface Order {
   totalCost: number;
   revenue: number;
   margin: number;
-  status: "pending" | "in_production" | "quality_control" | "delivered";
+  status: "pending" | "in_production" | "delivered";
   productionStage: string;
   dueDate: string;
   createdAt: string;
@@ -94,7 +94,7 @@ export const orders: Order[] = [
     { id: "pv6", productType: "Bata médica", variation: "Bata manga larga con botones", material: "Antifluido 100% poliéster", size: "M", color: "Blanco", print: "Bordado nombre doctor", quantity: 150, unitCost: 150 },
     { id: "pv7", productType: "Bata médica", variation: "Bata manga larga con cierre", material: "Antifluido 100% poliéster", size: "L", color: "Azul cielo", print: "Logo clínica bordado", quantity: 150, unitCost: 150 },
   ]},
-  { id: "ORD-004", customerId: "c2", customerName: "Textiles Monterrey", items: "400 Chalecos de seguridad", quantity: 400, totalCost: 38000, revenue: 52000, margin: 26.9, status: "quality_control", productionStage: "Quality", dueDate: "2026-04-10", createdAt: "2026-03-10", paymentStatus: "no", productVariations: [
+  { id: "ORD-004", customerId: "c2", customerName: "Textiles Monterrey", items: "400 Chalecos de seguridad", quantity: 400, totalCost: 38000, revenue: 52000, margin: 26.9, status: "in_production", productionStage: "Quality", dueDate: "2026-04-10", createdAt: "2026-03-10", paymentStatus: "no", productVariations: [
     { id: "pv8", productType: "Chaleco", variation: "Chaleco reflectante tipo ingeniero", material: "Mesh poliéster + cintas 3M", size: "Unitalla", color: "Naranja fluorescente", print: "Serigrafía nombre empresa", quantity: 250, unitCost: 95 },
     { id: "pv9", productType: "Chaleco", variation: "Chaleco reflectante básico", material: "Mesh poliéster + cintas reflectantes", size: "Unitalla", color: "Amarillo fluorescente", print: "Sin estampado", quantity: 150, unitCost: 95 },
   ]},
