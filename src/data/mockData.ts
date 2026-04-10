@@ -33,6 +33,8 @@ export interface Order {
   productionStage: string;
   dueDate: string;
   createdAt: string;
+  paymentStatus: "si" | "no";
+  paymentReceipt?: string;
 }
 
 export interface ProductionOrder {
@@ -65,12 +67,12 @@ export const quotations: Quotation[] = [
 ];
 
 export const orders: Order[] = [
-  { id: "ORD-001", customerId: "c1", customerName: "Uniformes del Norte", quotationId: "Q-001", items: "500 Polos corporativos", quantity: 500, totalCost: 62000, revenue: 85000, margin: 27.1, status: "in_production", productionStage: "Sewing", dueDate: "2026-04-20", createdAt: "2026-03-30" },
-  { id: "ORD-002", customerId: "c3", customerName: "Escuelas Unidas SA", items: "800 Uniformes escolares (fase 1)", quantity: 800, totalCost: 78000, revenue: 104000, margin: 25.0, status: "in_production", productionStage: "Cutting", dueDate: "2026-04-25", createdAt: "2026-03-20" },
-  { id: "ORD-003", customerId: "c5", customerName: "Clínica Salud Plus", items: "300 Batas médicas", quantity: 300, totalCost: 45000, revenue: 67500, margin: 33.3, status: "pending", productionStage: "Design", dueDate: "2026-04-30", createdAt: "2026-04-03" },
-  { id: "ORD-004", customerId: "c2", customerName: "Textiles Monterrey", items: "400 Chalecos de seguridad", quantity: 400, totalCost: 38000, revenue: 52000, margin: 26.9, status: "quality_control", productionStage: "Quality", dueDate: "2026-04-10", createdAt: "2026-03-10" },
-  { id: "ORD-005", customerId: "c4", customerName: "Hotel Riviera", items: "150 Uniformes recepción", quantity: 150, totalCost: 28000, revenue: 37500, margin: 25.3, status: "delivered", productionStage: "Dispatch", dueDate: "2026-04-05", createdAt: "2026-03-01" },
-  { id: "ORD-006", customerId: "c1", customerName: "Uniformes del Norte", items: "200 Pantalones cargo", quantity: 200, totalCost: 32000, revenue: 44000, margin: 27.3, status: "in_production", productionStage: "Embroidery", dueDate: "2026-04-15", createdAt: "2026-03-25" },
+  { id: "ORD-001", customerId: "c1", customerName: "Uniformes del Norte", quotationId: "Q-001", items: "500 Polos corporativos", quantity: 500, totalCost: 62000, revenue: 85000, margin: 27.1, status: "in_production", productionStage: "Sewing", dueDate: "2026-04-20", createdAt: "2026-03-30", paymentStatus: "si", paymentReceipt: "comprobante_ord001.pdf" },
+  { id: "ORD-002", customerId: "c3", customerName: "Escuelas Unidas SA", items: "800 Uniformes escolares (fase 1)", quantity: 800, totalCost: 78000, revenue: 104000, margin: 25.0, status: "in_production", productionStage: "Cutting", dueDate: "2026-04-25", createdAt: "2026-03-20", paymentStatus: "no" },
+  { id: "ORD-003", customerId: "c5", customerName: "Clínica Salud Plus", items: "300 Batas médicas", quantity: 300, totalCost: 45000, revenue: 67500, margin: 33.3, status: "pending", productionStage: "Design", dueDate: "2026-04-30", createdAt: "2026-04-03", paymentStatus: "si", paymentReceipt: "comprobante_ord003.pdf" },
+  { id: "ORD-004", customerId: "c2", customerName: "Textiles Monterrey", items: "400 Chalecos de seguridad", quantity: 400, totalCost: 38000, revenue: 52000, margin: 26.9, status: "quality_control", productionStage: "Quality", dueDate: "2026-04-10", createdAt: "2026-03-10", paymentStatus: "no" },
+  { id: "ORD-005", customerId: "c4", customerName: "Hotel Riviera", items: "150 Uniformes recepción", quantity: 150, totalCost: 28000, revenue: 37500, margin: 25.3, status: "delivered", productionStage: "Dispatch", dueDate: "2026-04-05", createdAt: "2026-03-01", paymentStatus: "si", paymentReceipt: "comprobante_ord005.pdf" },
+  { id: "ORD-006", customerId: "c1", customerName: "Uniformes del Norte", items: "200 Pantalones cargo", quantity: 200, totalCost: 32000, revenue: 44000, margin: 27.3, status: "in_production", productionStage: "Embroidery", dueDate: "2026-04-15", createdAt: "2026-03-25", paymentStatus: "no" },
 ];
 
 export const productionOrders: ProductionOrder[] = [
