@@ -1,17 +1,31 @@
 import { useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { StatusBadge } from "@/components/StatusBadge";
-import { orders, Order } from "@/data/mockData";
+import { orders as initialOrders, Order, StatusHistoryEntry } from "@/data/mockData";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Plus, FileText, Package, Ruler, Palette, Shirt, Layers, Hash } from "lucide-react";
+import { Plus, FileText, Package, Ruler, Palette, Shirt, Layers, Hash, Settings } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { OrderStatusPanel } from "@/components/OrderStatusPanel";
 
 export default function Orders() {
+  const [ordersList, setOrdersList] = useState<Order[]>(initialOrders);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [statusPanelOrder, setStatusPanelOrder] = useState<Order | null>(null);
+
+  const handleStatusChange = (orderId: string, newStatus: Order["status"], newHistory: StatusHistoryEntry[]) => {
+    setOrdersList((prev) =>
+      prev.map((o) =>
+        o.id === orderId ? { ...o, status: newStatus, statusHistory: newHistory } : o
+      )
+    );
+    setStatusPanelOrder((prev) =>
+      prev && prev.id === orderId ? { ...prev, status: newStatus, statusHistory: newHistory } : prev
+    );
+  };
 
   return (
     <AppLayout title="Órdenes" subtitle="Gestión centralizada de órdenes">
