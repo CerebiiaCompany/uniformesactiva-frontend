@@ -15,6 +15,18 @@ export default function Orders() {
   const [ordersList, setOrdersList] = useState<Order[]>(initialOrders);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [statusPanelOrder, setStatusPanelOrder] = useState<Order | null>(null);
+  const [statusPanelOpen, setStatusPanelOpen] = useState(false);
+
+  const openStatusPanel = (order: Order) => {
+    setStatusPanelOrder(order);
+    setStatusPanelOpen(true);
+  };
+
+  const closeStatusPanel = () => {
+    setStatusPanelOpen(false);
+    // Keep order data during close animation, clear after animation ends
+    setTimeout(() => setStatusPanelOrder(null), 600);
+  };
 
   const handleStatusChange = (orderId: string, newStatus: Order["status"], newHistory: StatusHistoryEntry[]) => {
     setOrdersList((prev) =>
@@ -92,7 +104,7 @@ export default function Orders() {
                         className="h-6 px-2 text-[11px] text-primary hover:text-primary/80 gap-1"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setStatusPanelOrder(order);
+                          openStatusPanel(order);
                         }}
                       >
                         <Settings className="h-3 w-3" />
@@ -216,8 +228,8 @@ export default function Orders() {
       {/* Panel lateral de estados */}
       <OrderStatusPanel
         order={statusPanelOrder}
-        open={!!statusPanelOrder}
-        onOpenChange={(open) => !open && setStatusPanelOrder(null)}
+        open={statusPanelOpen}
+        onOpenChange={(open) => { if (!open) closeStatusPanel(); }}
         onStatusChange={handleStatusChange}
       />
     </AppLayout>
