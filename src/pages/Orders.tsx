@@ -26,7 +26,7 @@ export default function Orders() {
                 <TableHead className="text-right">Costo</TableHead>
                 <TableHead className="text-right">Ingreso</TableHead>
                 <TableHead className="text-right">Margen</TableHead>
-                <TableHead>Estado</TableHead>
+                <TableHead>Estado de fábrica</TableHead>
                 <TableHead>Entrega</TableHead>
               </TableRow>
             </TableHeader>
