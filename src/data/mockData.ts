@@ -69,11 +69,6 @@ export interface ProductionOrder {
   daysInStage: number;
   isDelayed: boolean;
 }
-  assignee: string;
-  dueDate: string;
-  daysInStage: number;
-  isDelayed: boolean;
-}
 
 export const customers: Customer[] = [
   { id: "c1", name: "María García", company: "Uniformes del Norte", email: "maria@uniformesnorte.com", phone: "+52 81 1234 5678", totalOrders: 12, totalRevenue: 245000 },
