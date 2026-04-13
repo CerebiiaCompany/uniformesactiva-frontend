@@ -35,7 +35,7 @@ const mainItems = [
 ];
 
 const productionItems = [
-  { title: "Producción", url: "/production", icon: Factory },
+  { title: "Operativo", url: "/production", icon: Factory },
   { title: "Inventario", url: "/inventory", icon: Package },
   { title: "Costos", url: "/costing", icon: DollarSign },
 ];
@@ -91,7 +91,7 @@ export function AppSidebar() {
 
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/40 text-[10px] uppercase tracking-widest mb-1">
-            Producción
+            Operativo
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
