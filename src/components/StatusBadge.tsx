@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 type StatusType =
   | "draft" | "sent" | "approved" | "rejected"
   | "pending" | "in_production" | "delivered"
-  | "design" | "cutting" | "sewing" | "embroidery" | "quality" | "dispatch";
+  | "design" | "cutting" | "sewing" | "embroidery" | "quality" | "printing" | "dispatch";
 
 const statusConfig: Record<StatusType, { label: string; className: string }> = {
   draft: { label: "Borrador", className: "bg-muted text-muted-foreground" },
@@ -18,6 +18,7 @@ const statusConfig: Record<StatusType, { label: string; className: string }> = {
   sewing: { label: "Confección", className: "bg-accent/15 text-accent" },
   embroidery: { label: "Bordado", className: "bg-primary/15 text-primary" },
   quality: { label: "Calidad", className: "bg-success/15 text-success" },
+  printing: { label: "Estampado", className: "bg-warning/15 text-warning" },
   dispatch: { label: "Despacho", className: "bg-muted text-muted-foreground" },
 };
 
