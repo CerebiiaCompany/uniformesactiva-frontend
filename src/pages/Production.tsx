@@ -12,6 +12,7 @@ const stageColors: Record<string, string> = {
   sewing: "border-t-accent",
   embroidery: "border-t-primary",
   quality: "border-t-success",
+  printing: "border-t-warning",
   dispatch: "border-t-muted-foreground",
 };
 
