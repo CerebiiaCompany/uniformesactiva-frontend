@@ -2,7 +2,7 @@ import { useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { StatusBadge } from "@/components/StatusBadge";
 import { productionOrders, productionStages, orders, type ProductionOrder } from "@/data/mockData";
-import { AlertTriangle, User, Calendar, Package, ArrowLeft, ChevronRight } from "lucide-react";
+import { AlertTriangle, User, Calendar, Package, ArrowLeft, ChevronRight, History, Clock, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -16,30 +16,79 @@ const stageColors: Record<string, string> = {
   dispatch: "border-t-muted-foreground",
 };
 
+const stageLabels: Record<string, string> = {};
+productionStages.forEach((s) => { stageLabels[s.key] = s.label; });
+
+function formatDateTime(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" }) +
+    " · " + d.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
+}
+
+function calcDuration(from: string, to: string) {
+  const ms = new Date(to).getTime() - new Date(from).getTime();
+  const hours = Math.floor(ms / 3600000);
+  const days = Math.floor(hours / 24);
+  const remainHours = hours % 24;
+  if (days > 0) return `${days}d ${remainHours}h`;
+  return `${hours}h`;
+}
+
 export default function Production() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [prodOrders, setProdOrders] = useState<ProductionOrder[]>(productionOrders);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyClosing, setHistoryClosing] = useState(false);
 
-  // Non-dispatched orders only
   const activeOrders = orders.filter((o) => o.status !== "delivered");
-
-  // Kanban filtered by selected order
   const filteredProdOrders = prodOrders.filter((po) => po.orderId === selectedOrderId);
   const selectedOrder = activeOrders.find((o) => o.id === selectedOrderId);
 
   const getOrdersForStage = (stage: string) => filteredProdOrders.filter((o) => o.stage === stage);
 
   const [draggedId, setDraggedId] = useState<string | null>(null);
-
   const handleDragStart = (id: string) => setDraggedId(id);
 
   const handleDrop = (targetStage: ProductionOrder["stage"]) => {
     if (!draggedId) return;
+    const now = new Date().toISOString();
     setProdOrders((prev) =>
-      prev.map((o) => (o.id === draggedId ? { ...o, stage: targetStage, daysInStage: 0 } : o))
+      prev.map((o) => {
+        if (o.id !== draggedId) return o;
+        if (o.stage === targetStage) return o;
+        return {
+          ...o,
+          stage: targetStage,
+          daysInStage: 0,
+          stageHistory: [...o.stageHistory, { stage: targetStage, enteredAt: now }],
+        };
+      })
     );
     setDraggedId(null);
   };
+
+  const closeHistory = () => {
+    setHistoryClosing(true);
+    setTimeout(() => {
+      setHistoryOpen(false);
+      setHistoryClosing(false);
+    }, 400);
+  };
+
+  // Combine all stage histories for this order's production tasks
+  const orderHistory = filteredProdOrders
+    .flatMap((po) => po.stageHistory.map((h) => ({ ...h, taskId: po.id, taskItems: po.items })))
+    .sort((a, b) => new Date(a.enteredAt).getTime() - new Date(b.enteredAt).getTime());
+
+  // Calculate time per stage
+  const stageDurations: { stage: string; duration: string }[] = [];
+  for (let i = 0; i < orderHistory.length; i++) {
+    const next = orderHistory[i + 1];
+    stageDurations.push({
+      stage: orderHistory[i].stage,
+      duration: next ? calcDuration(orderHistory[i].enteredAt, next.enteredAt) : "En curso",
+    });
+  }
 
   // Order list view
   if (!selectedOrderId) {
@@ -107,7 +156,7 @@ export default function Production() {
       title={`Operativo — ${selectedOrderId}`}
       subtitle={selectedOrder ? `${selectedOrder.customerName} · ${selectedOrder.items}` : ""}
     >
-      <div className="mb-4">
+      <div className="mb-4 flex items-center justify-between">
         <Button
           variant="ghost"
           size="sm"
@@ -116,6 +165,15 @@ export default function Production() {
         >
           <ArrowLeft className="h-4 w-4" />
           Volver a órdenes
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setHistoryOpen(true)}
+          className="gap-2"
+        >
+          <History className="h-4 w-4" />
+          Ver historial
         </Button>
       </div>
 
@@ -181,6 +239,100 @@ export default function Production() {
             );
           })}
         </div>
+      )}
+
+      {/* History Side Panel */}
+      {historyOpen && (
+        <>
+          <div
+            className={cn(
+              "fixed inset-0 bg-black/50 backdrop-blur-sm z-40 transition-opacity duration-400",
+              historyClosing ? "opacity-0" : "opacity-100"
+            )}
+            onClick={closeHistory}
+          />
+          <div
+            className={cn(
+              "fixed top-0 right-0 h-full w-full sm:w-[40%] bg-card border-l border-border z-50 shadow-2xl transition-transform duration-400 ease-in-out overflow-y-auto",
+              historyClosing ? "translate-x-full" : "translate-x-0"
+            )}
+          >
+            <div className="sticky top-0 bg-card border-b border-border p-4 flex items-center justify-between z-10">
+              <div>
+                <h2 className="text-base font-bold text-foreground flex items-center gap-2">
+                  <History className="h-4 w-4 text-primary" />
+                  Historial de producción
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">{selectedOrderId} · {selectedOrder?.customerName}</p>
+              </div>
+              <Button variant="ghost" size="icon" onClick={closeHistory} className="h-8 w-8">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="p-4">
+              {/* Summary */}
+              <div className="mb-6 grid grid-cols-2 gap-3">
+                <div className="bg-muted/50 rounded-lg p-3">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Etapas completadas</p>
+                  <p className="text-lg font-bold text-foreground">{orderHistory.length > 1 ? orderHistory.length - 1 : 0}</p>
+                </div>
+                <div className="bg-muted/50 rounded-lg p-3">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Etapa actual</p>
+                  <p className="text-sm font-bold text-primary">{stageLabels[filteredProdOrders[0]?.stage] ?? "—"}</p>
+                </div>
+              </div>
+
+              {/* Duration per stage */}
+              <h3 className="text-xs font-semibold text-foreground mb-3 uppercase tracking-wider">Tiempo por etapa</h3>
+              <div className="space-y-2 mb-6">
+                {stageDurations.map((sd, i) => (
+                  <div key={i} className="flex items-center justify-between bg-muted/30 rounded-lg px-3 py-2">
+                    <span className="text-xs font-medium text-foreground">{stageLabels[sd.stage]}</span>
+                    <span className={cn(
+                      "text-xs font-semibold",
+                      sd.duration === "En curso" ? "text-primary" : "text-muted-foreground"
+                    )}>
+                      <Clock className="h-3 w-3 inline mr-1" />
+                      {sd.duration}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Timeline */}
+              <h3 className="text-xs font-semibold text-foreground mb-3 uppercase tracking-wider">Línea de tiempo</h3>
+              <div className="relative pl-6">
+                <div className="absolute left-[11px] top-2 bottom-2 w-0.5 bg-border" />
+                {orderHistory.map((entry, i) => {
+                  const isLast = i === orderHistory.length - 1;
+                  return (
+                    <div key={i} className="relative pb-6 last:pb-0">
+                      <div className={cn(
+                        "absolute left-[-15px] top-1 h-3 w-3 rounded-full border-2",
+                        isLast
+                          ? "bg-primary border-primary shadow-[0_0_8px_hsl(var(--primary)/0.4)]"
+                          : "bg-card border-muted-foreground"
+                      )} />
+                      <div className="ml-2">
+                        <p className="text-xs font-semibold text-foreground">{stageLabels[entry.stage]}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">{formatDateTime(entry.enteredAt)}</p>
+                        {!isLast && (
+                          <p className="text-[10px] text-muted-foreground/70 mt-1 italic">
+                            Duró {calcDuration(entry.enteredAt, orderHistory[i + 1].enteredAt)}
+                          </p>
+                        )}
+                        {isLast && (
+                          <p className="text-[10px] text-primary mt-1 font-medium">● En curso</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </AppLayout>
   );

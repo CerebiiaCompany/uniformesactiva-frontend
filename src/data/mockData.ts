@@ -57,6 +57,11 @@ export interface Order {
   statusHistory: StatusHistoryEntry[];
 }
 
+export interface StageHistoryEntry {
+  stage: "design" | "cutting" | "sewing" | "embroidery" | "quality" | "printing" | "dispatch";
+  enteredAt: string;
+}
+
 export interface ProductionOrder {
   id: string;
   orderId: string;
@@ -68,6 +73,7 @@ export interface ProductionOrder {
   dueDate: string;
   daysInStage: number;
   isDelayed: boolean;
+  stageHistory: StageHistoryEntry[];
 }
 
 export const customers: Customer[] = [
@@ -133,11 +139,11 @@ export const orders: Order[] = [
 ];
 
 export const productionOrders: ProductionOrder[] = [
-  { id: "PO-001", orderId: "ORD-003", customerName: "Clínica Salud Plus", items: "300 Batas médicas", quantity: 300, stage: "design", assignee: "Diego R.", dueDate: "2026-04-30", daysInStage: 2, isDelayed: false },
-  { id: "PO-002", orderId: "ORD-002", customerName: "Escuelas Unidas SA", items: "800 Uniformes escolares", quantity: 800, stage: "cutting", assignee: "Patricia M.", dueDate: "2026-04-25", daysInStage: 3, isDelayed: false },
-  { id: "PO-003", orderId: "ORD-001", customerName: "Uniformes del Norte", items: "500 Polos corporativos", quantity: 500, stage: "sewing", assignee: "Fernando L.", dueDate: "2026-04-20", daysInStage: 5, isDelayed: true },
-  { id: "PO-004", orderId: "ORD-006", customerName: "Uniformes del Norte", items: "200 Pantalones cargo", quantity: 200, stage: "embroidery", assignee: "Rosa V.", dueDate: "2026-04-15", daysInStage: 2, isDelayed: true },
-  { id: "PO-005", orderId: "ORD-004", customerName: "Textiles Monterrey", items: "400 Chalecos seguridad", quantity: 400, stage: "quality", assignee: "Miguel A.", dueDate: "2026-04-10", daysInStage: 1, isDelayed: false },
+  { id: "PO-001", orderId: "ORD-003", customerName: "Clínica Salud Plus", items: "300 Batas médicas", quantity: 300, stage: "design", assignee: "Diego R.", dueDate: "2026-04-30", daysInStage: 2, isDelayed: false, stageHistory: [{ stage: "design", enteredAt: "2026-04-08T09:00:00" }] },
+  { id: "PO-002", orderId: "ORD-002", customerName: "Escuelas Unidas SA", items: "800 Uniformes escolares", quantity: 800, stage: "cutting", assignee: "Patricia M.", dueDate: "2026-04-25", daysInStage: 3, isDelayed: false, stageHistory: [{ stage: "design", enteredAt: "2026-03-25T08:00:00" }, { stage: "cutting", enteredAt: "2026-03-28T10:30:00" }] },
+  { id: "PO-003", orderId: "ORD-001", customerName: "Uniformes del Norte", items: "500 Polos corporativos", quantity: 500, stage: "sewing", assignee: "Fernando L.", dueDate: "2026-04-20", daysInStage: 5, isDelayed: true, stageHistory: [{ stage: "design", enteredAt: "2026-03-30T09:00:00" }, { stage: "cutting", enteredAt: "2026-04-01T14:00:00" }, { stage: "sewing", enteredAt: "2026-04-04T11:00:00" }] },
+  { id: "PO-004", orderId: "ORD-006", customerName: "Uniformes del Norte", items: "200 Pantalones cargo", quantity: 200, stage: "embroidery", assignee: "Rosa V.", dueDate: "2026-04-15", daysInStage: 2, isDelayed: true, stageHistory: [{ stage: "design", enteredAt: "2026-03-28T11:30:00" }, { stage: "cutting", enteredAt: "2026-03-30T09:00:00" }, { stage: "sewing", enteredAt: "2026-04-02T08:00:00" }, { stage: "embroidery", enteredAt: "2026-04-07T10:00:00" }] },
+  { id: "PO-005", orderId: "ORD-004", customerName: "Textiles Monterrey", items: "400 Chalecos seguridad", quantity: 400, stage: "quality", assignee: "Miguel A.", dueDate: "2026-04-10", daysInStage: 1, isDelayed: false, stageHistory: [{ stage: "design", enteredAt: "2026-03-15T16:00:00" }, { stage: "cutting", enteredAt: "2026-03-18T09:00:00" }, { stage: "sewing", enteredAt: "2026-03-22T10:00:00" }, { stage: "embroidery", enteredAt: "2026-03-26T14:00:00" }, { stage: "quality", enteredAt: "2026-04-01T11:00:00" }] },
 ];
 
 export const productionStages = [
