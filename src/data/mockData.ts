@@ -146,6 +146,7 @@ export const productionStages = [
   { key: "sewing" as const, label: "Confección", color: "accent" },
   { key: "embroidery" as const, label: "Bordado", color: "primary" },
   { key: "quality" as const, label: "Calidad", color: "success" },
+  { key: "printing" as const, label: "Estampado", color: "warning" },
   { key: "dispatch" as const, label: "Despacho", color: "muted" },
 ] as const;
 
