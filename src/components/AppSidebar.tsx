@@ -35,7 +35,7 @@ const mainItems = [
 ];
 
 const productionItems = [
-  { title: "Producción", url: "/production", icon: Factory },
+  { title: "Operativo", url: "/production", icon: Factory },
   { title: "Inventario", url: "/inventory", icon: Package },
   { title: "Costos", url: "/costing", icon: DollarSign },
 ];
