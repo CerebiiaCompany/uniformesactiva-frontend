@@ -63,7 +63,12 @@ export interface ProductionOrder {
   customerName: string;
   items: string;
   quantity: number;
-  stage: "design" | "cutting" | "sewing" | "embroidery" | "quality" | "dispatch";
+  stage: "design" | "cutting" | "sewing" | "embroidery" | "quality" | "printing" | "dispatch";
+  assignee: string;
+  dueDate: string;
+  daysInStage: number;
+  isDelayed: boolean;
+}
   assignee: string;
   dueDate: string;
   daysInStage: number;
