@@ -91,7 +91,7 @@ export function AppSidebar() {
 
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/40 text-[10px] uppercase tracking-widest mb-1">
-            Producción
+            Operativo
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
