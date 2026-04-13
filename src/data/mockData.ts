@@ -57,6 +57,11 @@ export interface Order {
   statusHistory: StatusHistoryEntry[];
 }
 
+export interface StageHistoryEntry {
+  stage: "design" | "cutting" | "sewing" | "embroidery" | "quality" | "printing" | "dispatch";
+  enteredAt: string;
+}
+
 export interface ProductionOrder {
   id: string;
   orderId: string;
@@ -68,6 +73,7 @@ export interface ProductionOrder {
   dueDate: string;
   daysInStage: number;
   isDelayed: boolean;
+  stageHistory: StageHistoryEntry[];
 }
 
 export const customers: Customer[] = [
