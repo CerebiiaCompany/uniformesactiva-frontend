@@ -306,6 +306,7 @@ export default function Production() {
                 <div className="absolute left-[11px] top-2 bottom-2 w-0.5 bg-border" />
                 {orderHistory.map((entry, i) => {
                   const isLast = i === orderHistory.length - 1;
+                  const endTime = !isLast ? orderHistory[i + 1].enteredAt : null;
                   return (
                     <div key={i} className="relative pb-6 last:pb-0">
                       <div className={cn(
@@ -314,17 +315,24 @@ export default function Production() {
                           ? "bg-primary border-primary shadow-[0_0_8px_hsl(var(--primary)/0.4)]"
                           : "bg-card border-muted-foreground"
                       )} />
-                      <div className="ml-2">
+                      <div className="ml-2 space-y-1">
                         <p className="text-xs font-semibold text-foreground">{stageLabels[entry.stage]}</p>
-                        <p className="text-[10px] text-muted-foreground mt-0.5">{formatDateTime(entry.enteredAt)}</p>
-                        {!isLast && (
-                          <p className="text-[10px] text-muted-foreground/70 mt-1 italic">
-                            Duró {calcDuration(entry.enteredAt, orderHistory[i + 1].enteredAt)}
+                        <div className="flex flex-col gap-0.5">
+                          <p className="text-[10px] text-muted-foreground">
+                            <span className="font-medium text-foreground/80">Hora de inicio:</span> {formatDateTime(entry.enteredAt)}
                           </p>
-                        )}
-                        {isLast && (
-                          <p className="text-[10px] text-primary mt-1 font-medium">● En curso</p>
-                        )}
+                          {endTime && (
+                            <p className="text-[10px] text-muted-foreground">
+                              <span className="font-medium text-foreground/80">Hora de fin:</span> {formatDateTime(endTime)}
+                            </p>
+                          )}
+                          <p className="text-[10px] text-muted-foreground">
+                            <span className="font-medium text-foreground/80">Duración:</span>{" "}
+                            {!isLast ? calcDuration(entry.enteredAt, endTime!) : (
+                              <span className="text-primary font-medium">● En curso</span>
+                            )}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   );
