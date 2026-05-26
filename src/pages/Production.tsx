@@ -252,7 +252,7 @@ export default function Production() {
     }));
     setProdOrders((prev) => [...prev, ...newCards]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stages.length === 0]);
+  }, []);
 
   // Order list view
   if (!selectedOrderId) {
