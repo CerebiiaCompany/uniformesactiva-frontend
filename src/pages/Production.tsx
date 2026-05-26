@@ -2,11 +2,14 @@ import { useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { StatusBadge } from "@/components/StatusBadge";
 import { productionOrders, productionStages, orders, type ProductionOrder } from "@/data/mockData";
-import { AlertTriangle, User, Calendar, Package, ArrowLeft, ChevronRight, History, Clock, X } from "lucide-react";
+import { AlertTriangle, User, Calendar, Package, ArrowLeft, ChevronRight, History, Clock, X, Plus, Pencil, Trash2, GripVertical, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
-const stageColors: Record<string, string> = {
+const defaultStageColors: Record<string, string> = {
   design: "border-t-info",
   cutting: "border-t-warning",
   sewing: "border-t-accent",
@@ -16,8 +19,21 @@ const stageColors: Record<string, string> = {
   dispatch: "border-t-muted-foreground",
 };
 
-const stageLabels: Record<string, string> = {};
-productionStages.forEach((s) => { stageLabels[s.key] = s.label; });
+const colorPalette = [
+  "border-t-info",
+  "border-t-warning",
+  "border-t-accent",
+  "border-t-primary",
+  "border-t-success",
+  "border-t-destructive",
+  "border-t-muted-foreground",
+];
+
+interface Stage {
+  key: string;
+  label: string;
+  colorClass: string;
+}
 
 function formatDateTime(iso: string) {
   const d = new Date(iso);
@@ -37,34 +53,158 @@ function calcDuration(from: string, to: string) {
 export default function Production() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [prodOrders, setProdOrders] = useState<ProductionOrder[]>(productionOrders);
+  const [stages, setStages] = useState<Stage[]>(
+    productionStages.map((s) => ({ key: s.key, label: s.label, colorClass: defaultStageColors[s.key] ?? "border-t-muted-foreground" }))
+  );
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyClosing, setHistoryClosing] = useState(false);
+
+  // Column editing
+  const [editingColKey, setEditingColKey] = useState<string | null>(null);
+  const [editingColLabel, setEditingColLabel] = useState("");
+
+  // Drag state
+  const [dragType, setDragType] = useState<"card" | "column" | null>(null);
+  const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
+  const [draggedColKey, setDraggedColKey] = useState<string | null>(null);
+
+  // Card dialog
+  const [cardDialog, setCardDialog] = useState<{
+    open: boolean;
+    mode: "add" | "edit";
+    stageKey?: string;
+    cardId?: string;
+    items: string;
+    assignee: string;
+    quantity: number;
+    dueDate: string;
+  }>({ open: false, mode: "add", items: "", assignee: "", quantity: 0, dueDate: "" });
 
   const activeOrders = orders.filter((o) => o.status !== "delivered");
   const filteredProdOrders = prodOrders.filter((po) => po.orderId === selectedOrderId);
   const selectedOrder = activeOrders.find((o) => o.id === selectedOrderId);
 
+  const stageLabels: Record<string, string> = {};
+  stages.forEach((s) => { stageLabels[s.key] = s.label; });
+
   const getOrdersForStage = (stage: string) => filteredProdOrders.filter((o) => o.stage === stage);
 
-  const [draggedId, setDraggedId] = useState<string | null>(null);
-  const handleDragStart = (id: string) => setDraggedId(id);
+  // ===== Card drag =====
+  const handleCardDragStart = (e: React.DragEvent, id: string) => {
+    setDragType("card");
+    setDraggedCardId(id);
+    e.dataTransfer.effectAllowed = "move";
+  };
 
-  const handleDrop = (targetStage: ProductionOrder["stage"]) => {
-    if (!draggedId) return;
+  const handleCardDrop = (targetStage: string) => {
+    if (dragType !== "card" || !draggedCardId) return;
     const now = new Date().toISOString();
     setProdOrders((prev) =>
       prev.map((o) => {
-        if (o.id !== draggedId) return o;
+        if (o.id !== draggedCardId) return o;
         if (o.stage === targetStage) return o;
         return {
           ...o,
-          stage: targetStage,
+          stage: targetStage as ProductionOrder["stage"],
           daysInStage: 0,
-          stageHistory: [...o.stageHistory, { stage: targetStage, enteredAt: now }],
+          stageHistory: [...o.stageHistory, { stage: targetStage as ProductionOrder["stage"], enteredAt: now }],
         };
       })
     );
-    setDraggedId(null);
+    setDraggedCardId(null);
+    setDragType(null);
+  };
+
+  // ===== Column drag =====
+  const handleColDragStart = (e: React.DragEvent, key: string) => {
+    setDragType("column");
+    setDraggedColKey(key);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleColDropOnCol = (targetKey: string) => {
+    if (dragType !== "column" || !draggedColKey || draggedColKey === targetKey) {
+      setDraggedColKey(null);
+      setDragType(null);
+      return;
+    }
+    setStages((prev) => {
+      const fromIdx = prev.findIndex((s) => s.key === draggedColKey);
+      const toIdx = prev.findIndex((s) => s.key === targetKey);
+      if (fromIdx < 0 || toIdx < 0) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      return next;
+    });
+    setDraggedColKey(null);
+    setDragType(null);
+  };
+
+  // ===== Column CRUD =====
+  const startEditCol = (s: Stage) => {
+    setEditingColKey(s.key);
+    setEditingColLabel(s.label);
+  };
+  const commitEditCol = () => {
+    if (!editingColKey) return;
+    const label = editingColLabel.trim();
+    if (!label) { setEditingColKey(null); return; }
+    setStages((prev) => prev.map((s) => s.key === editingColKey ? { ...s, label } : s));
+    setEditingColKey(null);
+  };
+  const deleteCol = (key: string) => {
+    if (stages.length <= 1) return;
+    const fallback = stages.find((s) => s.key !== key)!;
+    setProdOrders((prev) => prev.map((o) => o.stage === key ? { ...o, stage: fallback.key as ProductionOrder["stage"] } : o));
+    setStages((prev) => prev.filter((s) => s.key !== key));
+  };
+  const addCol = () => {
+    const key = `custom-${Date.now()}`;
+    const colorClass = colorPalette[stages.length % colorPalette.length];
+    const newStage: Stage = { key, label: "Nueva etapa", colorClass };
+    setStages((prev) => [...prev, newStage]);
+    setEditingColKey(key);
+    setEditingColLabel(newStage.label);
+  };
+
+  // ===== Card CRUD =====
+  const openAddCard = (stageKey: string) => {
+    setCardDialog({
+      open: true, mode: "add", stageKey,
+      items: "", assignee: "", quantity: 1,
+      dueDate: selectedOrder?.dueDate ?? new Date().toISOString().slice(0, 10),
+    });
+  };
+  const openEditCard = (card: ProductionOrder) => {
+    setCardDialog({
+      open: true, mode: "edit", cardId: card.id, stageKey: card.stage,
+      items: card.items, assignee: card.assignee, quantity: card.quantity, dueDate: card.dueDate,
+    });
+  };
+  const saveCard = () => {
+    const { mode, cardId, stageKey, items, assignee, quantity, dueDate } = cardDialog;
+    if (!items.trim()) return;
+    if (mode === "add" && stageKey && selectedOrderId && selectedOrder) {
+      const now = new Date().toISOString();
+      const newCard: ProductionOrder = {
+        id: `PO-${Date.now()}`,
+        orderId: selectedOrderId,
+        customerName: selectedOrder.customerName,
+        items, assignee, quantity, dueDate,
+        stage: stageKey as ProductionOrder["stage"],
+        daysInStage: 0,
+        isDelayed: false,
+        stageHistory: [{ stage: stageKey as ProductionOrder["stage"], enteredAt: now }],
+      };
+      setProdOrders((prev) => [...prev, newCard]);
+    } else if (mode === "edit" && cardId) {
+      setProdOrders((prev) => prev.map((o) => o.id === cardId ? { ...o, items, assignee, quantity, dueDate } : o));
+    }
+    setCardDialog((d) => ({ ...d, open: false }));
+  };
+  const deleteCard = (id: string) => {
+    setProdOrders((prev) => prev.filter((o) => o.id !== id));
   };
 
   const closeHistory = () => {
@@ -75,12 +215,10 @@ export default function Production() {
     }, 400);
   };
 
-  // Combine all stage histories for this order's production tasks
   const orderHistory = filteredProdOrders
     .flatMap((po) => po.stageHistory.map((h) => ({ ...h, taskId: po.id, taskItems: po.items })))
     .sort((a, b) => new Date(a.enteredAt).getTime() - new Date(b.enteredAt).getTime());
 
-  // Calculate time per stage
   const stageDurations: { stage: string; duration: string }[] = [];
   for (let i = 0; i < orderHistory.length; i++) {
     const next = orderHistory[i + 1];
@@ -98,7 +236,7 @@ export default function Production() {
           {activeOrders.map((order) => {
             const relatedProd = prodOrders.filter((po) => po.orderId === order.id);
             const currentStage = relatedProd.length > 0
-              ? productionStages.find((s) => s.key === relatedProd[0].stage)?.label ?? "—"
+              ? stages.find((s) => s.key === relatedProd[0].stage)?.label ?? "—"
               : "Sin asignar";
 
             return (
@@ -150,13 +288,13 @@ export default function Production() {
     );
   }
 
-  // Kanban view for selected order
+  // Kanban view
   return (
     <AppLayout
       title={`Operativo — ${selectedOrderId}`}
       subtitle={selectedOrder ? `${selectedOrder.customerName} · ${selectedOrder.items}` : ""}
     >
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between flex-wrap gap-2">
         <Button
           variant="ghost"
           size="sm"
@@ -166,80 +304,186 @@ export default function Production() {
           <ArrowLeft className="h-4 w-4" />
           Volver a órdenes
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setHistoryOpen(true)}
-          className="gap-2"
-        >
-          <History className="h-4 w-4" />
-          Ver historial
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)} className="gap-2">
+            <History className="h-4 w-4" />
+            Ver historial
+          </Button>
+          <Button variant="default" size="sm" onClick={addCol} className="gap-2">
+            <Plus className="h-4 w-4" />
+            Añadir tablero
+          </Button>
+        </div>
       </div>
 
-      {filteredProdOrders.length === 0 ? (
-        <div className="text-center py-16 text-muted-foreground text-sm">
-          Esta orden aún no tiene tareas de producción asignadas.
-        </div>
-      ) : (
-        <div className="flex gap-4 overflow-x-auto pb-4 min-h-[calc(100vh-12rem)]">
-          {productionStages.map((stage) => {
-            const stageOrders = getOrdersForStage(stage.key);
-            return (
-              <div
-                key={stage.key}
-                className="flex-shrink-0 w-72 flex flex-col"
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={() => handleDrop(stage.key)}
-              >
-                <div className={cn("rounded-t-lg border-t-4 bg-card border border-border px-3 py-2.5 flex items-center justify-between", stageColors[stage.key])}>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-semibold text-foreground">{stage.label}</h3>
-                    <span className="text-[10px] bg-muted text-muted-foreground rounded-full px-2 py-0.5 font-medium">
-                      {stageOrders.length}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex-1 bg-muted/30 border-x border-b border-border rounded-b-lg p-2 space-y-2 min-h-[200px]">
-                  {stageOrders.map((order) => (
-                    <div
-                      key={order.id}
-                      draggable
-                      onDragStart={() => handleDragStart(order.id)}
-                      className={cn(
-                        "bg-card rounded-lg border border-border p-3 cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow animate-fade-in",
-                        order.isDelayed && "border-destructive/30 bg-destructive/5"
-                      )}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-semibold text-foreground">{order.orderId}</span>
-                        {order.isDelayed && <AlertTriangle className="h-3.5 w-3.5 text-destructive" />}
-                      </div>
-                      <p className="text-xs text-muted-foreground mb-2 line-clamp-2">{order.items}</p>
-                      <p className="text-xs font-medium text-foreground mb-3">{order.customerName}</p>
-                      <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                        <span className="flex items-center gap-1">
-                          <User className="h-3 w-3" /> {order.assignee}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Calendar className="h-3 w-3" /> {order.dueDate.slice(5)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between mt-2">
-                        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                          <Package className="h-3 w-3" /> {order.quantity} uds
-                        </span>
-                        <span className="text-[10px] text-muted-foreground">{order.daysInStage}d en etapa</span>
-                      </div>
+      <div className="flex gap-4 overflow-x-auto pb-4 min-h-[calc(100vh-12rem)]">
+        {stages.map((stage) => {
+          const stageOrders = getOrdersForStage(stage.key);
+          const isEditing = editingColKey === stage.key;
+          return (
+            <div
+              key={stage.key}
+              className={cn(
+                "flex-shrink-0 w-72 flex flex-col transition-opacity",
+                draggedColKey === stage.key && "opacity-40"
+              )}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={() => {
+                if (dragType === "column") handleColDropOnCol(stage.key);
+                else handleCardDrop(stage.key);
+              }}
+            >
+              <div className={cn("rounded-t-lg border-t-4 bg-card border border-border px-3 py-2.5 flex items-center justify-between gap-2 group", stage.colorClass)}>
+                <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                  <button
+                    draggable={!isEditing}
+                    onDragStart={(e) => handleColDragStart(e, stage.key)}
+                    className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground shrink-0"
+                    title="Arrastrar tablero"
+                  >
+                    <GripVertical className="h-4 w-4" />
+                  </button>
+                  {isEditing ? (
+                    <div className="flex items-center gap-1 flex-1">
+                      <Input
+                        autoFocus
+                        value={editingColLabel}
+                        onChange={(e) => setEditingColLabel(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitEditCol();
+                          if (e.key === "Escape") setEditingColKey(null);
+                        }}
+                        onBlur={commitEditCol}
+                        className="h-7 text-sm"
+                      />
+                      <button onMouseDown={(e) => { e.preventDefault(); commitEditCol(); }} className="text-success shrink-0">
+                        <Check className="h-4 w-4" />
+                      </button>
                     </div>
-                  ))}
+                  ) : (
+                    <>
+                      <h3 className="text-sm font-semibold text-foreground truncate">{stage.label}</h3>
+                      <span className="text-[10px] bg-muted text-muted-foreground rounded-full px-2 py-0.5 font-medium shrink-0">
+                        {stageOrders.length}
+                      </span>
+                    </>
+                  )}
                 </div>
+                {!isEditing && (
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    <button
+                      onClick={() => startEditCol(stage)}
+                      className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                      title="Editar nombre"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => deleteCol(stage.key)}
+                      className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                      title="Eliminar tablero"
+                      disabled={stages.length <= 1}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
-            );
-          })}
-        </div>
-      )}
+
+              <div className="flex-1 bg-muted/30 border-x border-b border-border rounded-b-lg p-2 space-y-2 min-h-[200px]">
+                {stageOrders.map((order) => (
+                  <div
+                    key={order.id}
+                    draggable
+                    onDragStart={(e) => handleCardDragStart(e, order.id)}
+                    className={cn(
+                      "bg-card rounded-lg border border-border p-3 cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow animate-fade-in group/card relative",
+                      order.isDelayed && "border-destructive/30 bg-destructive/5"
+                    )}
+                  >
+                    <div className="absolute top-2 right-2 flex items-center gap-0.5 opacity-0 group-hover/card:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); openEditCard(order); }}
+                        className="p-1 rounded bg-background/80 hover:bg-muted text-muted-foreground hover:text-foreground"
+                        title="Editar tarjeta"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteCard(order.id); }}
+                        className="p-1 rounded bg-background/80 hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                        title="Eliminar tarjeta"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between mb-2 pr-14">
+                      <span className="text-xs font-semibold text-foreground">{order.orderId}</span>
+                      {order.isDelayed && <AlertTriangle className="h-3.5 w-3.5 text-destructive" />}
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-2 line-clamp-2">{order.items}</p>
+                    <p className="text-xs font-medium text-foreground mb-3">{order.customerName}</p>
+                    <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <User className="h-3 w-3" /> {order.assignee}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Calendar className="h-3 w-3" /> {order.dueDate.slice(5)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between mt-2">
+                      <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                        <Package className="h-3 w-3" /> {order.quantity} uds
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">{order.daysInStage}d en etapa</span>
+                    </div>
+                  </div>
+                ))}
+                <button
+                  onClick={() => openAddCard(stage.key)}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-dashed border-border text-xs text-muted-foreground hover:bg-card hover:text-foreground hover:border-primary/40 transition-colors"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Añadir tarjeta
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Card Add/Edit Dialog */}
+      <Dialog open={cardDialog.open} onOpenChange={(open) => setCardDialog((d) => ({ ...d, open }))}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{cardDialog.mode === "add" ? "Nueva tarjeta" : "Editar tarjeta"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="items" className="text-xs">Descripción</Label>
+              <Input id="items" value={cardDialog.items} onChange={(e) => setCardDialog((d) => ({ ...d, items: e.target.value }))} placeholder="Ej. 100 Polos azules" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="assignee" className="text-xs">Responsable</Label>
+                <Input id="assignee" value={cardDialog.assignee} onChange={(e) => setCardDialog((d) => ({ ...d, assignee: e.target.value }))} />
+              </div>
+              <div>
+                <Label htmlFor="quantity" className="text-xs">Cantidad</Label>
+                <Input id="quantity" type="number" value={cardDialog.quantity} onChange={(e) => setCardDialog((d) => ({ ...d, quantity: Number(e.target.value) }))} />
+              </div>
+            </div>
+            <div>
+              <Label htmlFor="dueDate" className="text-xs">Fecha de entrega</Label>
+              <Input id="dueDate" type="date" value={cardDialog.dueDate} onChange={(e) => setCardDialog((d) => ({ ...d, dueDate: e.target.value }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCardDialog((d) => ({ ...d, open: false }))}>Cancelar</Button>
+            <Button onClick={saveCard}>{cardDialog.mode === "add" ? "Crear" : "Guardar"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* History Side Panel */}
       {historyOpen && (
@@ -271,7 +515,6 @@ export default function Production() {
             </div>
 
             <div className="p-4">
-              {/* Summary */}
               <div className="mb-6 grid grid-cols-2 gap-3">
                 <div className="bg-muted/50 rounded-lg p-3">
                   <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Etapas completadas</p>
@@ -283,12 +526,11 @@ export default function Production() {
                 </div>
               </div>
 
-              {/* Duration per stage */}
               <h3 className="text-xs font-semibold text-foreground mb-3 uppercase tracking-wider">Tiempo por etapa</h3>
               <div className="space-y-2 mb-6">
                 {stageDurations.map((sd, i) => (
                   <div key={i} className="flex items-center justify-between bg-muted/30 rounded-lg px-3 py-2">
-                    <span className="text-xs font-medium text-foreground">{stageLabels[sd.stage]}</span>
+                    <span className="text-xs font-medium text-foreground">{stageLabels[sd.stage] ?? sd.stage}</span>
                     <span className={cn(
                       "text-xs font-semibold",
                       sd.duration === "En curso" ? "text-primary" : "text-muted-foreground"
@@ -300,7 +542,6 @@ export default function Production() {
                 ))}
               </div>
 
-              {/* Timeline */}
               <h3 className="text-xs font-semibold text-foreground mb-3 uppercase tracking-wider">Línea de tiempo</h3>
               <div className="relative pl-6">
                 <div className="absolute left-[11px] top-2 bottom-2 w-0.5 bg-border" />
@@ -316,7 +557,7 @@ export default function Production() {
                           : "bg-card border-muted-foreground"
                       )} />
                       <div className="ml-2 space-y-1">
-                        <p className="text-xs font-semibold text-foreground">{stageLabels[entry.stage]}</p>
+                        <p className="text-xs font-semibold text-foreground">{stageLabels[entry.stage] ?? entry.stage}</p>
                         <div className="flex flex-col gap-0.5">
                           <p className="text-[10px] text-muted-foreground">
                             <span className="font-medium text-foreground/80">Hora de inicio:</span> {formatDateTime(entry.enteredAt)}
