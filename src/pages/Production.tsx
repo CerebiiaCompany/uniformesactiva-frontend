@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { StatusBadge } from "@/components/StatusBadge";
 import { productionOrders, productionStages, orders, type ProductionOrder } from "@/data/mockData";
@@ -215,8 +215,10 @@ export default function Production() {
     }, 400);
   };
 
+  const stageKeySet = new Set(stages.map((s) => s.key));
   const orderHistory = filteredProdOrders
     .flatMap((po) => po.stageHistory.map((h) => ({ ...h, taskId: po.id, taskItems: po.items })))
+    .filter((h) => stageKeySet.has(h.stage))
     .sort((a, b) => new Date(a.enteredAt).getTime() - new Date(b.enteredAt).getTime());
 
   const stageDurations: { stage: string; duration: string }[] = [];
@@ -227,6 +229,30 @@ export default function Production() {
       duration: next ? calcDuration(orderHistory[i].enteredAt, next.enteredAt) : "En curso",
     });
   }
+
+  // Ensure every active order has at least one default card representing it
+  useEffect(() => {
+    if (stages.length === 0) return;
+    const firstStageKey = stages[0].key as ProductionOrder["stage"];
+    const missing = activeOrders.filter((o) => !prodOrders.some((po) => po.orderId === o.id));
+    if (missing.length === 0) return;
+    const now = new Date().toISOString();
+    const newCards: ProductionOrder[] = missing.map((o) => ({
+      id: `PO-auto-${o.id}`,
+      orderId: o.id,
+      customerName: o.customerName,
+      items: o.items,
+      quantity: o.quantity,
+      stage: firstStageKey,
+      assignee: "Sin asignar",
+      dueDate: o.dueDate,
+      daysInStage: 0,
+      isDelayed: false,
+      stageHistory: [{ stage: firstStageKey, enteredAt: now }],
+    }));
+    setProdOrders((prev) => [...prev, ...newCards]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Order list view
   if (!selectedOrderId) {
