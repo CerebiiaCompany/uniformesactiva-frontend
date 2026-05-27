@@ -9,6 +9,7 @@ import {
   Package,
   Globe,
   Scissors,
+  Settings,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -27,22 +28,26 @@ import {
 } from "@/components/ui/sidebar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
-const mainItems = [
+const generalItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "Sitio Web", url: "/website", icon: Globe },
+];
+
+const comercialItems = [
   { title: "Clientes", url: "/customers", icon: Users },
   { title: "Cotizaciones", url: "/quotations", icon: FileText },
   { title: "Órdenes", url: "/orders", icon: ShoppingCart },
 ];
 
-const productionItems = [
-  { title: "Operativo", url: "/production", icon: Factory },
+const operacionItems = [
+  { title: "Fábrica", url: "/production", icon: Factory },
   { title: "Inventario", url: "/inventory", icon: Package },
   { title: "Costos", url: "/costing", icon: DollarSign },
 ];
 
-const insightItems = [
+const gerenciaItems = [
   { title: "Reportes", url: "/reports", icon: BarChart3 },
-  { title: "Sitio Web", url: "/website", icon: Globe },
+  { title: "Administración", url: "#", icon: Settings },
 ];
 
 export function AppSidebar() {
@@ -75,7 +80,7 @@ export function AppSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {mainItems.map((item) => (
+              {generalItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild isActive={isActive(item.url)}>
                     <NavLink to={item.url} end={item.url === "/"} activeClassName="bg-sidebar-accent text-sidebar-accent-foreground">
@@ -91,11 +96,11 @@ export function AppSidebar() {
 
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/40 text-[10px] uppercase tracking-widest mb-1">
-            Operativo
+            Comercial
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {productionItems.map((item) => (
+              {comercialItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild isActive={isActive(item.url)}>
                     <NavLink to={item.url} activeClassName="bg-sidebar-accent text-sidebar-accent-foreground">
@@ -111,14 +116,34 @@ export function AppSidebar() {
 
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/40 text-[10px] uppercase tracking-widest mb-1">
-            Insights
+            Operación
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {insightItems.map((item) => (
+              {operacionItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild isActive={isActive(item.url)}>
                     <NavLink to={item.url} activeClassName="bg-sidebar-accent text-sidebar-accent-foreground">
+                      <item.icon className="h-4 w-4" />
+                      {!collapsed && <span>{item.title}</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-sidebar-foreground/40 text-[10px] uppercase tracking-widest mb-1">
+            Gerencia
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {gerenciaItems.map((item) => (
+                <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton asChild isActive={isActive(item.url)}>
+                    <NavLink to={item.url} end={item.url === "/"} activeClassName="bg-sidebar-accent text-sidebar-accent-foreground">
                       <item.icon className="h-4 w-4" />
                       {!collapsed && <span>{item.title}</span>}
                     </NavLink>
