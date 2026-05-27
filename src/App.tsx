@@ -12,6 +12,7 @@ import Inventory from "./pages/Inventory";
 import Costing from "./pages/Costing";
 import Reports from "./pages/Reports";
 import Website from "./pages/Website";
+import Administration from "./pages/Administration";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
