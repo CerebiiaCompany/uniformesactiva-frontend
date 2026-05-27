@@ -9,6 +9,7 @@ import {
   Package,
   Globe,
   Scissors,
+  Settings,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -27,22 +28,26 @@ import {
 } from "@/components/ui/sidebar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
-const mainItems = [
+const generalItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "Sitio Web", url: "/website", icon: Globe },
+];
+
+const comercialItems = [
   { title: "Clientes", url: "/customers", icon: Users },
   { title: "Cotizaciones", url: "/quotations", icon: FileText },
   { title: "Órdenes", url: "/orders", icon: ShoppingCart },
 ];
 
-const productionItems = [
-  { title: "Operativo", url: "/production", icon: Factory },
+const operacionItems = [
+  { title: "Fábrica", url: "/production", icon: Factory },
   { title: "Inventario", url: "/inventory", icon: Package },
   { title: "Costos", url: "/costing", icon: DollarSign },
 ];
 
-const insightItems = [
+const gerenciaItems = [
   { title: "Reportes", url: "/reports", icon: BarChart3 },
-  { title: "Sitio Web", url: "/website", icon: Globe },
+  { title: "Administración", url: "#", icon: Settings },
 ];
 
 export function AppSidebar() {
