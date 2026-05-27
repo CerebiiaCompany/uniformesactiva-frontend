@@ -47,7 +47,7 @@ const operacionItems = [
 
 const gerenciaItems = [
   { title: "Reportes", url: "/reports", icon: BarChart3 },
-  { title: "Administración", url: "#", icon: Settings },
+  { title: "Administración", url: "/administration", icon: Settings },
 ];
 
 export function AppSidebar() {
