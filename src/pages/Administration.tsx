@@ -1,6 +1,7 @@
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Link } from "react-router-dom";
 import { Building2, Pencil, Users, Building, ShieldCheck } from "lucide-react";
 
 const companyFields = [
