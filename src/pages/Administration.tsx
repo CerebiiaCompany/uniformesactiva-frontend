@@ -31,8 +31,10 @@ export default function Administration() {
               </p>
             </div>
             <div className="flex gap-2">
-              <Button className="gap-2">
-                <Building2 className="h-4 w-4" /> Perfil de empresa
+              <Button asChild className="gap-2">
+                <Link to="/administration/company-profile">
+                  <Building2 className="h-4 w-4" /> Perfil de empresa
+                </Link>
               </Button>
               <Button variant="outline" className="gap-2">
                 <Pencil className="h-4 w-4" /> Editar básico
