@@ -13,6 +13,7 @@ import Costing from "./pages/Costing";
 import Reports from "./pages/Reports";
 import Website from "./pages/Website";
 import Administration from "./pages/Administration";
+import AdministrationSubmodule from "./pages/AdministrationSubmodule";
 import CompanyProfile from "./pages/CompanyProfile";
 import NotFound from "./pages/NotFound";
 
