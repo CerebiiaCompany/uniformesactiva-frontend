@@ -13,6 +13,7 @@ import Costing from "./pages/Costing";
 import Reports from "./pages/Reports";
 import Website from "./pages/Website";
 import Administration from "./pages/Administration";
+import AdministrationSubmodule from "./pages/AdministrationSubmodule";
 import CompanyProfile from "./pages/CompanyProfile";
 import NotFound from "./pages/NotFound";
 
@@ -35,6 +36,7 @@ const App = () => (
           <Route path="/reports" element={<Reports />} />
           <Route path="/website" element={<Website />} />
           <Route path="/administration" element={<Administration />} />
+          <Route path="/administration/:tab" element={<AdministrationSubmodule />} />
           <Route path="/administration/company-profile" element={<CompanyProfile />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
