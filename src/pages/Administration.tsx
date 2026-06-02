@@ -2,10 +2,7 @@ import { useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -13,14 +10,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Link } from "react-router-dom";
 import {
   Building2,
@@ -28,13 +17,7 @@ import {
   Users,
   Building,
   ShieldCheck,
-  Search,
-  FileDown,
-  FileUp,
-  UserPlus,
   UserCheck,
-  Save,
-  MoreHorizontal,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 
