@@ -10,9 +10,10 @@ import {
   Globe,
   Scissors,
   Settings,
+  LogOut,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Sidebar,
   SidebarContent,
@@ -27,9 +28,11 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { toast } from "@/hooks/use-toast";
 
 const generalItems = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "Dashboard", url: "/Dashboard", icon: LayoutDashboard },
   { title: "Sitio Web", url: "/website", icon: Globe },
 ];
 
@@ -54,8 +57,18 @@ export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const location = useLocation();
+  const navigate = useNavigate();
   const isActive = (path: string) =>
     path === "/" ? location.pathname === "/" : location.pathname.startsWith(path);
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    toast({
+      title: "Sesión Finalizada",
+      description: "Has salido de FlowTextil correctamente.",
+    });
+    navigate("/", { replace: true });
+  };
 
   return (
     <Sidebar collapsible="icon">
@@ -156,18 +169,30 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="p-3 border-t border-sidebar-border">
-        <div className="flex items-center gap-3">
-          <Avatar className="h-8 w-8">
-            <AvatarFallback className="bg-sidebar-primary text-sidebar-primary-foreground text-xs font-semibold">
-              AD
-            </AvatarFallback>
-          </Avatar>
-          {!collapsed && (
-            <div className="animate-fade-in">
-              <p className="text-xs font-medium text-sidebar-accent-foreground">Admin</p>
-              <p className="text-[10px] text-sidebar-foreground/60">admin@flowtextil.com</p>
-            </div>
-          )}
+        <div className="flex items-center justify-between w-full gap-2">
+          <div className="flex items-center gap-3 overflow-hidden">
+            <Avatar className="h-8 w-8 shrink-0">
+              <AvatarFallback className="bg-sidebar-primary text-sidebar-primary-foreground text-xs font-semibold">
+                AD
+              </AvatarFallback>
+            </Avatar>
+            {!collapsed && (
+              <div className="animate-fade-in overflow-hidden">
+                <p className="text-xs font-medium text-sidebar-accent-foreground truncate">Admin</p>
+                <p className="text-[10px] text-sidebar-foreground/60 truncate">admin@flowtextil.com</p>
+              </div>
+            )}
+          </div>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleLogout}
+            title="Cerrar sesión"
+            className="h-8 w-8 text-sidebar-foreground/60 hover:text-destructive hover:bg-destructive/10 shrink-0 rounded-md transition-colors"
+          >
+            <LogOut className="h-4 w-4" />
+          </Button>
         </div>
       </SidebarFooter>
     </Sidebar>
