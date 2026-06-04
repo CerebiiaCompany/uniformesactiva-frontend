@@ -60,7 +60,11 @@ const mockAreas = [
   { id: "4", nombre: "Contabilidad", responsable: "Laura Pérez", miembros: 2 },
 ];
 
-const ROLES = ["Administrador", "Operativo", "Comercial"] as const;
+interface IRole {
+  id: string;
+  name: string;
+  description: string | null;
+}
 
 const MODULES_MAP = {
   "users": "Gestión de Usuarios",
@@ -88,11 +92,6 @@ const VALID = ["users", "areas", "roles"] as const;
 type SubTab = (typeof VALID)[number];
 
 const BASE_URL = "http://127.0.0.1:8000";
-const ROLE_IDS: Record<string, string> = {
-  "Administrador": "b3d68153-03be-4521-a77c-53b85647833a",
-  "Operativo": "add99bc2-c7ee-4234-80b4-42921a07655d",
-  "Comercial": "3049e008-851c-4e73-bd7a-66a392254fb5"
-};
 
 export default function AdministrationSubmodule() {
   const { tab } = useParams<{ tab: string }>();
@@ -100,23 +99,51 @@ export default function AdministrationSubmodule() {
   const active: SubTab = (VALID as readonly string[]).includes(tab ?? "") ? (tab as SubTab) : "users";
 
   const [search, setSearch] = useState("");
-  const [selectedRole, setSelectedRole] = useState<string>(ROLES[0]);
+
+  const [rolesList, setRolesList] = useState<IRole[]>([]);
+  const [selectedRole, setSelectedRole] = useState<string>("");
+
   const [matrix, setMatrix] = useState<PermissionMatrix>(buildDefaultMatrix());
   const [loading, setLoading] = useState(false);
 
-  // 3️⃣ EFECTO: Se ejecuta automáticamente al montar el componente y cada vez que cambia 'selectedRole'
   useEffect(() => {
+    const fetchInitialRoles = async () => {
+      try {
+        const response = await fetch(`${BASE_URL}/api/v1/users/permisos/roles/`, {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${localStorage.getItem("token")}`
+          }
+        });
+        if (!response.ok) throw new Error("No se pudo cargar el catálogo de roles.");
+
+        const data: IRole[] = await response.json();
+        setRolesList(data);
+
+        if (data.length > 0) {
+          setSelectedRole(data[0].id);
+        }
+      } catch (error) {
+        console.error("Error cargando catálogo de roles:", error);
+      }
+    };
+
     if (active === "roles") {
+      fetchInitialRoles();
+    }
+  }, [active]);
+
+  useEffect(() => {
+    if (active === "roles" && selectedRole) {
       fetchPermissionsForRole();
     }
   }, [selectedRole, active]);
 
   const fetchPermissionsForRole = async () => {
-    const roleId = ROLE_IDS[selectedRole];
-    if (!roleId) return;
+    if (!selectedRole) return;
 
     setLoading(true);
-    const GET_PERMISSIONS_URL = `${BASE_URL}/api/v1/users/permisos/roles/${roleId}/permissions/`;
+    const GET_PERMISSIONS_URL = `${BASE_URL}/api/v1/users/permisos/roles/${selectedRole}/permissions/`;
 
     try {
       const response = await fetch(GET_PERMISSIONS_URL, {
@@ -130,13 +157,12 @@ export default function AdministrationSubmodule() {
 
       const data = await response.json();
 
-      // Construimos una nueva matriz a partir de lo que devolvió Django
       const newMatrix = buildDefaultMatrix();
 
       if (data.module_permissions && Array.isArray(data.module_permissions)) {
         data.module_permissions.forEach((item: any) => {
-          const modKey = item.module; // ej. "users"
-          const actions = item.actions || []; // ej. ["read", "create"]
+          const modKey = item.module;
+          const actions = item.actions || [];
 
           if (newMatrix[modKey]) {
             newMatrix[modKey] = {
@@ -162,8 +188,8 @@ export default function AdministrationSubmodule() {
     }
   };
 
-  const handleSelectRole = (role: string) => {
-    setSelectedRole(role);
+  const handleSelectRole = (roleId: string) => {
+    setSelectedRole(roleId);
   };
 
   const togglePerm = (mod: string, perm: Perm) => {
@@ -174,20 +200,10 @@ export default function AdministrationSubmodule() {
   };
 
   const handleSave = async () => {
-    const roleId = ROLE_IDS[selectedRole];
+    if (!selectedRole) return;
 
-    if (!roleId) {
-      toast({
-        variant: "destructive",
-        title: "Error de consistencia",
-        description: `El rol seleccionado (${selectedRole}) no existe en la base de datos.`,
-      });
-      return;
-    }
+    const UPDATE_PERMISSIONS_URL = `${BASE_URL}/api/v1/users/permisos/roles/${selectedRole}/permissions/`;
 
-    const UPDATE_PERMISSIONS_URL = `${BASE_URL}/api/v1/users/permisos/roles/${roleId}/permissions/`;
-
-    // 4️⃣ Mapeamos los datos de vuelta convirtiendo 'ver' en 'can_read' etc.
     const formattedPermissions = Object.keys(matrix).map((moduleKey) => ({
       module: moduleKey,
       can_read: matrix[moduleKey].ver,
@@ -212,9 +228,11 @@ export default function AdministrationSubmodule() {
 
       if (!response.ok) throw new Error('Error al guardar los permisos en Django');
 
+      const currentRoleObj = rolesList.find(r => r.id === selectedRole);
+
       toast({
         title: "Cambios guardados",
-        description: `La matriz de permisos para el rol ${selectedRole} se sincronizó con éxito.`,
+        description: `La matriz de permisos para el rol ${currentRoleObj?.name || ""} se sincronizó con éxito.`,
       });
     } catch (error: any) {
       console.error("Error en la conexión RBAC:", error);
@@ -398,8 +416,8 @@ export default function AdministrationSubmodule() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {ROLES.map((r) => (
-                        <SelectItem key={r} value={r}>{r}</SelectItem>
+                      {rolesList.map((r) => (
+                        <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

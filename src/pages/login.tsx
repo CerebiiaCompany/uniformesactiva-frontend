@@ -57,6 +57,40 @@ export default function Login() {
             if (token) {
                 localStorage.setItem("token", token);
 
+                const userResponse = await fetch("http://127.0.0.1:8000/api/v1/users/me/", {
+                    method: "GET",
+                    headers: {
+                        "Authorization": `Bearer ${token}`,
+                        "Content-Type": "application/json",
+                    },
+                });
+
+                if (userResponse.ok) {
+                    const userData = await userResponse.json();
+
+                    const rawRoleString = userData.roles?.[0] || "";
+                    let extractedRole = "Operativo";
+
+                    if (rawRoleString.includes("name='Administrador'") || rawRoleString === "Administrador") {
+                        extractedRole = "Administrador";
+                    } else if (rawRoleString.includes("name='Comercial'") || rawRoleString === "Comercial") {
+                        extractedRole = "Comercial";
+                    } else if (rawRoleString.includes("name='Operativo'") || rawRoleString === "Operativo") {
+                        extractedRole = "Operativo";
+                    }
+
+                    const cleanUser = {
+                        username: userData.username,
+                        email: userData.email,
+                        first_name: userData.first_name,
+                        last_name: userData.last_name,
+                        roles: [extractedRole],
+                        permissions: userData.permissions || []
+                    };
+
+                    localStorage.setItem("user", JSON.stringify(cleanUser));
+                }
+
                 toast({
                     title: "¡Sesión Iniciada!",
                     description: "Has ingresado correctamente a FlowTextil.",
