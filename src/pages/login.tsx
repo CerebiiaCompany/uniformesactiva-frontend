@@ -7,6 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Lock, User } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 
+const BASE_URL = import.meta.env.VITE_API_BASE_URL;
+
 export default function Login() {
     const navigate = useNavigate();
     const [username, setUsername] = useState("");
@@ -35,7 +37,7 @@ export default function Login() {
         setLoading(true);
 
         try {
-            const response = await fetch("http://127.0.0.1:8000/api/v1/auth/token/", {
+            const response = await fetch(`${BASE_URL}/api/v1/auth/token/`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -57,7 +59,7 @@ export default function Login() {
             if (token) {
                 localStorage.setItem("token", token);
 
-                const userResponse = await fetch("http://127.0.0.1:8000/api/v1/users/me/", {
+                const userResponse = await fetch(`${BASE_URL}/api/v1/users/me/`, {
                     method: "GET",
                     headers: {
                         "Authorization": `Bearer ${token}`,
