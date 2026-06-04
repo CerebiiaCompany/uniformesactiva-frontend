@@ -172,7 +172,7 @@ export default function Login() {
                             {loading ? "Autenticando..." : "Iniciar Sesión"}
                         </Button>
                         <p className="text-xs text-center text-muted-foreground">
-                            ERP · Control de Acceso Basado en Roles (RBAC)
+                            Control de accesos
                         </p>
                     </CardFooter>
                 </form>
