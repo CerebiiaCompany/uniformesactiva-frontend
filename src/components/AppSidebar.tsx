@@ -1,3 +1,5 @@
+import { useState, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -13,7 +15,6 @@ import {
   LogOut,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
-import { useLocation, useNavigate } from "react-router-dom";
 import {
   Sidebar,
   SidebarContent,
@@ -35,7 +36,10 @@ import { jwtDecode } from "jwt-decode";
 interface ModulePermission {
   module: string;
   module_name: string;
-  actions: string[];
+  can_read: boolean;
+  can_create: boolean;
+  can_update: boolean;
+  can_delete: boolean;
 }
 
 interface CustomJwtPayload {
@@ -48,10 +52,14 @@ interface CustomJwtPayload {
 }
 
 const MODULE_MAPPING: Record<string, string> = {
-  "users": "Administración",
+  "customers": "Clientes",      // 🌟 Corregido de 'clients' a 'customers'
+  "quotes": "Cotizaciones",
+  "orders": "Órdenes",
+  "factory": "Fábrica",
   "inventory": "Inventario",
-  "clients": "Clientes",
-  "billing": "Costos"
+  "costs": "Costos",
+  "reports": "Reportes",
+  "administration": "Administración"
 };
 
 const generalItems = [
@@ -81,72 +89,118 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const location = useLocation();
   const navigate = useNavigate();
+
   const isActive = (path: string) =>
     path === "/" ? location.pathname === "/" : location.pathname.startsWith(path);
 
-  const token = localStorage.getItem("token");
-  const userJson = localStorage.getItem("user");
+  // Estados reactivos para la información del usuario
+  const [userRoles, setUserRoles] = useState<string[]>([]);
+  const [userPermissions, setUserPermissions] = useState<ModulePermission[]>([]);
+  const [userEmail, setUserEmail] = useState("usuario@flowtextil.com");
+  const [userFullName, setUserFullName] = useState("Usuario");
+  const [initials, setInitials] = useState("US");
 
-  let userRoles: string[] = [];
-  let userPermissions: ModulePermission[] = [];
-  let userEmail = "usuario@flowtextil.com";
-  let userFullName = "Usuario";
-  let initials = "US";
+  // Efecto para sincronizar reactivamente la sesión y permisos sin forzar recargas de página
+  useEffect(() => {
+    const syncUserData = () => {
+      const token = localStorage.getItem("token");
+      const userJson = localStorage.getItem("user");
 
-  // Procesamos la información del usuario autenticado
-  if (userJson) {
-    try {
-      const userData = JSON.parse(userJson);
-      userRoles = userData.roles || [];
-      userPermissions = userData.permissions || [];
-      userEmail = userData.email || "";
+      let currentRoles: string[] = [];
+      let currentPermissions: ModulePermission[] = [];
+      let currentEmail = "usuario@flowtextil.com";
+      let currentFullName = "Usuario";
+      let currentInitials = "US";
 
-      const firstName = userData.first_name || "";
-      const lastName = userData.last_name || "";
-      userFullName = `${firstName} ${lastName}`.trim() || userData.username || "Usuario";
+      if (userJson) {
+        try {
+          const userData = JSON.parse(userJson);
+          currentRoles = userData.roles || [];
+          currentPermissions = userData.permissions || [];
+          currentEmail = userData.email || "";
 
-      initials = firstName && lastName
-        ? `${firstName[0]}${lastName[0]}`.toUpperCase()
-        : userFullName.substring(0, 2).toUpperCase();
-    } catch (e) {
-      console.error("Error al parsear el objeto user del localStorage:", e);
-    }
-  } else if (token) {
-    try {
-      const decoded = jwtDecode<CustomJwtPayload>(token);
-      userRoles = decoded.roles || [];
-      userPermissions = decoded.permissions || [];
-      userEmail = decoded.email || "";
+          const firstName = userData.first_name || "";
+          const lastName = userData.last_name || "";
+          currentFullName = `${firstName} ${lastName}`.trim() || userData.username || "Usuario";
 
-      const firstName = decoded.first_name || "";
-      const lastName = decoded.last_name || "";
-      userFullName = `${firstName} ${lastName}`.trim() || decoded.username || "Usuario";
+          currentInitials = firstName && lastName
+            ? `${firstName[0]}${lastName[0]}`.toUpperCase()
+            : currentFullName.substring(0, 2).toUpperCase();
+        } catch (e) {
+          console.error("Error al parsear el objeto user del localStorage:", e);
+        }
+      } else if (token) {
+        try {
+          const decoded = jwtDecode<CustomJwtPayload>(token);
+          currentRoles = decoded.roles || [];
+          currentPermissions = decoded.permissions || [];
+          currentEmail = decoded.email || "";
 
-      initials = firstName && lastName
-        ? `${firstName[0]}${lastName[0]}`.toUpperCase()
-        : userFullName.substring(0, 2).toUpperCase();
-    } catch (e) {
-      console.error("Error al decodificar el token en el Sidebar:", e);
-    }
-  }
+          const firstName = decoded.first_name || "";
+          const lastName = decoded.last_name || "";
+          currentFullName = `${firstName} ${lastName}`.trim() || decoded.username || "Usuario";
 
-  const is_admin = userRoles.some(role => role.includes("Administrador"));
+          currentInitials = firstName && lastName
+            ? `${firstName[0]}${lastName[0]}`.toUpperCase()
+            : currentFullName.substring(0, 2).toUpperCase();
+        } catch (e) {
+          console.error("Error al decodificar el token en el Sidebar:", e);
+        }
+      }
+
+      setUserRoles(currentRoles);
+      setUserPermissions(currentPermissions);
+      setUserEmail(currentEmail);
+      setUserFullName(currentFullName);
+      setInitials(currentInitials);
+    };
+
+    // Ejecución inicial al montar el componente
+    syncUserData();
+
+    // Listener para reaccionar a cambios hechos en otras pestañas o ventanas
+    window.addEventListener("storage", syncUserData);
+
+    // Custom event por si actualizas el localStorage en el mismo hilo de ejecución de la app
+    window.addEventListener("local-session-update", syncUserData);
+
+    return () => {
+      window.removeEventListener("storage", syncUserData);
+      window.removeEventListener("local-session-update", syncUserData);
+    };
+  }, [location.pathname]); // Al cambiar de ruta re-evalúa por si hubo actualizaciones silenciosas
+
+  // Validación segura si 'roles' contiene la cadena en la representación de objeto del backend
+  const is_admin = userRoles.some(role => {
+    const roleStr = typeof role === 'string' ? role : JSON.stringify(role);
+    return roleStr.toLowerCase().includes("administrador");
+  });
 
   const canViewModule = (title: string) => {
     if (is_admin) return true;
-
     if (["Dashboard", "Sitio Web"].includes(title)) return true;
 
     return userPermissions.some((perm) => {
-      if (perm.module === "orders" && (title === "Órdenes" || title === "Fábrica")) {
-        return perm.actions.includes("read");
+      // 1. Si tu backend devuelve directamente el módulo legible por nombre
+      if (perm.module_name === title) {
+        const hasRead = perm.can_read === true || (perm as any).actions?.includes("read");
+        if (hasRead) return true;
       }
 
-      if (perm.module === "users" && (title === "Administración" || title === "Reportes")) {
-        return perm.actions.includes("read");
-      }
-      const mappedTitle = MODULE_MAPPING[perm.module];
-      return mappedTitle === title && perm.actions.includes("read");
+      // 2. Normalización de las claves del backend para que encajen en tu MODULE_MAPPING original
+      let normalizedModuleKey = perm.module;
+      if (normalizedModuleKey === "clients") normalizedModuleKey = "customers";
+      if (normalizedModuleKey === "quotations") normalizedModuleKey = "quotes";
+      if (normalizedModuleKey === "production") normalizedModuleKey = "factory";
+      if (normalizedModuleKey === "billing") normalizedModuleKey = "costs";
+      if (normalizedModuleKey === "users") normalizedModuleKey = "administration";
+
+      const mappedTitle = MODULE_MAPPING[normalizedModuleKey];
+
+      // Valida de forma segura tanto el booleano clásico de la interfaz como el array de la API real
+      const hasReadPermission = perm.can_read === true || (perm as any).actions?.includes("read");
+
+      return mappedTitle === title && hasReadPermission;
     });
   };
 
