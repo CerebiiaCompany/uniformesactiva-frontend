@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"; // 1️⃣ Importamos useEffect
+import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
@@ -66,24 +66,21 @@ interface IRole {
   description: string | null;
 }
 
-const MODULES_MAP = {
-  "users": "Gestión de Usuarios",
-  "inventory": "Inventarios",
-  "orders": "Pedidos y Producción",
-  "clients": "Clientes y Empresas",
-  "billing": "Facturación y Abonos"
-};
+interface DBModule {
+  id: string;
+  code: string;
+  name: string;
+  description: string;
+}
 
-const MODULE_KEYS = Object.keys(MODULES_MAP);
 const PERMS = ["ver", "crear", "editar", "eliminar"] as const;
 type Perm = (typeof PERMS)[number];
 type PermissionMatrix = Record<string, Record<Perm, boolean>>;
 
-// Matriz inicial limpia por si falla la petición o está cargando
-const buildDefaultMatrix = (): PermissionMatrix => {
+const buildDefaultMatrix = (moduleCodes: string[]): PermissionMatrix => {
   const m: PermissionMatrix = {};
-  MODULE_KEYS.forEach((mod) => {
-    m[mod] = { ver: false, crear: false, editar: false, eliminar: false };
+  moduleCodes.forEach((code) => {
+    m[code] = { ver: false, crear: false, editar: false, eliminar: false };
   });
   return m;
 };
@@ -103,8 +100,34 @@ export default function AdministrationSubmodule() {
   const [rolesList, setRolesList] = useState<IRole[]>([]);
   const [selectedRole, setSelectedRole] = useState<string>("");
 
-  const [matrix, setMatrix] = useState<PermissionMatrix>(buildDefaultMatrix());
+  const [dbModules, setDbModules] = useState<DBModule[]>([]);
+  const [matrix, setMatrix] = useState<PermissionMatrix>({});
   const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    const fetchModules = async () => {
+      try {
+        const response = await fetch(`${BASE_URL}/api/v1/users/permisos/modules/`, {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${localStorage.getItem("token")}`
+          }
+        });
+        if (!response.ok) throw new Error("No se pudo obtener la lista de módulos de la BD.");
+
+        const modulesData: DBModule[] = await response.json();
+        setDbModules(modulesData);
+
+        const codes = modulesData.map(m => m.code);
+        setMatrix(buildDefaultMatrix(codes));
+      } catch (error) {
+        console.error("Error cargando módulos dinámicos:", error);
+      }
+    };
+
+    if (active === "roles") {
+      fetchModules();
+    }
+  }, [active]);
 
   useEffect(() => {
     const fetchInitialRoles = async () => {
@@ -134,10 +157,10 @@ export default function AdministrationSubmodule() {
   }, [active]);
 
   useEffect(() => {
-    if (active === "roles" && selectedRole) {
+    if (active === "roles" && selectedRole && dbModules.length > 0) {
       fetchPermissionsForRole();
     }
-  }, [selectedRole, active]);
+  }, [selectedRole, active, dbModules]);
 
   const fetchPermissionsForRole = async () => {
     if (!selectedRole) return;
@@ -157,14 +180,15 @@ export default function AdministrationSubmodule() {
 
       const data = await response.json();
 
-      const newMatrix = buildDefaultMatrix();
+      const codes = dbModules.map(m => m.code);
+      const newMatrix = buildDefaultMatrix(codes);
 
       if (data.module_permissions && Array.isArray(data.module_permissions)) {
         data.module_permissions.forEach((item: any) => {
           const modKey = item.module;
           const actions = item.actions || [];
 
-          if (newMatrix[modKey]) {
+          if (newMatrix[modKey] !== undefined) {
             newMatrix[modKey] = {
               ver: actions.includes("read"),
               crear: actions.includes("create"),
@@ -195,7 +219,10 @@ export default function AdministrationSubmodule() {
   const togglePerm = (mod: string, perm: Perm) => {
     setMatrix((prev) => ({
       ...prev,
-      [mod]: { ...prev[mod], [perm]: !prev[mod][perm] },
+      [mod]: {
+        ...prev[mod],
+        [perm]: prev[mod] ? !prev[mod][perm] : false
+      },
     }));
   };
 
@@ -286,7 +313,7 @@ export default function AdministrationSubmodule() {
                 </TabsTrigger>
               </TabsList>
 
-              {/* ... Contenido de la pestaña de Usuarios ... */}
+              {/* Contenido de la pestaña de Usuarios */}
               <TabsContent value="users" className="mt-6 space-y-5">
                 <div className="relative">
                   <Search className="h-4 w-4 absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -357,7 +384,7 @@ export default function AdministrationSubmodule() {
                 </div>
               </TabsContent>
 
-              {/* ... Contenido de la pestaña de Áreas ... */}
+              {/* Contenido de la pestaña de Áreas */}
               <TabsContent value="areas" className="mt-6 space-y-5">
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -398,7 +425,7 @@ export default function AdministrationSubmodule() {
                 </div>
               </TabsContent>
 
-              {/* ... Contenido de la pestaña de Roles ... */}
+              {/* Contenido de la pestaña de Roles */}
               <TabsContent value="roles" className="mt-6 space-y-5">
                 <div>
                   <h3 className="text-xl font-bold text-foreground">Matriz de Roles y Permisos</h3>
@@ -411,20 +438,23 @@ export default function AdministrationSubmodule() {
                   <p className="text-[10px] font-semibold text-muted-foreground tracking-widest mb-2">
                     ROL
                   </p>
-                  <Select value={selectedRole} onValueChange={handleSelectRole}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {rolesList.map((r) => (
-                        <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {rolesList.length > 0 && selectedRole ? (
+                    <Select value={selectedRole} onValueChange={handleSelectRole}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {rolesList.map((r) => (
+                          <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="h-10 w-full animate-pulse bg-muted rounded-md" />
+                  )}
                 </div>
 
                 <div className="border border-border rounded-lg overflow-hidden relative">
-                  {/* Opacidad visual simple mientras carga */}
                   <div className={loading ? "opacity-40 pointer-events-none" : ""}>
                     <Table>
                       <TableHeader>
@@ -437,15 +467,15 @@ export default function AdministrationSubmodule() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {MODULE_KEYS.map((modKey) => (
-                          <TableRow key={modKey}>
-                            <TableCell className="font-medium">{MODULES_MAP[modKey as keyof typeof MODULES_MAP]}</TableCell>
+                        {dbModules.map((mod) => (
+                          <TableRow key={mod.code}>
+                            <TableCell className="font-medium">{mod.name}</TableCell>
                             {PERMS.map((p) => (
                               <TableCell key={p} className="text-center">
                                 <div className="flex justify-center">
                                   <Checkbox
-                                    checked={matrix[modKey]?.[p] ?? false}
-                                    onCheckedChange={() => togglePerm(modKey, p)}
+                                    checked={matrix[mod.code]?.[p] ?? false}
+                                    onCheckedChange={() => togglePerm(mod.code, p)}
                                   />
                                 </div>
                               </TableCell>
