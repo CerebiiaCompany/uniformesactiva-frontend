@@ -33,25 +33,23 @@ import {
   Save,
   MoreHorizontal,
   ArrowLeft,
+  X,
+  Eye,
+  EyeOff,
+  Loader2,
+  Trash2,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 
-interface MockUser {
+// Interfaz corregida con los datos reales que usamos de la API
+interface User {
   id: string;
   nombre: string;
   area: string;
   cargo: string;
   correo: string;
-  telefono: string;
   isMe?: boolean;
 }
-
-const mockUsers: MockUser[] = [
-  { id: "1", nombre: "Carlos Ramírez", area: "Administración", cargo: "Gerente General", correo: "carlos@flowtextil.com", telefono: "+57 300 123 4567", isMe: true },
-  { id: "2", nombre: "María Gómez", area: "Comercial", cargo: "Ejecutiva de Ventas", correo: "maria@flowtextil.com", telefono: "+57 301 234 5678" },
-  { id: "3", nombre: "Andrés Torres", area: "Producción", cargo: "Jefe de Planta", correo: "andres@flowtextil.com", telefono: "+57 302 345 6789" },
-  { id: "4", nombre: "Laura Pérez", area: "Contabilidad", cargo: "Contadora", correo: "laura@flowtextil.com", telefono: "+57 303 456 7890" },
-];
 
 const mockAreas = [
   { id: "1", nombre: "Administración", responsable: "Carlos Ramírez", miembros: 3 },
@@ -94,15 +92,84 @@ export default function AdministrationSubmodule() {
   const { tab } = useParams<{ tab: string }>();
   const navigate = useNavigate();
   const active: SubTab = (VALID as readonly string[]).includes(tab ?? "") ? (tab as SubTab) : "users";
-
   const [search, setSearch] = useState("");
-
+  // Estado inicializado como un arreglo vacío listo para recibir los usuarios reales
+  const [users, setUsers] = useState<User[]>([]);
   const [rolesList, setRolesList] = useState<IRole[]>([]);
   const [selectedRole, setSelectedRole] = useState<string>("");
-
   const [dbModules, setDbModules] = useState<DBModule[]>([]);
   const [matrix, setMatrix] = useState<PermissionMatrix>({});
   const [loading, setLoading] = useState(false);
+
+  // --- ESTADOS PARA CONTROLAR EL MODAL Y FORMULARIO DE NUEVO USUARIO ---
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formData, setFormData] = useState({
+    username: "",
+    email: "",
+    first_name: "",
+    last_name: "",
+    password: "",
+    roles: ["Operativo"],
+    status: "active"
+  });
+
+  // --- ESTADOS PARA CONTROLAR EL MODAL Y FORMULARIO DE EDICIÓN ---
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [editFormData, setEditFormData] = useState({
+    username: "",
+    email: "",
+    first_name: "",
+    last_name: "",
+    roles: ["Operativo"],
+    status: "active"
+  });
+
+  // --- ESTADOS PARA CONTROLAR EL MODAL DE ELIMINACIÓN ---
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [userToDeleteId, setUserToDeleteId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchUsersData = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        const response = await fetch(`${BASE_URL}/api/v1/users/`, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": token ? `Bearer ${token}` : "",
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error("No se pudo cargar la lista de usuarios del servidor.");
+        }
+
+        const data = await response.json();
+
+        const mappedUsers = data.map((u: any) => ({
+          id: u.id,
+          nombre: `${u.first_name} ${u.last_name}`.trim() || u.username,
+          area: u.roles && u.roles.length > 0 ? u.roles.join(", ") : "Sin rol asignado",
+          cargo: u.status === "active" ? "Activo" : "Inactivo",
+          correo: u.email,
+          isMe: u.username === "admin_flow" || u.username === "enava_dev",
+        }));
+
+        setUsers(mappedUsers);
+      } catch (error) {
+        console.error("Error cargando usuarios de la API:", error);
+      }
+    };
+
+    if (active === "users") {
+      fetchUsersData();
+    }
+  }, [active]);
+
   useEffect(() => {
     const fetchModules = async () => {
       try {
@@ -165,7 +232,7 @@ export default function AdministrationSubmodule() {
   const fetchPermissionsForRole = async () => {
     if (!selectedRole) return;
 
-    setLoading(true);
+    loading || setLoading(true);
     const GET_PERMISSIONS_URL = `${BASE_URL}/api/v1/users/permisos/roles/${selectedRole}/permissions/`;
 
     try {
@@ -271,7 +338,225 @@ export default function AdministrationSubmodule() {
     }
   };
 
-  const filteredUsers = mockUsers.filter((u) => {
+  // --- HANDLER PARA ENVIAR EL POST DE CREACIÓN A DJANGO ---
+  const handleCreateUserSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${BASE_URL}/api/v1/users/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": token ? `Bearer ${token}` : "",
+        },
+        body: JSON.stringify(formData),
+      });
+
+      const data = await response.json();
+
+      if (response.status === 201) {
+        toast({
+          title: "Usuario creado",
+          description: `El usuario ${data.username} se ha registrado exitosamente.`,
+        });
+
+        const newUserMapped: User = {
+          id: data.id || String(Date.now()),
+          nombre: `${data.first_name} ${data.last_name}`.trim() || data.username,
+          area: data.roles && data.roles.length > 0 ? data.roles.join(", ") : "Sin rol asignado",
+          cargo: data.status === "active" ? "Activo" : "Inactivo",
+          correo: data.email,
+          isMe: false,
+        };
+
+        setUsers((prev) => [newUserMapped, ...prev]);
+        setIsModalOpen(false);
+
+        setFormData({
+          username: "",
+          email: "",
+          first_name: "",
+          last_name: "",
+          password: "",
+          roles: ["Operativo"],
+          status: "active"
+        });
+      } else if (response.status === 400) {
+        let errorMsg = "Verifica los datos ingresados.";
+        if (data.username) errorMsg = "El nombre de usuario ya existe.";
+        else if (data.email) errorMsg = "El correo electrónico ya está registrado.";
+
+        toast({
+          variant: "destructive",
+          title: "Error al crear usuario",
+          description: errorMsg,
+        });
+      } else {
+        throw new Error();
+      }
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Error de red",
+        description: "Hubo un error al comunicar con el endpoint de Django.",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // --- HANDLER PARA OBTENER LOS DATOS ACTUALES E INYECTARLOS AL FORMULARIO DE EDICIÓN ---
+  const handleOpenEditModal = async (userId: string) => {
+    try {
+      const token = localStorage.getItem("token");
+
+      // Cambiamos el método de GET a PATCH para alinearnos con lo que descubriste en Postman
+      const response = await fetch(`${BASE_URL}/api/v1/users/${userId}/`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": token ? `Bearer ${token}` : "",
+        },
+        // Enviamos un objeto vacío ya que Postman demostró que el backend responde con los datos del usuario
+        body: JSON.stringify({}),
+      });
+
+      if (!response.ok) throw new Error("No se pudieron extraer los detalles del usuario.");
+
+      const u = await response.json();
+
+      setSelectedUserId(userId);
+
+      // Mapeamos las propiedades exactas que vimos en tu respuesta de Postman
+      setEditFormData({
+        username: u.username || "",
+        email: u.email || "",
+        first_name: u.first_name || "",
+        last_name: u.last_name || "",
+        // Mapeamos roles asegurándonos de que si viene un array vacío o null use por defecto 'Operativo'
+        roles: u.roles && u.roles.length > 0 ? u.roles : ["Operativo"],
+        status: u.status || "active"
+      });
+
+      setIsEditModalOpen(true);
+    } catch (error) {
+      console.error("Error cargando usuario para edición:", error);
+      toast({
+        variant: "destructive",
+        title: "Error de carga",
+        description: "No se pudieron recuperar los datos actualizados del usuario.",
+      });
+    }
+  };
+
+  // --- HANDLER PARA ENVIAR EL PATCH DE ACTUALIZACIÓN A DJANGO ---
+  const handleEditUserSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsEditing(true);
+
+    try {
+      const token = localStorage.getItem("token");
+
+      // Limpiamos y aseguramos que el estado vaya estrictamente en minúsculas hacia Django
+      const cleanStatus = String(editFormData.status).toLowerCase().trim();
+      const backendStatus = cleanStatus.includes("inactiv") || cleanStatus === "inactive" ? "inactive" : "active";
+
+      // Construimos el payload idéntico a la estructura limpia que Postman aprobó con éxito
+      const payload = {
+        username: editFormData.username.trim(),
+        email: editFormData.email.trim(),
+        first_name: editFormData.first_name.trim(),
+        last_name: editFormData.last_name.trim(),
+        roles: editFormData.roles,
+        status: backendStatus
+      };
+
+      const response = await fetch(`${BASE_URL}/api/v1/users/${selectedUserId}/`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": token ? `Bearer ${token}` : "",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        toast({
+          title: "Usuario actualizado",
+          description: `Los cambios de ${data.username} se guardaron correctamente.`,
+        });
+
+        // Mapeo inverso exacto para actualizar la tabla del frontend en tiempo real
+        const updatedUserMapped: User = {
+          id: String(data.id),
+          nombre: `${data.first_name} ${data.last_name}`.trim() || data.username,
+          area: data.roles && data.roles.length > 0 ? data.roles.join(", ") : "Sin rol asignado",
+          cargo: data.status === "active" ? "Activo" : "Inactivo",
+          correo: data.email,
+          isMe: data.username === "admin_flow" || data.username === "enava_dev",
+        };
+
+        setUsers((prev) => prev.map((u) => (u.id === String(data.id) ? updatedUserMapped : u)));
+        setIsEditModalOpen(false);
+      } else if (response.status === 400) {
+        let errorMsg = "Ocurrió un problema al actualizar.";
+        if (data.username) errorMsg = "El nombre de usuario ya se encuentra en uso o contiene caracteres inválidos.";
+        else if (data.email) errorMsg = "El correo electrónico ya se encuentra registrado.";
+
+        toast({
+          variant: "destructive",
+          title: "Error de validación",
+          description: errorMsg,
+        });
+      } else {
+        throw new Error();
+      }
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Error de red",
+        description: "Hubo una falla al conectar con el servidor para guardar los cambios.",
+      });
+    } finally {
+      setIsEditing(false);
+    }
+  };
+
+  const handleDeleteUserSubmit = async () => {
+    if (!userToDeleteId) return;
+
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${BASE_URL}/api/v1/users/${userToDeleteId}/`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": token ? `Bearer ${token}` : "",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("No se pudo eliminar (inactivar) el usuario del servidor.");
+      }
+
+      if (tab === "users" || !tab) {
+        setUsers((prevUsers) => prevUsers.filter((u) => u.id !== userToDeleteId));
+      }
+
+      setIsDeleteModalOpen(false);
+      setUserToDeleteId(null);
+
+    } catch (error) {
+      console.error("Error al intentar eliminar el usuario:", error);
+      alert("Hubo un error al intentar eliminar el usuario.");
+    }
+  };
+
+  const filteredUsers = users.filter((u) => {
     const q = search.toLowerCase();
     return (
       u.nombre.toLowerCase().includes(q) ||
@@ -320,7 +605,7 @@ export default function AdministrationSubmodule() {
                   <Input
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Buscar por nombre, correo o cargo..."
+                    placeholder="Buscar por nombre, correo o estado..."
                     className="pl-11 rounded-full h-11"
                   />
                 </div>
@@ -338,7 +623,7 @@ export default function AdministrationSubmodule() {
                     <Button variant="outline" className="gap-2">
                       <FileUp className="h-4 w-4" /> Importar Excel
                     </Button>
-                    <Button className="gap-2">
+                    <Button onClick={() => setIsModalOpen(true)} className="gap-2">
                       <UserPlus className="h-4 w-4" /> Crear usuario
                     </Button>
                   </div>
@@ -349,10 +634,9 @@ export default function AdministrationSubmodule() {
                     <TableHeader>
                       <TableRow className="bg-muted/50">
                         <TableHead>Nombre</TableHead>
-                        <TableHead>Área</TableHead>
-                        <TableHead>Cargo</TableHead>
+                        <TableHead>Área / Rol</TableHead>
+                        <TableHead>Estado</TableHead>
                         <TableHead>Correo</TableHead>
-                        <TableHead>Teléfono</TableHead>
                         <TableHead className="text-right">Acciones</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -368,13 +652,24 @@ export default function AdministrationSubmodule() {
                           <TableCell>{u.area}</TableCell>
                           <TableCell>{u.cargo}</TableCell>
                           <TableCell className="text-muted-foreground">{u.correo}</TableCell>
-                          <TableCell className="text-muted-foreground">{u.telefono}</TableCell>
                           <TableCell className="text-right">
-                            <Button variant="ghost" size="icon">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleOpenEditModal(u.id)}
+                            >
                               <Pencil className="h-4 w-4" />
                             </Button>
-                            <Button variant="ghost" size="icon">
-                              <MoreHorizontal className="h-4 w-4" />
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                              onClick={() => {
+                                setUserToDeleteId(u.id);
+                                setIsDeleteModalOpen(true);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
                             </Button>
                           </TableCell>
                         </TableRow>
@@ -502,6 +797,324 @@ export default function AdministrationSubmodule() {
           </CardContent>
         </Card>
       </div>
+
+      {/* --- RENDERIZADO DEL MODAL EMERGENTE PARA CREAR USUARIO --- */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-background border border-border rounded-xl shadow-lg w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+
+            <div className="flex items-center justify-between p-4 border-b border-border bg-muted/30">
+              <div className="flex items-center gap-2 text-foreground font-semibold">
+                <UserPlus className="w-5 h-5 text-primary" />
+                <span>Registrar Nuevo Usuario</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-full"
+                onClick={() => setIsModalOpen(false)}
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+
+            <form onSubmit={handleCreateUserSubmit} className="p-6 space-y-4 overflow-y-auto">
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Nombres</label>
+                  <Input
+                    type="text"
+                    required
+                    value={formData.first_name}
+                    onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
+                    placeholder="Ingrese ambos nombres"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Apellidos</label>
+                  <Input
+                    type="text"
+                    required
+                    value={formData.last_name}
+                    onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
+                    placeholder="Ingrese ambos apellidos"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Nombre de Usuario</label>
+                <Input
+                  type="text"
+                  required
+                  value={formData.username}
+                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                  placeholder="Ingrese el nombre de usuario"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Correo Electrónico</label>
+                <Input
+                  type="email"
+                  required
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  placeholder="Ingrese el correo electronico"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Contraseña</label>
+                <div className="relative">
+                  <Input
+                    type={showPassword ? "text" : "password"}
+                    required
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    placeholder="••••••••••••"
+                    className="pr-10"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 text-muted-foreground"
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Rol / Área</label>
+                  <Select
+                    value={formData.roles[0]}
+                    onValueChange={(val) => setFormData({ ...formData, roles: [val] })}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Selecciona un rol" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Administrador">Administrador</SelectItem>
+                      <SelectItem value="Operativo">Operativo</SelectItem>
+                      <SelectItem value="Comercial">Comercial</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Estado Inicial</label>
+                  <Select
+                    value={formData.status}
+                    onValueChange={(val) => setFormData({ ...formData, status: val })}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Selecciona estado" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Activo</SelectItem>
+                      <SelectItem value="inactive">Inactivo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-border mt-6">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isSubmitting}
+                  onClick={() => setIsModalOpen(false)}
+                >
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={isSubmitting} className="gap-2">
+                  {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {isSubmitting ? "Guardando..." : "Guardar Usuario"}
+                </Button>
+              </div>
+
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- RENDERIZADO DEL MODAL EMERGENTE PARA EDITAR USUARIO (PATCH) --- */}
+      {isEditModalOpen && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-background border border-border rounded-xl shadow-lg w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+
+            <div className="flex items-center justify-between p-4 border-b border-border bg-muted/30">
+              <div className="flex items-center gap-2 text-foreground font-semibold">
+                <Pencil className="w-5 h-5 text-primary" />
+                <span>Modificar Usuario</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-full"
+                onClick={() => setIsEditModalOpen(false)}
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+
+            <form onSubmit={handleEditUserSubmit} className="p-6 space-y-4 overflow-y-auto">
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Nombres</label>
+                  <Input
+                    type="text"
+                    required
+                    value={editFormData.first_name}
+                    onChange={(e) => setEditFormData({ ...editFormData, first_name: e.target.value })}
+                    placeholder="Modificar nombres"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Apellidos</label>
+                  <Input
+                    type="text"
+                    required
+                    value={editFormData.last_name}
+                    onChange={(e) => setEditFormData({ ...editFormData, last_name: e.target.value })}
+                    placeholder="Modificar apellidos"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Nombre de Usuario</label>
+                <Input
+                  type="text"
+                  required
+                  value={editFormData.username}
+                  onChange={(e) => setEditFormData({ ...editFormData, username: e.target.value })}
+                  placeholder="Modificar nombre de usuario"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Correo Electrónico</label>
+                <Input
+                  type="email"
+                  required
+                  value={editFormData.email}
+                  onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+                  placeholder="Modificar correo electrónico"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Rol / Área</label>
+                  <Select
+                    value={editFormData.roles[0]}
+                    onValueChange={(val) => setEditFormData((prev) => ({ ...prev, roles: [val] }))}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Selecciona un rol" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Administrador">Administrador</SelectItem>
+                      <SelectItem value="Operativo">Operativo</SelectItem>
+                      <SelectItem value="Comercial">Comercial</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Estado Actual</label>
+                  <Select
+                    value={editFormData.status}
+                    onValueChange={(val) => setEditFormData((prev) => ({ ...prev, status: val }))}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Selecciona estado" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Activo</SelectItem>
+                      <SelectItem value="inactive">Inactivo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-border mt-6">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isEditing}
+                  onClick={() => setIsEditModalOpen(false)}
+                >
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={isEditing} className="gap-2">
+                  {isEditing && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {isEditing ? "Guardando..." : "Guardar Cambios"}
+                </Button>
+              </div>
+
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- MODAL DE CONFIRMACIÓN PARA ELIMINAR USUARIO --- */}
+      {isDeleteModalOpen && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-background border border-border rounded-xl shadow-lg w-full max-w-md overflow-hidden flex flex-col">
+
+            {/* Encabezado */}
+            <div className="flex items-center justify-between p-4 border-b border-border bg-muted/30">
+              <div className="flex items-center gap-2 text-foreground font-semibold">
+                <Trash2 className="w-5 h-5 text-destructive" />
+                <span>Confirmar Eliminación</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  setIsDeleteModalOpen(false);
+                  setUserToDeleteId(null);
+                }}
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+
+            {/* Cuerpo */}
+            <div className="p-6 text-sm text-muted-foreground">
+              <p>¿Estás seguro de que deseas eliminar este usuario? Esta acción cambiará su estado a <strong>Inactivo</strong> en el sistema.</p>
+            </div>
+
+            {/* Acciones del Modal */}
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-border bg-muted/10">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsDeleteModalOpen(false);
+                  setUserToDeleteId(null);
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleDeleteUserSubmit}
+              >
+                Confirmar
+              </Button>
+            </div>
+
+          </div>
+        </div>
+      )}
     </AppLayout>
   );
 }
