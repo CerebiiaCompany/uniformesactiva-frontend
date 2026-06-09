@@ -2,7 +2,7 @@ import { useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Mail, Phone, Building2, ShieldAlert, MapPin, Loader2, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
+import { Plus, Mail, Phone, Building2, ShieldAlert, MapPin, Loader2, ChevronLeft, ChevronRight, Search, X, ClipboardList } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { toast } from "sonner";
 
@@ -17,13 +17,17 @@ import { Input } from "@/components/ui/input";
 
 import { useCreateClient } from "@/hooks/useCreateClient";
 import { useGetClients } from "@/hooks/useGetClients";
+import { useGetClientDetail } from "@/hooks/useGetClientDetail";
 
 export default function Customers() {
   const [isModalOpen, setIsModalOpen] = useState(false);
-
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
   const { clients, isLoading: isReading, refetch, pagination, filters } = useGetClients();
   const { createClient, isLoading: isCreating, error: apiError } = useCreateClient();
+  const { client: clientDetail, isLoading: isReadingDetail, error: detailError } = useGetClientDetail(selectedClientId);
+
   const [searchInputs, setSearchInputs] = useState({
     name: "",
     nit: "",
@@ -44,6 +48,7 @@ export default function Customers() {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
+
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setSearchInputs((prev) => ({ ...prev, [name]: value }));
@@ -58,6 +63,16 @@ export default function Customers() {
     const emptyFilters = { name: "", nit: "", email: "", phone: "" };
     setSearchInputs(emptyFilters);
     filters.update(emptyFilters);
+  };
+
+  const handleCardClick = (id: string) => {
+    setSelectedClientId(id);
+    setIsDetailOpen(true);
+  };
+
+  const handleCloseDetail = () => {
+    setIsDetailOpen(false);
+    setSelectedClientId(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -94,7 +109,7 @@ export default function Customers() {
           </Button>
         </div>
 
-        {/* ── SECCIÓN DE FILTROS COMERCIALES DINÁMICOS ── */}
+        {/* SECCIÓN DE FILTROS COMERCIALES DINÁMICOS */}
         <form onSubmit={handleApplyFilters} className="bg-card border rounded-xl p-4 shadow-sm grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 items-end">
           <div>
             <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Buscar por Nombre</label>
@@ -167,7 +182,11 @@ export default function Customers() {
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {clients.map((customer) => (
-                <Card key={customer.id} className="hover:shadow-md transition-shadow cursor-pointer animate-fade-in">
+                <Card
+                  key={customer.id}
+                  className="hover:shadow-md transition-shadow cursor-pointer animate-fade-in"
+                  onClick={() => handleCardClick(customer.id)}
+                >
                   <CardContent className="p-5">
                     <div className="flex items-start gap-3 mb-4">
                       <Avatar className="h-10 w-10">
@@ -210,7 +229,7 @@ export default function Customers() {
               ))}
             </div>
 
-            {/* Barra de Control de Paginación */}
+            {/* Control de Paginación */}
             <div className="flex items-center justify-between border-t border-border/60 pt-4 px-1 text-sm text-muted-foreground">
               <div>
                 Total de clientes: <span className="font-medium text-foreground">{pagination.totalCount}</span>
@@ -242,6 +261,84 @@ export default function Customers() {
           </div>
         )}
       </div>
+
+      {/* ── MODAL DETALLE DE CLIENTE (HISTORIAL DE ORDENES SIMULADO) ── */}
+      <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
+        <DialogContent className="sm:max-w-lg bg-background p-6">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold flex items-center gap-2">
+              <ClipboardList className="h-5 w-5 text-primary" /> Detalle del Cliente comercial
+            </DialogTitle>
+            <DialogDescription>
+              Consulta la información centralizada y el historial de pedidos de este cliente en FlowTextil.
+            </DialogDescription>
+          </DialogHeader>
+
+          {isReadingDetail ? (
+            <div className="flex flex-col items-center justify-center py-8 space-y-2">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <p className="text-xs text-muted-foreground">Consultando información del cliente...</p>
+            </div>
+          ) : detailError ? (
+            <div className="bg-destructive/10 text-destructive text-xs p-3 rounded-md flex items-center gap-2 border border-destructive/20">
+              <ShieldAlert className="h-4 w-4 flex-shrink-0" />
+              <span>{detailError}</span>
+            </div>
+          ) : clientDetail ? (
+            <div className="space-y-5 mt-2 animate-fade-in">
+              {/* Bloque de Información Primaria */}
+              <div className="bg-muted/40 rounded-xl p-4 border grid grid-cols-2 gap-y-3 gap-x-2 text-xs">
+                <div className="col-span-2 border-b pb-1.5 mb-1 font-semibold text-foreground text-sm flex justify-between items-center">
+                  <span>{clientDetail.name}</span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${clientDetail.status === "active" ? "bg-emerald-500/10 text-emerald-500" : "bg-muted text-muted-foreground"}`}>
+                    {clientDetail.status === "active" ? "Activo" : "Inactivo"}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block font-medium">NIT</span>
+                  <span className="text-foreground font-medium">{clientDetail.nit}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block font-medium">Teléfono</span>
+                  <span className="text-foreground font-medium">{clientDetail.phone}</span>
+                </div>
+                <div className="col-span-2">
+                  <span className="text-muted-foreground block font-medium">Correo Electrónico</span>
+                  <span className="text-foreground font-medium truncate block">{clientDetail.email}</span>
+                </div>
+                <div className="col-span-2">
+                  <span className="text-muted-foreground block font-medium">Ubicación</span>
+                  <span className="text-foreground font-medium">{clientDetail.address}, {clientDetail.city}</span>
+                </div>
+              </div>
+
+              {/* Bloque de Historial de Órdenes */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold text-foreground uppercase tracking-wider">Historial de Órdenes / Pedidos</h4>
+
+                {clientDetail.orders && clientDetail.orders.length === 0 ? (
+                  <div className="text-center py-8 border rounded-xl bg-muted/20 border-dashed">
+                    <p className="text-xs text-muted-foreground font-medium">
+                      Este cliente no registra órdenes de compra creadas en el sistema actualmente.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="text-xs text-muted-foreground">
+                    {/* Render dinámico para cuando existan pedidos en el futuro */}
+                    Órdenes detectadas.
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <Button variant="outline" size="sm" onClick={handleCloseDetail}>
+                  Cerrar Ventana
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       {/* Modal de Registro */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
@@ -293,7 +390,7 @@ export default function Customers() {
               <label className="text-xs font-semibold text-muted-foreground block mb-1">Correo Electrónico</label>
               <Input
                 name="email"
-                type="email"
+                type="text"
                 placeholder="Ej: contacto@empresa.com"
                 required
                 disabled={isCreating}
