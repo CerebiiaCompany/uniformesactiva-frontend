@@ -1,5 +1,6 @@
 # Uniformes Activa - Frontend
 
+
 Este repositorio contiene el frontend para la aplicación de **Uniformes Activa**, inicializado a partir de la plantilla **FlowTextil Hub**. El proyecto está estructurado utilizando React, Vite, TypeScript, TailwindCSS y componentes de Shadcn UI.
 
 ---
