@@ -52,9 +52,10 @@ interface CustomJwtPayload {
 }
 
 const MODULE_MAPPING: Record<string, string> = {
-  "customers": "Clientes",      // 🌟 Corregido de 'clients' a 'customers'
+  "customers": "Clientes",
   "quotes": "Cotizaciones",
   "orders": "Órdenes",
+  "products": "Productos",
   "factory": "Fábrica",
   "inventory": "Inventario",
   "costs": "Costos",
@@ -71,6 +72,7 @@ const comercialItems = [
   { title: "Clientes", url: "/customers", icon: Users },
   { title: "Cotizaciones", url: "/quotations", icon: FileText },
   { title: "Órdenes", url: "/orders", icon: ShoppingCart },
+  { title: "Productos", url: "/products", icon: Package },
 ];
 
 const operacionItems = [
