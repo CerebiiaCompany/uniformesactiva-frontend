@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-type StatusType =
+export type StatusType =
   | "draft" | "sent" | "approved" | "rejected"
   | "pending" | "in_production" | "delivered"
   | "design" | "cutting" | "sewing" | "embroidery" | "quality" | "printing" | "dispatch";
