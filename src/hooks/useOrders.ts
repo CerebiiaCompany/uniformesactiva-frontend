@@ -27,6 +27,16 @@ export interface CreateOrderPayload {
     items: OrderItem[];
 }
 
+export interface OrderLog {
+    id: string;
+    orden_id: string;
+    estado_anterior: string;
+    estado_nuevo: string;
+    usuario_id: string | null;
+    fecha_hora: string;
+    observacion: string | null;
+}
+
 export function useOrders() {
     const [orders, setOrders] = useState<Order[]>([]);
     const [totalCount, setTotalCount] = useState<number>(0);
@@ -44,7 +54,6 @@ export function useOrders() {
         try {
             const params: Record<string, string> = {};
 
-            // Mapeo adaptado a los filtros aceptados por el DTO del backend
             if (filters.cliente_id) params.cliente = String(filters.cliente_id);
             if (filters.producto_id) params.producto = String(filters.producto_id);
             if (filters.id) params.id = String(filters.id);
@@ -114,6 +123,60 @@ export function useOrders() {
         }
     };
 
+    const updateOrderStatus = async (ordenId: string, nuevoEstado: string, observacion: string | null) => {
+        setLoading(true);
+        setError(null);
+
+        try {
+            const response = await fetch(`${API_URL}/api/v1/orders/${ordenId}/estado/`, {
+                method: "PATCH",
+                headers: {
+                    "Authorization": `Bearer ${getToken()}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    nuevo_estado: nuevoEstado,
+                    observacion: observacion,
+                }),
+            });
+
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.message || "Error al actualizar el estado");
+            }
+
+            return true;
+        } catch (err: any) {
+            setError(err.message);
+            return false;
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchOrderLogs = async (ordenId: string): Promise<OrderLog[]> => {
+        setLoading(true);
+        setError(null);
+        try {
+            const response = await fetch(`${API_URL}/api/v1/orders/${ordenId}/logs/`, {
+                method: "GET",
+                headers: {
+                    "Authorization": `Bearer ${getToken()}`,
+                    "Content-Type": "application/json",
+                },
+            });
+
+            if (!response.ok) throw new Error("Error al obtener el historial");
+
+            return await response.json();
+        } catch (err: any) {
+            setError(err.message);
+            return [];
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return {
         orders,
         totalCount,
@@ -121,5 +184,7 @@ export function useOrders() {
         error,
         fetchOrders,
         createOrder,
+        updateOrderStatus,
+        fetchOrderLogs,
     };
 }
