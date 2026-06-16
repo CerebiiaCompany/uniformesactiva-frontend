@@ -1,4 +1,5 @@
 import { useState } from "react";
+import CurrencyInput from "react-currency-input-field";
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -102,7 +103,15 @@ export default function Products() {
             return;
         }
 
-        const result = await createProduct(formData);
+        const payload = {
+            ...formData,
+            variants: formData.variants.map(v => ({
+                ...v,
+                estimated_cost: Number(v.estimated_cost) || 0
+            }))
+        };
+
+        const result = await createProduct(payload);
 
         if (result.success) {
             toast.success("Producto creado exitosamente");
@@ -181,8 +190,6 @@ export default function Products() {
                 <div className="flex items-center justify-between border-t pt-4 px-1 text-sm text-muted-foreground">
                     <div className="flex items-center gap-4">
                         <span>Total: {pagination.totalCount}</span>
-
-                        {/* Selector 10 - 15 - 25 */}
                         <div className="flex items-center gap-2 border-l pl-4">
                             <span>Mostrar:</span>
                             <select
@@ -278,11 +285,16 @@ export default function Products() {
                                                 </div>
                                                 <div>
                                                     <label className="text-[10px] font-medium text-muted-foreground">Costo Estimado</label>
-                                                    <Input
+                                                    <CurrencyInput
+                                                        customInput={Input}
                                                         className="h-8 text-xs"
-                                                        placeholder="18500.00"
+                                                        placeholder="18500"
+                                                        prefix="$ "
+                                                        groupSeparator="."
+                                                        decimalSeparator=","
+                                                        decimalsLimit={2}
                                                         value={variant.estimated_cost}
-                                                        onChange={(e) => handleVariantChange(index, "estimated_cost", e.target.value)}
+                                                        onValueChange={(value) => handleVariantChange(index, "estimated_cost", value ?? "")}
                                                         required
                                                     />
                                                 </div>

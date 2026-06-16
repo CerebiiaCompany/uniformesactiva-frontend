@@ -135,7 +135,7 @@ export default function Orders() {
                   <TableHead className="text-center">Margen</TableHead>
                   <TableHead className="text-center">Estado fábrica</TableHead>
                   <TableHead className="text-center">Estado pago</TableHead>
-                  <TableHead className="text-center">Entrega</TableHead>
+                  <TableHead className="text-center">Estimado Fecha de Entrega</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -151,7 +151,19 @@ export default function Orders() {
                     <TableCell className="text-center">
                       <div className="text-sm font-semibold">{order.producto_nombre}</div>
                     </TableCell>
-                    <TableCell className="text-center text-muted-foreground italic text-xs">—</TableCell>
+                    <TableCell className="text-center font-bold text-slate-800">
+                      {order.items && order.items.length > 0 ? (
+                        `$${order.items
+                          .reduce((acc, item) => {
+                            const unit = Number(item.costo_unitario) || 0;
+                            const qty = Number(item.cantidad) || 0;
+                            return acc + (unit * qty);
+                          }, 0)
+                          .toLocaleString('es-CO')}`
+                      ) : (
+                        "—"
+                      )}
+                    </TableCell>
                     <TableCell className="text-center font-bold text-slate-800">
                       ${Number(order.valor_venta_proyectado).toLocaleString("es-CO")}
                     </TableCell>
