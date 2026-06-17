@@ -135,7 +135,7 @@ export default function Orders() {
                   <TableHead className="text-center">Margen</TableHead>
                   <TableHead className="text-center">Estado fábrica</TableHead>
                   <TableHead className="text-center">Estado pago</TableHead>
-                  <TableHead className="text-center">Estimado Fecha de Entrega</TableHead>
+                  <TableHead className="text-center">Fecha de Entrega Estimada</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -184,7 +184,11 @@ export default function Orders() {
                         <FileText className="h-4 w-4 text-muted-foreground cursor-pointer hover:text-primary" />
                       </div>
                     </TableCell>
-                    <TableCell className="text-center text-muted-foreground italic text-xs">—</TableCell>
+                    <TableCell className="text-center text-sm text-slate-600">
+                      {order.fecha_estimada_entrega
+                        ? new Date(order.fecha_estimada_entrega).toLocaleDateString("es-CO")
+                        : "—"}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

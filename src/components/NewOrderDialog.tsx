@@ -17,6 +17,7 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
     const [selectedProduct, setSelectedProduct] = useState("");
     const [projectedValue, setProjectedValue] = useState("");
     const [selectedVariants, setSelectedVariants] = useState<Record<string, number>>({});
+    const [deliveryDate, setDeliveryDate] = useState("");
 
     const API_URL = import.meta.env.VITE_API_BASE_URL;
     const getToken = () => localStorage.getItem("token");
@@ -29,6 +30,7 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
             setSelectedProduct("");
             setProjectedValue("");
             setSelectedVariants({});
+            setDeliveryDate("");
         }
     }, [open]);
 
@@ -87,7 +89,8 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
             cliente_id: selectedClient,
             producto_id: selectedProduct,
             valor_venta_proyectado: Number(projectedValue),
-            items: itemsPayload
+            items: itemsPayload,
+            fecha_estimada_entrega: deliveryDate ? deliveryDate : null
         };
 
         const success = await createOrder(payload);
@@ -105,7 +108,7 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
                 <DialogHeader>
                     <DialogTitle>Crear Nueva Orden</DialogTitle>
                     <DialogDescription>
-                        Selecciona el cliente, producto y las cantidades por variante.
+                        Selecciona el cliente, producto, fecha estimada y las cantidades por variante.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -163,6 +166,16 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
                             ))}
                         </div>
                     )}
+
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium">Fecha de Entrega Estimada</label>
+                        <input
+                            type="date"
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            value={deliveryDate}
+                            onChange={(e) => setDeliveryDate(e.target.value)}
+                        />
+                    </div>
 
                     <div className="space-y-2 pt-2">
                         <label className="text-sm font-medium">Valor de Venta Proyectado ($)</label>
