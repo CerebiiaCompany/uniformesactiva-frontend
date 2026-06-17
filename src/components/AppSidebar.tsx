@@ -217,8 +217,8 @@ export function AppSidebar() {
   };
 
   return (
-    <Sidebar collapsible="icon">
-      <SidebarHeader className="p-4 border-b border-sidebar-border">
+    <Sidebar collapsible="icon" className="h-screen flex flex-col">
+      <SidebarHeader className="p-4 border-b border-sidebar-border shrink-0">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded-lg bg-sidebar-primary flex items-center justify-center shrink-0">
             <Scissors className="h-5 w-5 text-sidebar-primary-foreground" />
@@ -232,7 +232,7 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
 
-      <SidebarContent className="px-2 py-3 overflow-hidden">
+      <SidebarContent className="px-2 py-3 flex-1 overflow-y-auto min-h-0 [&::-webkit-scrollbar]:w-[5px] [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-sidebar-border [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-sidebar-foreground/20">
         {/* General */}
         {generalItems.some(item => canViewModule(item.title)) && (
           <SidebarGroup>
@@ -326,7 +326,7 @@ export function AppSidebar() {
         )}
       </SidebarContent>
 
-      <SidebarFooter className="p-3 border-t border-sidebar-border">
+      <SidebarFooter className="p-3 border-t border-sidebar-border shrink-0">
         <div className="flex items-center justify-between w-full gap-2">
           <div className="flex items-center gap-3 overflow-hidden">
             <Avatar className="h-8 w-8 shrink-0">

@@ -42,15 +42,6 @@ const quickAccess = [
 ];
 
 export default function Administration() {
-  const [selectedOfficial, setSelectedOfficial] = useState<string>("");
-
-  const handleAssignOfficial = () => {
-    if (!selectedOfficial) {
-      toast({ title: "Selecciona un usuario", variant: "destructive" });
-      return;
-    }
-    toast({ title: "Oficial asignado", description: "Se asignó como oficial de datos." });
-  };
 
   return (
     <AppLayout
@@ -90,42 +81,6 @@ export default function Administration() {
                   <p className="text-sm font-medium text-foreground mt-1">{f.value}</p>
                 </div>
               ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="animate-fade-in">
-          <CardContent className="p-6 space-y-4">
-            <div>
-              <Badge variant="secondary" className="rounded-full">Oficial de datos</Badge>
-              <h3 className="text-base font-semibold text-foreground mt-3">
-                No hay oficial de datos asignado
-              </h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                Designa a un usuario de la compañía como oficial responsable del tratamiento de datos personales.
-              </p>
-            </div>
-            <div>
-              <p className="text-[10px] font-semibold text-muted-foreground tracking-widest mb-2">
-                USUARIO DE LA EMPRESA
-              </p>
-              <div className="flex flex-col md:flex-row gap-2">
-                <Select value={selectedOfficial} onValueChange={setSelectedOfficial}>
-                  <SelectTrigger className="flex-1">
-                    <SelectValue placeholder="Selecciona un usuario..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {mockUsers.map((u) => (
-                      <SelectItem key={u.id} value={u.id}>
-                        {u.nombre} — {u.cargo}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button onClick={handleAssignOfficial} className="gap-2">
-                  <UserCheck className="h-4 w-4" /> Asignar oficial
-                </Button>
-              </div>
             </div>
           </CardContent>
         </Card>
