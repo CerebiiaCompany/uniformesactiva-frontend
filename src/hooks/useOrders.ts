@@ -3,6 +3,7 @@ import type { StatusType } from "@/components/StatusBadge";
 
 export interface OrderItem {
     subproducto_id: string;
+    subproducto_nombre?: string;
     cantidad: number;
     costo_unitario: string | number;
 }

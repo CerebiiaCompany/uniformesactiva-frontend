@@ -30,6 +30,9 @@ interface ProductForm {
 
 export default function Products() {
     const [isModalOpen, setIsModalOpen] = useState(false);
+    // Estados para el modal de detalle
+    const [selectedProduct, setSelectedProduct] = useState<any>(null);
+    const [isDetailOpen, setIsDetailOpen] = useState(false);
 
     const { products, isLoading, refetch, pagination, filters } = useGetProducts();
     const { createProduct, isLoading: isCreating, error: apiError } = useCreateProduct();
@@ -97,7 +100,6 @@ export default function Products() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
-        // Validación extra para asegurar que se envíe con la estructura requerida
         if (formData.variants.length === 0) {
             toast.error("Debes agregar al menos una variante al producto");
             return;
@@ -116,7 +118,7 @@ export default function Products() {
         if (result.success) {
             toast.success("Producto creado exitosamente");
             setIsModalOpen(false);
-            setFormData({ name: "", description: "", variants: [] }); // Limpiar formulario
+            setFormData({ name: "", description: "", variants: [] });
             refetch();
         } else {
             toast.error(apiError || "Error al crear el producto");
@@ -134,7 +136,6 @@ export default function Products() {
                     </Button>
                 </div>
 
-                {/* Filtros */}
                 <form onSubmit={handleApplyFilters} className="bg-card border rounded-xl p-4 shadow-sm flex gap-3 items-end">
                     <div className="flex-1 max-w-sm">
                         <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Buscar por Nombre</label>
@@ -152,13 +153,20 @@ export default function Products() {
                     </div>
                 </form>
 
-                {/* Lista de Productos */}
                 {isLoading ? (
                     <div className="flex justify-center pt-12"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {products.map((prod: any) => (
-                            <Card key={prod.id} className="hover:shadow-md transition-shadow">
+                            <Card
+                                key={prod.id}
+                                className="hover:shadow-md transition-shadow cursor-pointer"
+                                aria-label={`Abrir detalle de ${prod.name}`}
+                                onClick={() => {
+                                    setSelectedProduct(prod);
+                                    setIsDetailOpen(true);
+                                }}
+                            >
                                 <CardContent className="p-5">
                                     <div className="flex items-start justify-between mb-4">
                                         <div className="flex items-center gap-3">
@@ -186,7 +194,6 @@ export default function Products() {
                     </div>
                 )}
 
-                {/* Paginación con Selector de Tamaño de Página */}
                 <div className="flex items-center justify-between border-t pt-4 px-1 text-sm text-muted-foreground">
                     <div className="flex items-center gap-4">
                         <span>Total: {pagination.totalCount}</span>
@@ -216,7 +223,7 @@ export default function Products() {
                 </div>
             </div>
 
-            {/* Modal de Registro Expandido para Variantes */}
+            {/* Modal de Registro */}
             <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
                 <DialogContent className="sm:max-w-xl max-h-[85vh] overflow-y-auto">
                     <DialogHeader>
@@ -226,24 +233,14 @@ export default function Products() {
                         <div className="space-y-3">
                             <div>
                                 <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Nombre Base del Producto</label>
-                                <Input
-                                    placeholder="Ej. Camiseta Polo Activa"
-                                    value={formData.name}
-                                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                    required
-                                />
+                                <Input placeholder="Ej. Camiseta Polo Activa" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required />
                             </div>
                             <div>
                                 <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Descripción</label>
-                                <Input
-                                    placeholder="Ej. Camiseta polo de alta resistencia."
-                                    value={formData.description}
-                                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                                />
+                                <Input placeholder="Ej. Camiseta polo de alta resistencia." value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
                             </div>
                         </div>
 
-                        {/* Contenedor de Variantes */}
                         <div className="border-t pt-4 space-y-4">
                             <div className="flex items-center justify-between">
                                 <h3 className="text-xs font-bold text-foreground flex items-center gap-1.5">
@@ -262,74 +259,33 @@ export default function Products() {
                                 <div className="space-y-4">
                                     {formData.variants.map((variant, index) => (
                                         <div key={index} className="p-4 bg-muted/40 border rounded-xl relative space-y-3">
-                                            <Button
-                                                type="button"
-                                                variant="ghost"
-                                                size="icon"
-                                                className="absolute top-2 right-2 h-7 w-7 text-destructive hover:bg-destructive/10"
-                                                onClick={() => removeVariant(index)}
-                                            >
+                                            <Button type="button" variant="ghost" size="icon" className="absolute top-2 right-2 h-7 w-7 text-destructive hover:bg-destructive/10" onClick={() => removeVariant(index)}>
                                                 <Trash2 className="h-3.5 w-3.5" />
                                             </Button>
 
                                             <div className="grid grid-cols-3 gap-2">
                                                 <div className="col-span-2">
                                                     <label className="text-[10px] font-medium text-muted-foreground">Nombre de Referencia</label>
-                                                    <Input
-                                                        className="h-8 text-xs"
-                                                        placeholder="Ej. Camiseta Polo - Talla S - Azul"
-                                                        value={variant.name}
-                                                        onChange={(e) => handleVariantChange(index, "name", e.target.value)}
-                                                        required
-                                                    />
+                                                    <Input className="h-8 text-xs" placeholder="Ej. Camiseta Polo - Talla S - Azul" value={variant.name} onChange={(e) => handleVariantChange(index, "name", e.target.value)} required />
                                                 </div>
                                                 <div>
                                                     <label className="text-[10px] font-medium text-muted-foreground">Costo Estimado</label>
-                                                    <CurrencyInput
-                                                        customInput={Input}
-                                                        className="h-8 text-xs"
-                                                        placeholder="18500"
-                                                        prefix="$ "
-                                                        groupSeparator="."
-                                                        decimalSeparator=","
-                                                        decimalsLimit={2}
-                                                        value={variant.estimated_cost}
-                                                        onValueChange={(value) => handleVariantChange(index, "estimated_cost", value ?? "")}
-                                                        required
-                                                    />
+                                                    <CurrencyInput customInput={Input} className="h-8 text-xs" placeholder="18500" prefix="$ " groupSeparator="." decimalSeparator="," decimalsLimit={2} value={variant.estimated_cost} onValueChange={(value) => handleVariantChange(index, "estimated_cost", value ?? "")} required />
                                                 </div>
                                             </div>
 
                                             <div className="grid grid-cols-3 gap-2">
                                                 <div>
                                                     <label className="text-[10px] font-medium text-muted-foreground">Talla</label>
-                                                    <Input
-                                                        className="h-8 text-xs"
-                                                        placeholder="S, M, L..."
-                                                        value={variant.attributes.talla}
-                                                        onChange={(e) => handleVariantChange(index, "talla", e.target.value, true)}
-                                                        required
-                                                    />
+                                                    <Input className="h-8 text-xs" placeholder="S, M, L..." value={variant.attributes.talla} onChange={(e) => handleVariantChange(index, "talla", e.target.value, true)} required />
                                                 </div>
                                                 <div>
                                                     <label className="text-[10px] font-medium text-muted-foreground">Color</label>
-                                                    <Input
-                                                        className="h-8 text-xs"
-                                                        placeholder="Azul, Negro..."
-                                                        value={variant.attributes.color}
-                                                        onChange={(e) => handleVariantChange(index, "color", e.target.value, true)}
-                                                        required
-                                                    />
+                                                    <Input className="h-8 text-xs" placeholder="Azul, Negro..." value={variant.attributes.color} onChange={(e) => handleVariantChange(index, "color", e.target.value, true)} required />
                                                 </div>
                                                 <div>
                                                     <label className="text-[10px] font-medium text-muted-foreground">Material</label>
-                                                    <Input
-                                                        className="h-8 text-xs"
-                                                        placeholder="Algodón..."
-                                                        value={variant.attributes.material}
-                                                        onChange={(e) => handleVariantChange(index, "material", e.target.value, true)}
-                                                        required
-                                                    />
+                                                    <Input className="h-8 text-xs" placeholder="Algodón..." value={variant.attributes.material} onChange={(e) => handleVariantChange(index, "material", e.target.value, true)} required />
                                                 </div>
                                             </div>
                                         </div>
@@ -343,6 +299,43 @@ export default function Products() {
                             Guardar Producto Completo
                         </Button>
                     </form>
+                </DialogContent>
+            </Dialog>
+
+            {/* Modal de Detalle del Producto */}
+            <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
+                <DialogContent className="sm:max-w-xl max-h-[85vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>{selectedProduct?.name ?? "Detalle del producto"}</DialogTitle>
+                    </DialogHeader>
+
+                    <p className="text-sm text-muted-foreground mb-4">
+                        {selectedProduct?.description || "Sin descripción"}
+                    </p>
+
+                    {selectedProduct?.variants?.length > 0 ? (
+                        <div className="space-y-3">
+                            {selectedProduct.variants.map((variant: any, idx: number) => (
+                                <div key={variant.id ?? idx} className="p-4 bg-muted/20 border rounded-lg">
+                                    <h4 className="font-medium mb-2">{variant.name}</h4>
+                                    <div className="grid grid-cols-2 gap-2 text-xs">
+                                        <div><strong>Talla:</strong> {variant.attributes?.talla ?? "-"}</div>
+                                        <div><strong>Color:</strong> {variant.attributes?.color ?? "-"}</div>
+                                        <div><strong>Material:</strong> {variant.attributes?.material ?? "-"}</div>
+                                        <div><strong>Costo estimado:</strong> ${Number(variant.estimated_cost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="text-xs text-muted-foreground">Sin variantes.</p>
+                    )}
+
+                    <div className="flex justify-end mt-4">
+                        <Button variant="outline" onClick={() => setIsDetailOpen(false)}>
+                            Cerrar
+                        </Button>
+                    </div>
                 </DialogContent>
             </Dialog>
         </AppLayout>

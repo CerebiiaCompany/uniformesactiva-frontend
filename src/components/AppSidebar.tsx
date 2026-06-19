@@ -226,7 +226,7 @@ export function AppSidebar() {
           {!collapsed && (
             <div className="animate-fade-in">
               <h1 className="text-sm font-bold text-sidebar-accent-foreground tracking-tight">FlowTextil</h1>
-              <p className="text-[10px] text-sidebar-foreground/60">ERP + CRM Textil</p>
+              <p className="text-[10px] text-sidebar-foreground/60">Uniformes Activa</p>
             </div>
           )}
         </div>
