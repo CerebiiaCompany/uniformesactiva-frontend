@@ -3,6 +3,7 @@ import type { StatusType } from "@/components/StatusBadge";
 
 export interface OrderItem {
     subproducto_id: string;
+    subproducto_nombre?: string;
     cantidad: number;
     costo_unitario: string | number;
 }
@@ -17,6 +18,7 @@ export interface Order {
     valor_venta_proyectado: string;
     margen_ganancia: string;
     fecha_creacion: string;
+    fecha_estimada_entrega?: string | null;
     items: OrderItem[];
 }
 
@@ -25,6 +27,7 @@ export interface CreateOrderPayload {
     producto_id: string;
     valor_venta_proyectado: string | number;
     items: OrderItem[];
+    fecha_estimada_entrega?: string | null;
 }
 
 export interface OrderLog {

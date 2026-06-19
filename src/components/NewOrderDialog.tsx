@@ -15,11 +15,31 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
     const [products, setProducts] = useState<any[]>([]);
     const [selectedClient, setSelectedClient] = useState("");
     const [selectedProduct, setSelectedProduct] = useState("");
-    const [projectedValue, setProjectedValue] = useState("");
+
+    const [projectedValueRaw, setProjectedValueRaw] = useState<string>('');
+    const [projectedValueFormatted, setProjectedValueFormatted] = useState<string>('');
+
     const [selectedVariants, setSelectedVariants] = useState<Record<string, number>>({});
+    const [deliveryDate, setDeliveryDate] = useState("");
 
     const API_URL = import.meta.env.VITE_API_BASE_URL;
     const getToken = () => localStorage.getItem("token");
+    const formatCurrency = (value: number) =>
+        new Intl.NumberFormat('es-CO', {
+            style: 'currency',
+            currency: 'COP',
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0,
+        }).format(value);
+
+    const handleProjectedValueChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const input = e.target.value;
+        const numericStr = input.replace(/[^\d]/g, '');
+        const numericValue = numericStr ? Number(numericStr) : 0;
+
+        setProjectedValueRaw(numericStr);
+        setProjectedValueFormatted(numericStr ? formatCurrency(numericValue) : '');
+    };
 
     useEffect(() => {
         if (open) {
@@ -27,8 +47,10 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
             fetchProducts();
             setSelectedClient("");
             setSelectedProduct("");
-            setProjectedValue("");
+            setProjectedValueRaw("");
+            setProjectedValueFormatted("");
             setSelectedVariants({});
+            setDeliveryDate("");
         }
     }, [open]);
 
@@ -86,8 +108,9 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
         const payload = {
             cliente_id: selectedClient,
             producto_id: selectedProduct,
-            valor_venta_proyectado: Number(projectedValue),
-            items: itemsPayload
+            valor_venta_proyectado: Number(projectedValueRaw),
+            items: itemsPayload,
+            fecha_estimada_entrega: deliveryDate ? deliveryDate : null
         };
 
         const success = await createOrder(payload);
@@ -105,7 +128,7 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
                 <DialogHeader>
                     <DialogTitle>Crear Nueva Orden</DialogTitle>
                     <DialogDescription>
-                        Selecciona el cliente, producto y las cantidades por variante.
+                        Selecciona el cliente, producto, fecha estimada y las cantidades por variante.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -149,7 +172,15 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
                             {activeProduct.variants.map((v: any) => (
                                 <div key={v.id} className="flex items-center justify-between gap-2">
                                     <div className="text-sm w-2/3 truncate" title={v.name}>
-                                        {v.name} <span className="text-xs text-muted-foreground">(${v.estimated_cost})</span>
+                                        {v.name}{' '}
+                                        <span className="text-xs text-muted-foreground">
+                                            {Number(v.estimated_cost).toLocaleString('es-CO', {
+                                                style: 'currency',
+                                                currency: 'COP',
+                                                minimumFractionDigits: 0,
+                                                maximumFractionDigits: 0,
+                                            })}
+                                        </span>
                                     </div>
                                     <input
                                         type="number"
@@ -164,17 +195,25 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
                         </div>
                     )}
 
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium">Fecha de Entrega Estimada</label>
+                        <input
+                            type="date"
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            value={deliveryDate}
+                            onChange={(e) => setDeliveryDate(e.target.value)}
+                        />
+                    </div>
+
                     <div className="space-y-2 pt-2">
                         <label className="text-sm font-medium">Valor de Venta Proyectado ($)</label>
                         <input
                             required
-                            type="number"
-                            min="0"
-                            step="0.01"
+                            type="text"
+                            placeholder="Ej. $1.000"
                             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            placeholder="28000.00"
-                            value={projectedValue}
-                            onChange={(e) => setProjectedValue(e.target.value)}
+                            value={projectedValueFormatted}
+                            onChange={handleProjectedValueChange}
                         />
                     </div>
 

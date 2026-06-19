@@ -6,10 +6,19 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, FileText, Settings, Loader2, ChevronLeft, ChevronRight, SlidersHorizontal } from "lucide-react";
+import { Plus, Search, FileText, Settings, Loader2, ChevronLeft, ChevronRight, SlidersHorizontal, Eye } from "lucide-react";
 import { useOrders, Order } from "@/hooks/useOrders";
 import { NewOrderDialog } from "@/components/NewOrderDialog";
 import { OrderStatusPanel } from "@/components/OrderStatusPanel";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat('es-CO', {
+    style: 'currency',
+    currency: 'COP',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(value);
 
 export default function Orders() {
   const { orders, loading, fetchOrders, totalCount } = useOrders();
@@ -18,10 +27,12 @@ export default function Orders() {
   const [isNewOrderOpen, setIsNewOrderOpen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  // Nuevo estado solo para búsqueda local
+  // Estados para el detalle de artículos
+  const [detailOrder, setDetailOrder] = useState<Order | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+
   const [searchTerm, setSearchTerm] = useState("");
 
-  // Estado centralizado para filtros alineado con la API
   const [filters, setFilters] = useState({
     id: "",
     estado: "todos",
@@ -32,12 +43,10 @@ export default function Orders() {
     page_size: 10
   });
 
-  // Cada vez que cambian los filtros, se dispara el fetch
   useEffect(() => {
     fetchOrders(filters);
   }, [fetchOrders, filters]);
 
-  // Lógica de filtrado en memoria
   const filteredOrders = useMemo(() => {
     const term = searchTerm.toLowerCase();
     return orders.filter((order) =>
@@ -57,6 +66,11 @@ export default function Orders() {
     setTimeout(() => setStatusPanelOrder(null), 600);
   };
 
+  const openDetailModal = (order: Order) => {
+    setDetailOrder(order);
+    setDetailOpen(true);
+  };
+
   return (
     <AppLayout title="Órdenes" subtitle="Gestión centralizada de órdenes">
       <Card>
@@ -69,7 +83,6 @@ export default function Orders() {
           </div>
 
           <div className="flex flex-col gap-4">
-            {/* Barra de Filtros */}
             <div className="flex gap-2 items-center flex-wrap">
               <div className="relative w-64">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -106,7 +119,6 @@ export default function Orders() {
               </Button>
             </div>
 
-            {/* Filtros Técnicos Avanzados */}
             {showAdvanced && (
               <div className="grid grid-cols-3 gap-2 p-3 bg-muted/20 rounded-md">
                 <Input placeholder="UUID Completo" onChange={(e) => setFilters(p => ({ ...p, id: e.target.value }))} />
@@ -130,63 +142,73 @@ export default function Orders() {
                   <TableHead className="text-center">Fecha inicio</TableHead>
                   <TableHead className="text-center">Cliente</TableHead>
                   <TableHead className="text-center">Artículos</TableHead>
-                  <TableHead className="text-center">Costo</TableHead>
-                  <TableHead className="text-center">Ingreso</TableHead>
+                  <TableHead className="text-center">Costo Estimado</TableHead>
+                  <TableHead className="text-center">Valor de Venta</TableHead>
+                  <TableHead className="text-center">Ganancia Estimada</TableHead>
                   <TableHead className="text-center">Margen</TableHead>
                   <TableHead className="text-center">Estado fábrica</TableHead>
                   <TableHead className="text-center">Estado pago</TableHead>
-                  <TableHead className="text-center">Estimado Fecha de Entrega</TableHead>
+                  <TableHead className="text-center">Fecha de Entrega Estimada</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredOrders.map((order) => (
-                  <TableRow key={order.id} className="hover:bg-muted/50">
-                    <TableCell className="text-center font-mono text-xs font-bold text-slate-700">
-                      ORD-{order.id.slice(0, 3).toUpperCase()}
-                    </TableCell>
-                    <TableCell className="text-center text-sm">
-                      {new Date(order.fecha_creacion).toLocaleDateString("es-CO")}
-                    </TableCell>
-                    <TableCell className="text-center font-medium">{order.cliente_nombre}</TableCell>
-                    <TableCell className="text-center">
-                      <div className="text-sm font-semibold">{order.producto_nombre}</div>
-                    </TableCell>
-                    <TableCell className="text-center font-bold text-slate-800">
-                      {order.items && order.items.length > 0 ? (
-                        `$${order.items
-                          .reduce((acc, item) => {
-                            const unit = Number(item.costo_unitario) || 0;
-                            const qty = Number(item.cantidad) || 0;
-                            return acc + (unit * qty);
-                          }, 0)
-                          .toLocaleString('es-CO')}`
-                      ) : (
-                        "—"
-                      )}
-                    </TableCell>
-                    <TableCell className="text-center font-bold text-slate-800">
-                      ${Number(order.valor_venta_proyectado).toLocaleString("es-CO")}
-                    </TableCell>
-                    <TableCell className="text-center text-green-600 font-bold">
-                      {(Number(order.margen_ganancia) * 100).toFixed(1)}%
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <div className="flex flex-col items-center gap-1">
-                        <StatusBadge status={order.estado} />
-                        <button onClick={() => openStatusPanel(order)} className="flex items-center text-[10px] text-muted-foreground hover:text-primary">
-                          <Settings className="h-3 w-3 mr-1" /> Modificar
-                        </button>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        <span className="bg-slate-100 px-2 py-0.5 rounded text-[10px] font-bold text-slate-600">NO</span>
-                        <FileText className="h-4 w-4 text-muted-foreground cursor-pointer hover:text-primary" />
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-center text-muted-foreground italic text-xs">—</TableCell>
-                  </TableRow>
-                ))}
+                {filteredOrders.map((order) => {
+                  const costoTotal = order.items?.reduce((acc, item) => acc + (Number(item.costo_unitario) * Number(item.cantidad)), 0) || 0;
+                  const ganancia = Number(order.valor_venta_proyectado) - costoTotal;
+                  const margenPorcentaje = Number(order.margen_ganancia) * 100;
+
+                  return (
+                    <TableRow key={order.id} className="hover:bg-muted/50">
+                      <TableCell className="text-center font-mono text-xs font-bold text-slate-700">
+                        ORD-{order.id.slice(0, 3).toUpperCase()}
+                      </TableCell>
+                      <TableCell className="text-center text-sm">
+                        {new Date(order.fecha_creacion).toLocaleDateString("es-CO")}
+                      </TableCell>
+                      <TableCell className="text-center font-medium">{order.cliente_nombre}</TableCell>
+                      <TableCell className="text-center">
+                        <div className="text-sm font-semibold">{order.producto_nombre}</div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openDetailModal(order)}
+                          className="mt-2 flex items-center gap-1 text-[10px] h-6 px-2 mx-auto"
+                        >
+                          <Eye className="h-3 w-3" /> Detalles
+                        </Button>
+                      </TableCell>
+                      <TableCell className="text-center font-bold text-slate-800">
+                        {formatCurrency(costoTotal)}
+                      </TableCell>
+                      <TableCell className="text-center font-bold text-slate-800">
+                        {formatCurrency(Number(order.valor_venta_proyectado))}
+                      </TableCell>
+                      <TableCell className="text-center font-bold">
+                        {formatCurrency(ganancia)}
+                      </TableCell>
+                      <TableCell className={`text-center font-bold ${margenPorcentaje > 0 ? "text-green-600" : "text-red-600"}`}>
+                        {margenPorcentaje.toFixed(1)}%
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex flex-col items-center gap-1">
+                          <StatusBadge status={order.estado} />
+                          <button onClick={() => openStatusPanel(order)} className="flex items-center text-[10px] text-muted-foreground hover:text-primary">
+                            <Settings className="h-3 w-3 mr-1" /> Modificar
+                          </button>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center gap-2">
+                          <span className="bg-slate-100 px-2 py-0.5 rounded text-[10px] font-bold text-slate-600">NO</span>
+                          <FileText className="h-4 w-4 text-muted-foreground cursor-pointer hover:text-primary" />
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center text-sm text-slate-600">
+                        {order.fecha_estimada_entrega ? new Date(order.fecha_estimada_entrega).toLocaleDateString("es-CO") : "—"}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
@@ -194,10 +216,7 @@ export default function Orders() {
           <div className="flex items-center justify-between p-4 border-t">
             <div className="text-xs text-muted-foreground">Total: {totalCount} registros</div>
             <div className="flex gap-2 items-center">
-              <Select
-                value={String(filters.page_size)}
-                onValueChange={(v) => setFilters(prev => ({ ...prev, page_size: Number(v), page: 1 }))}
-              >
+              <Select value={String(filters.page_size)} onValueChange={(v) => setFilters(prev => ({ ...prev, page_size: Number(v), page: 1 }))}>
                 <SelectTrigger className="w-20"><SelectValue placeholder="10" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="10">10</SelectItem>
@@ -218,6 +237,33 @@ export default function Orders() {
 
       <NewOrderDialog open={isNewOrderOpen} onOpenChange={setIsNewOrderOpen} onSuccess={() => fetchOrders(filters)} />
       <OrderStatusPanel order={statusPanelOrder} open={statusPanelOpen} onOpenChange={(open) => !open && closeStatusPanel()} onStatusChange={() => fetchOrders(filters)} />
+
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Detalle de ítems</DialogTitle>
+            <DialogDescription>Orden: {detailOrder?.id.slice(0, 8).toUpperCase()}</DialogDescription>
+          </DialogHeader>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="text-center">Variante</TableHead>
+                <TableHead className="text-center">Cant.</TableHead>
+                <TableHead className="text-center">Total</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {detailOrder?.items?.map((item, idx) => (
+                <TableRow key={idx}>
+                  <TableCell className="text-center">{item.subproducto_nombre || item.subproducto_id}</TableCell>
+                  <TableCell className="text-center">{item.cantidad}</TableCell>
+                  <TableCell className="text-center">{formatCurrency(Number(item.costo_unitario) * item.cantidad)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   );
 }
