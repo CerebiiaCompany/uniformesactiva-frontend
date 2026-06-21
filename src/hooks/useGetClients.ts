@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { http } from "@/lib/http";
 
 export interface Client {
     id: string;
@@ -35,7 +36,6 @@ export function useGetClients(initialPage = 1, initialPageSize = 10) {
         setError(null);
 
         const baseUrl = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
-        const token = localStorage.getItem("token");
 
         const queryParams = new URLSearchParams({
             page: page.toString(),
@@ -49,19 +49,10 @@ export function useGetClients(initialPage = 1, initialPageSize = 10) {
         });
 
         try {
-            const response = await fetch(`${baseUrl}/api/v1/clients/?${queryParams.toString()}`, {
-                method: "GET",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": token ? `Bearer ${token}` : "",
-                },
-            });
-
-            if (!response.ok) {
-                throw new Error("No se pudo obtener la lista de clientes.");
-            }
-
-            const data = await response.json();
+            // Utilizamos el wrapper http que inyecta el token y gestiona el 401
+            const data = await http<{ results: Client[], count: number, next: any, previous: any }>(
+                `${baseUrl}/api/v1/clients/?${queryParams.toString()}`
+            );
 
             setClients(data.results || []);
             setTotalCount(data.count || 0);

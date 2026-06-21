@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { http } from "@/lib/http";
 
 interface VariantPayload {
     name: string;
@@ -27,28 +28,13 @@ export function useCreateProduct() {
         setIsLoading(true);
         setError(null);
 
-        const token = localStorage.getItem("token");
-
-        const url = `${API_BASE_URL}/api/v1/products/`;
-
         try {
-            const response = await fetch(url, {
+            const data = await http(`${API_BASE_URL}/api/v1/products/`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : "",
-                },
                 body: JSON.stringify(productData),
             });
 
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => null);
-                throw new Error(errorData?.detail || errorData?.message || "Error al registrar el producto y sus variantes");
-            }
-
-            const data = await response.json();
             return { success: true, data };
-
         } catch (err: any) {
             setError(err.message || "Ocurrió un error inesperado al conectar con el servidor.");
             return { success: false, error: err.message };

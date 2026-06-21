@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { http } from "@/lib/http";
 
 export interface CreateClientData {
     nit: string;
@@ -18,40 +19,28 @@ export function useCreateClient() {
         setError(null);
 
         const baseUrl = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
-        const token = localStorage.getItem("token");
 
         try {
-            const response = await fetch(`${baseUrl}/api/v1/clients/`, {
+            // El wrapper http inyecta el token y gestiona la petición
+            const result = await http(`${baseUrl}/api/v1/clients/`, {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": token ? `Bearer ${token}` : "",
-                },
                 body: JSON.stringify(data),
             });
-
-            const result = await response.json();
-
-            if (!response.ok) {
-                let errorMessage = "Error en la validación de los datos.";
-
-                if (result.detail) {
-                    errorMessage = result.detail;
-                } else if (typeof result === "object") {
-                    errorMessage = Object.entries(result)
-                        .map(([field, messages]) => `${field}: ${Array.isArray(messages) ? messages.join(", ") : messages}`)
-                        .join(" | ");
-                }
-
-                throw new Error(errorMessage);
-            }
 
             setIsLoading(false);
             return { success: true, data: result };
         } catch (err: any) {
             setIsLoading(false);
-            setError(err.message || "Ocurrió un error inesperado al registrar el cliente.");
-            return { success: false, error: err.message };
+            let errorMessage = err.message || "Ocurrió un error inesperado al registrar el cliente.";
+
+            if (err.data && typeof err.data === "object") {
+                errorMessage = Object.entries(err.data)
+                    .map(([field, messages]) => `${field}: ${Array.isArray(messages) ? messages.join(", ") : messages}`)
+                    .join(" | ");
+            }
+
+            setError(errorMessage);
+            return { success: false, error: errorMessage };
         }
     };
 

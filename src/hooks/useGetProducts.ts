@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { http } from "@/lib/http";
 
 interface ProductFilters {
     name: string;
@@ -10,7 +11,6 @@ export function useGetProducts() {
     const [pageSize, setPageSize] = useState(10);
     const [filters, setFilters] = useState<ProductFilters>({ name: "" });
 
-    // Capturamos la URL base desde el archivo .env
     const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
     const fetchProducts = async () => {
@@ -22,22 +22,9 @@ export function useGetProducts() {
             params.append("name", filters.name);
         }
 
-        const token = localStorage.getItem("token");
-
         const url = `${API_BASE_URL}/api/v1/products/?${params.toString()}`;
 
-        const response = await fetch(url, {
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": token ? `Bearer ${token}` : "",
-            }
-        });
-
-        if (!response.ok) {
-            throw new Error("Error al consultar el catálogo de productos");
-        }
-
-        return response.json();
+        return await http<{ items: any[], total_count: number }>(url);
     };
 
     const { data, isLoading, refetch, error } = useQuery({
