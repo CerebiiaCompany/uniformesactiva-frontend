@@ -11,6 +11,7 @@ import { useOrders, Order } from "@/hooks/useOrders";
 import { NewOrderDialog } from "@/components/NewOrderDialog";
 import { OrderStatusPanel } from "@/components/OrderStatusPanel";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { useToast } from "@/components/ui/use-toast";
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('es-CO', {
@@ -21,7 +22,8 @@ const formatCurrency = (value: number) =>
   }).format(value);
 
 export default function Orders() {
-  const { orders, loading, fetchOrders, totalCount } = useOrders();
+  const { toast } = useToast();
+  const { orders, loading, error, fetchOrders, totalCount } = useOrders();
   const [statusPanelOrder, setStatusPanelOrder] = useState<Order | null>(null);
   const [statusPanelOpen, setStatusPanelOpen] = useState(false);
   const [isNewOrderOpen, setIsNewOrderOpen] = useState(false);
@@ -42,6 +44,16 @@ export default function Orders() {
     page: 1,
     page_size: 10
   });
+
+  useEffect(() => {
+    if (error) {
+      toast({
+        title: "Error al cargar órdenes",
+        description: error,
+        variant: "destructive",
+      });
+    }
+  }, [error, toast]);
 
   useEffect(() => {
     fetchOrders(filters);

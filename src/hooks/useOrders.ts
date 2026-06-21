@@ -144,8 +144,18 @@ export function useOrders() {
             });
 
             if (!response.ok) {
+                let mensaje = "Error al actualizar el estado";
+
+                if (response.status === 403 || response.status === 401) {
+                    mensaje = "No tienes permisos para cambiar el estado de esta orden.";
+                } else if (response.status === 404) {
+                    mensaje = "La ruta de la API no se encontró.";
+                } else if (response.status >= 500) {
+                    mensaje = "El usuario no tiene permisos para cambiar el estado de la orden.";
+                }
+
                 const errData = await response.json().catch(() => ({}));
-                throw new Error(errData.message || "Error al actualizar el estado");
+                throw new Error(errData.message || mensaje);
             }
 
             return true;
