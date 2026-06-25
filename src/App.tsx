@@ -18,6 +18,7 @@ import Website from "./pages/Website";
 import Administration from "./pages/Administration";
 import AdministrationSubmodule from "./pages/AdministrationSubmodule";
 import CompanyProfile from "./pages/CompanyProfile";
+import Lines from "./pages/Lines";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -36,6 +37,7 @@ const App = () => (
             <Route path="/customers" element={<Customers />} />
             <Route path="/quotations" element={<Quotations />} />
             <Route path="/orders" element={<Orders />} />
+            <Route path="/lines" element={<Lines />} />
             <Route path="/products" element={<Products />} />
             <Route path="/production" element={<Production />} />
             <Route path="/inventory" element={<Inventory />} />

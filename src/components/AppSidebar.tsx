@@ -72,7 +72,7 @@ const comercialItems = [
   { title: "Clientes", url: "/customers", icon: Users },
   { title: "Cotizaciones", url: "/quotations", icon: FileText },
   { title: "Órdenes", url: "/orders", icon: ShoppingCart },
-  { title: "Productos", url: "/products", icon: Package },
+  { title: "Productos", url: "/lines", icon: Package },
 ];
 
 const operacionItems = [
