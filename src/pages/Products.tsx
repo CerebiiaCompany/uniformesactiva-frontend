@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import CurrencyInput from "react-currency-input-field";
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
@@ -10,8 +11,8 @@ import { Input } from "@/components/ui/input";
 
 import { useGetProducts } from "@/hooks/useGetProducts";
 import { useCreateProduct } from "@/hooks/useCreateProduct";
+import { useGetLineDetail } from "@/hooks/useGetLineDetail";
 
-// 1. Definimos las interfaces para el tipado del formulario
 interface VariantForm {
     name: string;
     attributes: {
@@ -29,22 +30,53 @@ interface ProductForm {
 }
 
 export default function Products() {
+    const [searchParams] = useSearchParams();
+    const navigate = useNavigate();
+    const lineCode = searchParams.get("lineCode") || undefined;
     const [isModalOpen, setIsModalOpen] = useState(false);
-    // Estados para el modal de detalle
     const [selectedProduct, setSelectedProduct] = useState<any>(null);
     const [isDetailOpen, setIsDetailOpen] = useState(false);
 
-    const { products, isLoading, refetch, pagination, filters } = useGetProducts();
-    const { createProduct, isLoading: isCreating, error: apiError } = useCreateProduct();
+    useEffect(() => {
+        if (!lineCode) {
+            navigate("/lines");
+        }
+    }, [lineCode, navigate]);
 
+    // Obtener detalle para tener el UUID de la línea
+    const {
+        data: lineDetail,
+        isLoading: isDetailLoading,
+        error: lineError
+    } = useGetLineDetail(lineCode!);
+
+    // Derivar el UUID de la línea
+    const lineId = lineDetail?.line?.id;
+
+    // Consulta paginada usando el UUID obtenido
+    const {
+        products,
+        isLoading,
+        refetch,
+        pagination,
+        filters,
+        error: prodError
+    } = useGetProducts(lineId);
+
+    const { createProduct, isLoading: isCreating, error: apiError } = useCreateProduct();
     const [searchInputs, setSearchInputs] = useState({ name: "" });
 
-    // 2. Actualizamos el estado inicial para soportar el arreglo de variantes
     const [formData, setFormData] = useState<ProductForm>({
         name: "",
         description: "",
         variants: []
     });
+
+    // Manejo de errores globales
+    useEffect(() => {
+        if (lineError) toast.error("No se pudo cargar la información de la línea.");
+        if (prodError) toast.error("No se pudieron cargar los productos.");
+    }, [lineError, prodError]);
 
     const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setSearchInputs({ name: e.target.value });
@@ -60,7 +92,6 @@ export default function Products() {
         filters.update({ name: "" });
     };
 
-    // 3. Funciones de control para las variantes dinámicas
     const addVariant = () => {
         setFormData({
             ...formData,
@@ -99,22 +130,19 @@ export default function Products() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-
         if (formData.variants.length === 0) {
             toast.error("Debes agregar al menos una variante al producto");
             return;
         }
-
         const payload = {
             ...formData,
+            lineCode,
             variants: formData.variants.map(v => ({
                 ...v,
                 estimated_cost: Number(v.estimated_cost) || 0
             }))
         };
-
         const result = await createProduct(payload);
-
         if (result.success) {
             toast.success("Producto creado exitosamente");
             setIsModalOpen(false);
@@ -128,7 +156,10 @@ export default function Products() {
     const hasActiveFilters = searchInputs.name !== "";
 
     return (
-        <AppLayout title="Productos" subtitle="Catálogo comercial de referencias">
+        <AppLayout
+            title={lineDetail?.line ? `Productos de ${lineDetail.line.name}` : "Productos"}
+            subtitle={lineDetail?.line ? `Línea: ${lineDetail.line.code}` : "Catálogo comercial de referencias"}
+        >
             <div className="space-y-4">
                 <div className="flex justify-end">
                     <Button size="sm" onClick={() => setIsModalOpen(true)}>
@@ -153,7 +184,7 @@ export default function Products() {
                     </div>
                 </form>
 
-                {isLoading ? (
+                {(isDetailLoading || isLoading) ? (
                     <div className="flex justify-center pt-12"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -185,7 +216,6 @@ export default function Products() {
                                 </CardContent>
                             </Card>
                         ))}
-
                         {products.length === 0 && !isLoading && (
                             <div className="col-span-full text-center py-12 text-muted-foreground text-sm">
                                 No se encontraron productos.
@@ -197,20 +227,7 @@ export default function Products() {
                 <div className="flex items-center justify-between border-t pt-4 px-1 text-sm text-muted-foreground">
                     <div className="flex items-center gap-4">
                         <span>Total: {pagination.totalCount}</span>
-                        <div className="flex items-center gap-2 border-l pl-4">
-                            <span>Mostrar:</span>
-                            <select
-                                className="h-8 rounded-md border border-input bg-background px-2 py-1 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                                value={pagination.pageSize}
-                                onChange={(e) => pagination.setPageSize(Number(e.target.value))}
-                            >
-                                <option value={10}>10</option>
-                                <option value={15}>15</option>
-                                <option value={25}>25</option>
-                            </select>
-                        </div>
                     </div>
-
                     <div className="flex items-center gap-2">
                         <Button variant="outline" size="icon" className="h-8 w-8" onClick={pagination.prevPage} disabled={!pagination.hasPrevious}>
                             <ChevronLeft className="h-4 w-4" />
@@ -240,7 +257,6 @@ export default function Products() {
                                 <Input placeholder="Ej. Camiseta polo de alta resistencia." value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
                             </div>
                         </div>
-
                         <div className="border-t pt-4 space-y-4">
                             <div className="flex items-center justify-between">
                                 <h3 className="text-xs font-bold text-foreground flex items-center gap-1.5">
@@ -250,7 +266,6 @@ export default function Products() {
                                     <Plus className="h-3 w-3 mr-1" /> Añadir Variante
                                 </Button>
                             </div>
-
                             {formData.variants.length === 0 ? (
                                 <div className="text-center py-6 border rounded-xl border-dashed text-xs text-muted-foreground">
                                     Presiona "Añadir Variante" para configurar tallas, colores y costos.
@@ -262,7 +277,6 @@ export default function Products() {
                                             <Button type="button" variant="ghost" size="icon" className="absolute top-2 right-2 h-7 w-7 text-destructive hover:bg-destructive/10" onClick={() => removeVariant(index)}>
                                                 <Trash2 className="h-3.5 w-3.5" />
                                             </Button>
-
                                             <div className="grid grid-cols-3 gap-2">
                                                 <div className="col-span-2">
                                                     <label className="text-[10px] font-medium text-muted-foreground">Nombre de Referencia</label>
@@ -273,7 +287,6 @@ export default function Products() {
                                                     <CurrencyInput customInput={Input} className="h-8 text-xs" placeholder="18500" prefix="$ " groupSeparator="." decimalSeparator="," decimalsLimit={2} value={variant.estimated_cost} onValueChange={(value) => handleVariantChange(index, "estimated_cost", value ?? "")} required />
                                                 </div>
                                             </div>
-
                                             <div className="grid grid-cols-3 gap-2">
                                                 <div>
                                                     <label className="text-[10px] font-medium text-muted-foreground">Talla</label>
@@ -293,7 +306,6 @@ export default function Products() {
                                 </div>
                             )}
                         </div>
-
                         <Button type="submit" className="w-full" disabled={isCreating}>
                             {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                             Guardar Producto Completo
@@ -302,17 +314,13 @@ export default function Products() {
                 </DialogContent>
             </Dialog>
 
-            {/* Modal de Detalle del Producto */}
+            {/* Modal de Detalle */}
             <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
                 <DialogContent className="sm:max-w-xl max-h-[85vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>{selectedProduct?.name ?? "Detalle del producto"}</DialogTitle>
                     </DialogHeader>
-
-                    <p className="text-sm text-muted-foreground mb-4">
-                        {selectedProduct?.description || "Sin descripción"}
-                    </p>
-
+                    <p className="text-sm text-muted-foreground mb-4">{selectedProduct?.description || "Sin descripción"}</p>
                     {selectedProduct?.variants?.length > 0 ? (
                         <div className="space-y-3">
                             {selectedProduct.variants.map((variant: any, idx: number) => (
@@ -322,19 +330,14 @@ export default function Products() {
                                         <div><strong>Talla:</strong> {variant.attributes?.talla ?? "-"}</div>
                                         <div><strong>Color:</strong> {variant.attributes?.color ?? "-"}</div>
                                         <div><strong>Material:</strong> {variant.attributes?.material ?? "-"}</div>
-                                        <div><strong>Costo estimado:</strong> ${Number(variant.estimated_cost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                                        <div><strong>Costo:</strong> ${Number(variant.estimated_cost).toLocaleString()}</div>
                                     </div>
                                 </div>
                             ))}
                         </div>
-                    ) : (
-                        <p className="text-xs text-muted-foreground">Sin variantes.</p>
-                    )}
-
+                    ) : <p className="text-xs text-muted-foreground">Sin variantes.</p>}
                     <div className="flex justify-end mt-4">
-                        <Button variant="outline" onClick={() => setIsDetailOpen(false)}>
-                            Cerrar
-                        </Button>
+                        <Button variant="outline" onClick={() => setIsDetailOpen(false)}>Cerrar</Button>
                     </div>
                 </DialogContent>
             </Dialog>

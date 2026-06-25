@@ -7,6 +7,7 @@ import { Check, ChevronRight, Package, User, Calendar, X, History } from "lucide
 import { cn } from "@/lib/utils";
 import { Order, useOrders, OrderLog } from "@/hooks/useOrders";
 import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/components/ui/use-toast";
 
 const STATUS_FLOW: Array<{ key: string; label: string }> = [
   { key: "pending", label: "Pendiente" },
@@ -25,6 +26,7 @@ export function OrderStatusPanel({ order, open, onOpenChange, onStatusChange }: 
   const [loading, setLoading] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
   const [observacion, setObservacion] = useState("");
+  const { toast } = useToast();
 
   // Integración del historial
   const [logs, setLogs] = useState<OrderLog[]>([]);
@@ -53,7 +55,11 @@ export function OrderStatusPanel({ order, open, onOpenChange, onStatusChange }: 
       onStatusChange();
       onOpenChange(false);
     } else {
-      alert("Error al actualizar el estado");
+      toast({
+        title: "Error al cambiar el estado",
+        description: "El usuario no tiene permisos para cambiar la orden de estado.",
+        variant: "destructive",
+      });
     }
     setLoading(false);
   };
@@ -160,7 +166,6 @@ export function OrderStatusPanel({ order, open, onOpenChange, onStatusChange }: 
               </div>
             </div>
 
-            {/* Nueva sección de historial */}
             <div>
               <div className="flex items-center gap-2 mb-4">
                 <History className="h-4 w-4 text-muted-foreground" />

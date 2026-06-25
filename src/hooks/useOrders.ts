@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import type { StatusType } from "@/components/StatusBadge";
+import { http } from "@/lib/http";
 
 export interface OrderItem {
     subproducto_id: string;
@@ -48,8 +49,6 @@ export function useOrders() {
 
     const API_URL = import.meta.env.VITE_API_BASE_URL;
 
-    const getToken = () => localStorage.getItem("token");
-
     const fetchOrders = useCallback(async (filters: Record<string, string | number> = {}) => {
         setLoading(true);
         setError(null);
@@ -75,22 +74,13 @@ export function useOrders() {
             const queryParams = new URLSearchParams(params).toString();
             const endpoint = `${API_URL}/api/v1/orders/?${queryParams}`;
 
-            const response = await fetch(endpoint, {
-                headers: {
-                    "Authorization": `Bearer ${getToken()}`,
-                    "Content-Type": "application/json",
-                },
-            });
-
-            if (!response.ok) throw new Error("Error al obtener las órdenes");
-
-            const data = await response.json();
+            const data = await http<{ items: Order[], total_count: number }>(endpoint);
 
             setOrders(data.items || []);
             setTotalCount(data.total_count || 0);
 
         } catch (err: any) {
-            setError(err.message);
+            setError(err.message || "Error al obtener las órdenes");
         } finally {
             setLoading(false);
         }
@@ -101,19 +91,10 @@ export function useOrders() {
         setError(null);
 
         try {
-            const response = await fetch(`${API_URL}/api/v1/orders/`, {
+            await http(`${API_URL}/api/v1/orders/`, {
                 method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${getToken()}`,
-                    "Content-Type": "application/json",
-                },
                 body: JSON.stringify(payload),
             });
-
-            if (!response.ok) {
-                const errData = await response.json();
-                throw new Error(JSON.stringify(errData));
-            }
 
             await fetchOrders();
             return true;
@@ -131,26 +112,27 @@ export function useOrders() {
         setError(null);
 
         try {
-            const response = await fetch(`${API_URL}/api/v1/orders/${ordenId}/estado/`, {
+            await http(`${API_URL}/api/v1/orders/${ordenId}/estado/`, {
                 method: "PATCH",
-                headers: {
-                    "Authorization": `Bearer ${getToken()}`,
-                    "Content-Type": "application/json",
-                },
                 body: JSON.stringify({
                     nuevo_estado: nuevoEstado,
                     observacion: observacion,
                 }),
             });
 
-            if (!response.ok) {
-                const errData = await response.json().catch(() => ({}));
-                throw new Error(errData.message || "Error al actualizar el estado");
-            }
-
             return true;
         } catch (err: any) {
-            setError(err.message);
+            let mensaje = "Error al actualizar el estado";
+
+            if (err.status === 403 || err.status === 401) {
+                mensaje = "No tienes permisos para cambiar el estado de esta orden.";
+            } else if (err.status === 404) {
+                mensaje = "La ruta de la API no se encontró.";
+            } else if (err.status >= 500) {
+                mensaje = "El usuario no tiene permisos para cambiar el estado de la orden.";
+            }
+
+            setError(err.message || mensaje);
             return false;
         } finally {
             setLoading(false);
@@ -161,19 +143,9 @@ export function useOrders() {
         setLoading(true);
         setError(null);
         try {
-            const response = await fetch(`${API_URL}/api/v1/orders/${ordenId}/logs/`, {
-                method: "GET",
-                headers: {
-                    "Authorization": `Bearer ${getToken()}`,
-                    "Content-Type": "application/json",
-                },
-            });
-
-            if (!response.ok) throw new Error("Error al obtener el historial");
-
-            return await response.json();
+            return await http<OrderLog[]>(`${API_URL}/api/v1/orders/${ordenId}/logs/`);
         } catch (err: any) {
-            setError(err.message);
+            setError(err.message || "Error al obtener el historial");
             return [];
         } finally {
             setLoading(false);
