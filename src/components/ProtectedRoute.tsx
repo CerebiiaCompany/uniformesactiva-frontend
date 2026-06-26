@@ -12,7 +12,7 @@ export default function ProtectedRoute() {
     const location = useLocation();
 
     if (!token) {
-        return <Navigate to="/" replace />;
+        return <Navigate to="/login" replace state={{ from: location }} />;
     }
 
     let userRoles: string[] = [];
@@ -35,7 +35,7 @@ export default function ProtectedRoute() {
             console.error("Error al decodificar el token:", error);
             localStorage.removeItem("token");
             localStorage.removeItem("user");
-            return <Navigate to="/" replace />;
+            return <Navigate to="/login" replace state={{ from: location }} />;
         }
     }
 
