@@ -13,6 +13,7 @@ import Products from "./pages/Products";
 import Production from "./pages/Production";
 import Inventory from "./pages/Inventory";
 import Costing from "./pages/Costing";
+import VariantCostPage from "./pages/VariantCostPage";
 import Reports from "./pages/Reports";
 import Website from "./pages/Website";
 import Administration from "./pages/Administration";
@@ -39,6 +40,7 @@ const App = () => (
             <Route path="/orders" element={<Orders />} />
             <Route path="/lines" element={<Lines />} />
             <Route path="/products" element={<Products />} />
+            <Route path="/products/:productId/variants/:variantId/costing" element={<VariantCostPage />} />
             <Route path="/production" element={<Production />} />
             <Route path="/inventory" element={<Inventory />} />
             <Route path="/costing" element={<Costing />} />

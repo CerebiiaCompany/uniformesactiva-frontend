@@ -192,10 +192,15 @@ export default function Products() {
                             <Card
                                 key={prod.id}
                                 className="hover:shadow-md transition-shadow cursor-pointer"
-                                aria-label={`Abrir detalle de ${prod.name}`}
+                                aria-label={`Abrir gestión de costos de ${prod.name}`}
                                 onClick={() => {
-                                    setSelectedProduct(prod);
-                                    setIsDetailOpen(true);
+                                    const firstVariant = prod.variants?.[0];
+                                    if (firstVariant) {
+                                        navigate(`/products/${prod.id}/variants/${firstVariant.id}/costing`);
+                                    } else {
+                                        setSelectedProduct(prod);
+                                        setIsDetailOpen(true);
+                                    }
                                 }}
                             >
                                 <CardContent className="p-5">
