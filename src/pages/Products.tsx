@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { useGetProducts } from "@/hooks/useGetProducts";
 import { useCreateProduct } from "@/hooks/useCreateProduct";
 import { useGetLineDetail } from "@/hooks/useGetLineDetail";
+import { useGetProductLines } from "@/hooks/useGetProductLines";
 
 interface VariantForm {
     name: string;
@@ -24,6 +25,7 @@ interface VariantForm {
 }
 
 interface ProductForm {
+    line_id: string;
     name: string;
     description: string;
     variants: VariantForm[];
@@ -37,23 +39,22 @@ export default function Products() {
     const [selectedProduct, setSelectedProduct] = useState<any>(null);
     const [isDetailOpen, setIsDetailOpen] = useState(false);
 
+    const { lines: allLines } = useGetProductLines();
+
     useEffect(() => {
         if (!lineCode) {
             navigate("/lines");
         }
     }, [lineCode, navigate]);
 
-    // Obtener detalle para tener el UUID de la línea
     const {
         data: lineDetail,
         isLoading: isDetailLoading,
         error: lineError
     } = useGetLineDetail(lineCode!);
 
-    // Derivar el UUID de la línea
     const lineId = lineDetail?.line?.id;
 
-    // Consulta paginada usando el UUID obtenido
     const {
         products,
         isLoading,
@@ -67,12 +68,18 @@ export default function Products() {
     const [searchInputs, setSearchInputs] = useState({ name: "" });
 
     const [formData, setFormData] = useState<ProductForm>({
+        line_id: "",
         name: "",
         description: "",
         variants: []
     });
 
-    // Manejo de errores globales
+    useEffect(() => {
+        if (lineId) {
+            setFormData(prev => ({ ...prev, line_id: lineId }));
+        }
+    }, [lineId]);
+
     useEffect(() => {
         if (lineError) toast.error("No se pudo cargar la información de la línea.");
         if (prodError) toast.error("No se pudieron cargar los productos.");
@@ -130,23 +137,37 @@ export default function Products() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+
+        if (!formData.line_id) {
+            toast.error("Debes seleccionar una línea para el producto");
+            return;
+        }
+
         if (formData.variants.length === 0) {
             toast.error("Debes agregar al menos una variante al producto");
             return;
         }
+
         const payload = {
-            ...formData,
-            lineCode,
+            line_id: formData.line_id,
+            name: formData.name,
+            description: formData.description,
             variants: formData.variants.map(v => ({
                 ...v,
                 estimated_cost: Number(v.estimated_cost) || 0
             }))
         };
+
         const result = await createProduct(payload);
         if (result.success) {
             toast.success("Producto creado exitosamente");
             setIsModalOpen(false);
-            setFormData({ name: "", description: "", variants: [] });
+            setFormData({
+                line_id: formData.line_id,
+                name: "",
+                description: "",
+                variants: []
+            });
             refetch();
         } else {
             toast.error(apiError || "Error al crear el producto");
@@ -253,6 +274,26 @@ export default function Products() {
                     </DialogHeader>
                     <form onSubmit={handleSubmit} className="space-y-6">
                         <div className="space-y-3">
+                            {/* Selector de Línea */}
+                            <div>
+                                <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
+                                    Línea de Producto
+                                </label>
+                                <select
+                                    className="w-full h-9 px-3 rounded-md border border-input bg-background text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                    value={formData.line_id}
+                                    onChange={(e) => setFormData({ ...formData, line_id: e.target.value })}
+                                    required
+                                >
+                                    <option value="" disabled>Selecciona una línea</option>
+                                    {allLines.map((line: any) => (
+                                        <option key={line.id} value={line.id}>
+                                            {line.name} ({line.code})
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
                             <div>
                                 <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Nombre Base del Producto</label>
                                 <Input placeholder="Ej. Camiseta Polo Activa" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required />

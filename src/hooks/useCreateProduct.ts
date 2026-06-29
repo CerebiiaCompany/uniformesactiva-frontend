@@ -13,6 +13,7 @@ interface VariantPayload {
 }
 
 interface ProductPayload {
+    line_id: string;
     name: string;
     description: string;
     variants: VariantPayload[];
@@ -29,7 +30,7 @@ export function useCreateProduct() {
         setError(null);
 
         try {
-            const data = await http(`${API_BASE_URL}/api/v1/products/`, {
+            const data = await http(`${API_BASE_URL}/api/v1/products/productos/`, {
                 method: 'POST',
                 body: JSON.stringify(productData),
             });

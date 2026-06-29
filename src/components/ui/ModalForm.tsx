@@ -24,9 +24,10 @@ interface ModalFormProps {
     fields: FieldDefinition[];
     onSubmit: (data: Record<string, string>) => void;
     isLoading?: boolean;
+    initialData?: Record<string, any>;
 }
 
-export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading }: ModalFormProps) {
+export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading, initialData }: ModalFormProps) {
     const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         const formData = new FormData(e.currentTarget);
@@ -49,7 +50,7 @@ export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading 
                                 name={field.name}
                                 type={field.type}
                                 placeholder={field.placeholder}
-                                defaultValue={field.defaultValue}
+                                defaultValue={initialData?.[field.name] ?? field.defaultValue ?? ""}
                                 required
                             />
                         </div>
