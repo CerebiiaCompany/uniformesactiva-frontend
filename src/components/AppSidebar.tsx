@@ -72,12 +72,12 @@ const comercialItems = [
   { title: "Clientes", url: "/customers", icon: Users },
   { title: "Cotizaciones", url: "/quotations", icon: FileText },
   { title: "Órdenes", url: "/orders", icon: ShoppingCart },
-  { title: "Productos", url: "/lines", icon: Package },
 ];
 
 const operacionItems = [
   { title: "Fábrica", url: "/production", icon: Factory },
   { title: "Inventario", url: "/inventory", icon: Package },
+  { title: "Líneas", url: "/lines", icon: Package },
   { title: "Costos", url: "/costing", icon: DollarSign },
 ];
 

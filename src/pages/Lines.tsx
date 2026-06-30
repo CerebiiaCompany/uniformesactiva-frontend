@@ -3,8 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Loader2, FolderOpen, ChevronRight, Plus } from "lucide-react";
+import { Loader2, ChevronRight, Plus, Package, Pencil, Trash2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -52,33 +51,76 @@ export default function Lines() {
                 </div>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {lines.map((line: any) => (
-                        <Card
-                            key={line.id}
-                            className="hover:shadow-md transition-shadow cursor-pointer border-l-4 border-l-primary"
-                            onClick={() => navigate(`/products?lineCode=${line.code}`)}
-                            role="button"
-                            aria-label={`Abrir línea ${line.name}`}
-                        >
-                            <CardContent className="p-5 flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                    <div className="p-2 bg-primary/10 rounded-lg">
-                                        <FolderOpen className="h-5 w-5 text-primary" />
+                    {lines.map((line: any) => {
+                        // Obtenemos la inicial del nombre de la línea
+                        const initialLetter = line.name ? line.name.trim().charAt(0).toUpperCase() : "";
+
+                        return (
+                            <Card
+                                key={line.id}
+                                className="hover:shadow-md transition-shadow cursor-pointer border border-muted hover:border-primary/50 flex flex-col justify-between"
+                                onClick={() => navigate(`/products?lineCode=${line.code}`)}
+                                role="button"
+                                aria-label={`Abrir línea ${line.name}`}
+                            >
+                                <CardContent className="p-5 flex flex-col gap-6 h-full justify-between">
+                                    {/* FILA SUPERIOR: Inicial, Nombre, Código y Flecha */}
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-3">
+                                            {/* Contenedor de la Letra Inicial */}
+                                            <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary font-bold flex items-center justify-center text-lg shrink-0">
+                                                {initialLetter}
+                                            </div>
+                                            {/* Información de la Línea */}
+                                            <div className="flex flex-col">
+                                                <h3 className="font-semibold text-sm text-foreground">
+                                                    {line.name}
+                                                </h3>
+                                                <span className="text-xs text-muted-foreground mt-0.5">
+                                                    Código {line.code}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        {/* Flecha de navegación */}
+                                        <ChevronRight className="h-4 w-4 text-muted-foreground/60 shrink-0" />
                                     </div>
-                                    <div>
-                                        <h3 className="font-semibold text-sm flex items-center gap-2">
-                                            {line.name}
-                                            <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4">
-                                                {line.code}
-                                            </Badge>
-                                        </h3>
-                                        <p className="text-xs text-muted-foreground">{line.description || "Sin descripción"}</p>
+
+                                    {/* FILA INFERIOR: Conteo de productos y Acciones */}
+                                    <div className="flex items-center justify-between pt-3 border-t border-muted/40 mt-auto">
+                                        {/* Conteo de Productos */}
+                                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                            <Package className="h-4 w-4" />
+                                            <span>{line.products_count ?? 0} productos</span>
+                                        </div>
+
+                                        {/* Botones de Acción (Editar y Eliminar) */}
+                                        <div className="flex items-center gap-3">
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    console.log("Editar línea", line.id);
+                                                }}
+                                                className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+                                                title="Editar línea"
+                                            >
+                                                <Pencil className="h-4 w-4" />
+                                            </button>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    console.log("Eliminar línea", line.id);
+                                                }}
+                                                className="p-1 text-muted-foreground hover:text-destructive transition-colors"
+                                                title="Eliminar línea"
+                                            >
+                                                <Trash2 className="h-4 w-4" />
+                                            </button>
+                                        </div>
                                     </div>
-                                </div>
-                                <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                            </CardContent>
-                        </Card>
-                    ))}
+                                </CardContent>
+                            </Card>
+                        );
+                    })}
 
                     {lines.length === 0 && !error && (
                         <div className="col-span-full text-center py-12 text-muted-foreground text-sm">
@@ -106,7 +148,6 @@ export default function Lines() {
                             onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
                             required
                         />
-
                         <Button type="submit" className="w-full" disabled={isCreating}>
                             {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                             Guardar Línea
