@@ -5,6 +5,7 @@ interface ProductLine {
     id: string;
     code: string;
     name: string;
+    products_count?: number;
 }
 
 export function useGetProductLines() {
