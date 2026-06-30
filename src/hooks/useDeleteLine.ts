@@ -1,21 +1,23 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { http } from "@/lib/http";
+import { endpoints } from "@/lib/api-endpoints";
 
 export const useDeleteLine = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const queryClient = useQueryClient();
 
     const deleteLine = async (id: string) => {
         setIsLoading(true);
         setError(null);
 
-        const baseUrl = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
-
         try {
-            await http<{ detail: string }>(`${baseUrl}/api/v1/products/lineas/${id}/`, {
+            await http<{ detail: string }>(endpoints.lineas.detail(id), {
                 method: "DELETE",
             });
 
+            queryClient.invalidateQueries({ queryKey: ["product-lines"] });
             return { success: true };
         } catch (err: any) {
             const message = err.message || "Error al eliminar la línea de producto.";

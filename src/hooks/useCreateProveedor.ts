@@ -3,33 +3,25 @@ import { useQueryClient } from "@tanstack/react-query";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
 
-interface LinePayload {
-    name: string;
-    code: string;
-}
-
-export const useCreateLine = () => {
+export function useCreateProveedor() {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const queryClient = useQueryClient();
 
-    const createLine = async (data: LinePayload) => {
+    const createProveedor = async (name: string) => {
         setIsLoading(true);
         setError(null);
 
         try {
-            await http(endpoints.lineas.list(), {
+            const data = await http<{ id: string; name: string }>(endpoints.costos.proveedores(), {
                 method: "POST",
-                body: JSON.stringify({
-                    name: data.name.trim(),
-                    code: data.code.trim().toUpperCase(),
-                }),
+                body: JSON.stringify({ name: name.trim() }),
             });
 
-            queryClient.invalidateQueries({ queryKey: ["product-lines"] });
-            return { success: true };
+            queryClient.invalidateQueries({ queryKey: ["cost-catalog", "proveedores"] });
+            return { success: true, data };
         } catch (err: any) {
-            const message = err.message || "Error al crear la línea de producto.";
+            const message = err.message || "Error al crear el proveedor.";
             setError(message);
             return { success: false, error: message };
         } finally {
@@ -37,5 +29,5 @@ export const useCreateLine = () => {
         }
     };
 
-    return { createLine, isLoading, error };
-};
+    return { createProveedor, isLoading, error };
+}

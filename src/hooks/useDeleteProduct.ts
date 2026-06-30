@@ -3,33 +3,25 @@ import { useQueryClient } from "@tanstack/react-query";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
 
-interface LinePayload {
-    name: string;
-    code: string;
-}
-
-export const useCreateLine = () => {
+export function useDeleteProduct() {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const queryClient = useQueryClient();
 
-    const createLine = async (data: LinePayload) => {
+    const deleteProduct = async (id: string, lineId: string) => {
         setIsLoading(true);
         setError(null);
 
         try {
-            await http(endpoints.lineas.list(), {
-                method: "POST",
-                body: JSON.stringify({
-                    name: data.name.trim(),
-                    code: data.code.trim().toUpperCase(),
-                }),
+            await http<{ detail: string }>(endpoints.productos.detail(id), {
+                method: "DELETE",
             });
 
+            queryClient.invalidateQueries({ queryKey: ["line-products", lineId] });
             queryClient.invalidateQueries({ queryKey: ["product-lines"] });
             return { success: true };
         } catch (err: any) {
-            const message = err.message || "Error al crear la línea de producto.";
+            const message = err.message || "Error al eliminar el producto.";
             setError(message);
             return { success: false, error: message };
         } finally {
@@ -37,5 +29,5 @@ export const useCreateLine = () => {
         }
     };
 
-    return { createLine, isLoading, error };
-};
+    return { deleteProduct, isLoading, error };
+}

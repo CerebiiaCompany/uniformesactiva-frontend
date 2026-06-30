@@ -1,392 +1,388 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import CurrencyInput from "react-currency-input-field";
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, X, Loader2, ChevronLeft, ChevronRight, Package, Tag, Trash2 } from "lucide-react";
+import { Plus, X, Loader2, Package, Tag, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { http } from "@/lib/http";
+import { endpoints } from "@/lib/api-endpoints";
 
-import { useGetProducts } from "@/hooks/useGetProducts";
-import { useCreateProduct } from "@/hooks/useCreateProduct";
-import { useGetLineDetail } from "@/hooks/useGetLineDetail";
+import { useGetLineProducts, type LineProduct } from "@/hooks/useGetLineProducts";
+import { useCreateLineProduct } from "@/hooks/useCreateLineProduct";
+import { useUpdateProduct } from "@/hooks/useUpdateProduct";
+import { useDeleteProduct } from "@/hooks/useDeleteProduct";
 import { useGetProductLines } from "@/hooks/useGetProductLines";
+import type { ProductVariant } from "@/types/variant";
 
-interface VariantForm {
+interface ProductFormData {
     name: string;
-    attributes: {
-        talla: string;
-        color: string;
-        material: string;
-    };
-    estimated_cost: string;
+    code: string;
 }
 
-interface ProductForm {
-    line_id: string;
-    name: string;
-    description: string;
-    variants: VariantForm[];
-}
+const emptyForm: ProductFormData = { name: "", code: "" };
 
 export default function Products() {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
     const lineCode = searchParams.get("lineCode") || undefined;
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [selectedProduct, setSelectedProduct] = useState<any>(null);
-    const [isDetailOpen, setIsDetailOpen] = useState(false);
 
-    const { lines: allLines } = useGetProductLines();
+    const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    const [createFormData, setCreateFormData] = useState<ProductFormData>(emptyForm);
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [editingProduct, setEditingProduct] = useState<LineProduct | null>(null);
+    const [editFormData, setEditFormData] = useState<ProductFormData>(emptyForm);
+    const [deletingProduct, setDeletingProduct] = useState<LineProduct | null>(null);
+    const [openingProductId, setOpeningProductId] = useState<string | null>(null);
+    const [searchInput, setSearchInput] = useState("");
+
+    const { lines, isLoading: isLinesLoading } = useGetProductLines();
+    const currentLine = lines.find((line) => line.code === lineCode);
+    const lineId = currentLine?.id;
+
+    const { products, isLoading, error, refetch } = useGetLineProducts(lineId);
+    const { createLineProduct, isLoading: isCreating } = useCreateLineProduct();
+    const { updateProduct, isLoading: isUpdating } = useUpdateProduct();
+    const { deleteProduct, isLoading: isDeleting } = useDeleteProduct();
 
     useEffect(() => {
-        if (!lineCode) {
-            navigate("/lines");
-        }
+        if (!lineCode) navigate("/lines");
     }, [lineCode, navigate]);
 
-    const {
-        data: lineDetail,
-        isLoading: isDetailLoading,
-        error: lineError
-    } = useGetLineDetail(lineCode!);
-
-    const lineId = lineDetail?.line?.id;
-
-    const {
-        products,
-        isLoading,
-        refetch,
-        pagination,
-        filters,
-        error: prodError
-    } = useGetProducts(lineId);
-
-    const { createProduct, isLoading: isCreating, error: apiError } = useCreateProduct();
-    const [searchInputs, setSearchInputs] = useState({ name: "" });
-
-    const [formData, setFormData] = useState<ProductForm>({
-        line_id: "",
-        name: "",
-        description: "",
-        variants: []
-    });
-
     useEffect(() => {
-        if (lineId) {
-            setFormData(prev => ({ ...prev, line_id: lineId }));
-        }
-    }, [lineId]);
+        if (error) toast.error("No se pudieron cargar los productos de la línea.");
+    }, [error]);
 
-    useEffect(() => {
-        if (lineError) toast.error("No se pudo cargar la información de la línea.");
-        if (prodError) toast.error("No se pudieron cargar los productos.");
-    }, [lineError, prodError]);
+    const filteredProducts = useMemo(() => {
+        const term = searchInput.trim().toLowerCase();
+        if (!term) return products;
+        return products.filter(
+            (p) => p.name.toLowerCase().includes(term) || p.code.toLowerCase().includes(term)
+        );
+    }, [products, searchInput]);
 
-    const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setSearchInputs({ name: e.target.value });
+    const isCreateFormValid =
+        createFormData.name.trim().length > 0 && createFormData.code.trim().length > 0;
+
+    const hasEditChanges = editingProduct
+        ? editFormData.name.trim() !== editingProduct.name.trim() ||
+          editFormData.code.trim().toUpperCase() !== editingProduct.code.trim().toUpperCase()
+        : false;
+
+    const isEditFormValid =
+        editFormData.name.trim().length > 0 && editFormData.code.trim().length > 0 && hasEditChanges;
+
+    const openEditModal = (product: LineProduct) => {
+        setEditingProduct(product);
+        setEditFormData({ name: product.name, code: product.code });
+        setIsEditModalOpen(true);
     };
 
-    const handleApplyFilters = (e: React.FormEvent) => {
+    const closeEditModal = () => {
+        setIsEditModalOpen(false);
+        setEditingProduct(null);
+        setEditFormData(emptyForm);
+    };
+
+    const handleCreateSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        filters.update(searchInputs);
-    };
+        if (!lineId || !isCreateFormValid) return;
 
-    const handleClearFilters = () => {
-        setSearchInputs({ name: "" });
-        filters.update({ name: "" });
-    };
-
-    const addVariant = () => {
-        setFormData({
-            ...formData,
-            variants: [
-                ...formData.variants,
-                {
-                    name: formData.name ? `${formData.name} - Variante` : "",
-                    attributes: { talla: "", color: "", material: "" },
-                    estimated_cost: ""
-                }
-            ]
+        const result = await createLineProduct(lineId, {
+            name: createFormData.name.trim(),
+            code: createFormData.code.trim(),
         });
-    };
 
-    const removeVariant = (index: number) => {
-        const updatedVariants = [...formData.variants];
-        updatedVariants.splice(index, 1);
-        setFormData({ ...formData, variants: updatedVariants });
-    };
-
-    const handleVariantChange = (index: number, field: string, value: string, isAttribute = false) => {
-        const updatedVariants = [...formData.variants];
-        if (isAttribute) {
-            updatedVariants[index].attributes = {
-                ...updatedVariants[index].attributes,
-                [field]: value
-            };
-        } else {
-            updatedVariants[index] = {
-                ...updatedVariants[index],
-                [field]: value
-            };
-        }
-        setFormData({ ...formData, variants: updatedVariants });
-    };
-
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-
-        if (!formData.line_id) {
-            toast.error("Debes seleccionar una línea para el producto");
-            return;
-        }
-
-        if (formData.variants.length === 0) {
-            toast.error("Debes agregar al menos una variante al producto");
-            return;
-        }
-
-        const payload = {
-            line_id: formData.line_id,
-            name: formData.name,
-            description: formData.description,
-            variants: formData.variants.map(v => ({
-                ...v,
-                estimated_cost: Number(v.estimated_cost) || 0
-            }))
-        };
-
-        const result = await createProduct(payload);
         if (result.success) {
-            toast.success("Producto creado exitosamente");
-            setIsModalOpen(false);
-            setFormData({
-                line_id: formData.line_id,
-                name: "",
-                description: "",
-                variants: []
-            });
+            toast.success("Producto creado correctamente");
+            setIsCreateModalOpen(false);
+            setCreateFormData(emptyForm);
             refetch();
         } else {
-            toast.error(apiError || "Error al crear el producto");
+            toast.error(result.error || "Error al crear el producto");
         }
     };
 
-    const hasActiveFilters = searchInputs.name !== "";
+    const handleEditSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!lineId || !editingProduct || !isEditFormValid) return;
+
+        const payload: { name?: string; code?: string } = {};
+        const name = editFormData.name.trim();
+        const code = editFormData.code.trim().toUpperCase();
+
+        if (name !== editingProduct.name.trim()) payload.name = name;
+        if (code !== editingProduct.code.trim().toUpperCase()) payload.code = code;
+
+        const result = await updateProduct(editingProduct.id, lineId, payload);
+
+        if (result.success) {
+            toast.success("Producto actualizado correctamente");
+            closeEditModal();
+            refetch();
+        } else {
+            toast.error(result.error || "Error al actualizar el producto");
+        }
+    };
+
+    const handleDeleteConfirm = async () => {
+        if (!lineId || !deletingProduct) return;
+
+        const result = await deleteProduct(deletingProduct.id, lineId);
+
+        if (result.success) {
+            toast.success("Producto eliminado correctamente");
+            setDeletingProduct(null);
+            refetch();
+        } else {
+            toast.error(result.error || "No se pudo eliminar el producto");
+        }
+    };
+
+    const handleOpenProduct = async (product: LineProduct) => {
+        setOpeningProductId(product.id);
+        try {
+            const variants = await http<ProductVariant[]>(
+                endpoints.productos.variantes(product.id)
+            );
+            const query = lineCode ? `?lineCode=${encodeURIComponent(lineCode)}` : "";
+            const firstVariant = variants?.[0];
+
+            if (firstVariant) {
+                navigate(`/products/${product.id}/variants/${firstVariant.id}/costing${query}`);
+            } else {
+                navigate(`/products/${product.id}${query}`);
+            }
+        } catch {
+            toast.error("No se pudo cargar las variantes del producto");
+        } finally {
+            setOpeningProductId(null);
+        }
+    };
+
+    const isPageLoading = isLinesLoading || isLoading;
 
     return (
         <AppLayout
-            title={lineDetail?.line ? `Productos de ${lineDetail.line.name}` : "Productos"}
-            subtitle={lineDetail?.line ? `Línea: ${lineDetail.line.code}` : "Catálogo comercial de referencias"}
+            title={currentLine ? `Productos de ${currentLine.name}` : "Productos"}
+            subtitle={currentLine ? `Línea: ${currentLine.code}` : "Catálogo comercial de referencias"}
         >
             <div className="space-y-4">
                 <div className="flex justify-end">
-                    <Button size="sm" onClick={() => setIsModalOpen(true)}>
+                    <Button size="sm" onClick={() => setIsCreateModalOpen(true)} disabled={!lineId}>
                         <Plus className="h-4 w-4 mr-1" /> Nuevo Producto
                     </Button>
                 </div>
 
-                <form onSubmit={handleApplyFilters} className="bg-card border rounded-xl p-4 shadow-sm flex gap-3 items-end">
+                <div className="bg-card border rounded-xl p-4 shadow-sm flex gap-3 items-end">
                     <div className="flex-1 max-w-sm">
-                        <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Buscar por Nombre</label>
-                        <Input name="name" className="h-9 text-xs" value={searchInputs.name} onChange={handleSearchChange} placeholder="Ej. Camiseta Polo..." />
+                        <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
+                            Buscar por nombre o código
+                        </label>
+                        <Input
+                            className="h-9 text-xs"
+                            value={searchInput}
+                            onChange={(e) => setSearchInput(e.target.value)}
+                            placeholder="Ej. Camisa ejecutiva o CAM001"
+                        />
                     </div>
-                    <div className="flex gap-1.5">
-                        <Button type="submit" size="sm" className="h-9 px-3">
-                            <Search className="h-3.5 w-3.5" />
+                    {searchInput && (
+                        <Button type="button" variant="outline" size="sm" className="h-9 px-3" onClick={() => setSearchInput("")}>
+                            <X className="h-3.5 w-3.5 text-destructive" />
                         </Button>
-                        {hasActiveFilters && (
-                            <Button type="button" variant="outline" size="sm" className="h-9 px-3" onClick={handleClearFilters}>
-                                <X className="h-3.5 w-3.5 text-destructive" />
-                            </Button>
-                        )}
-                    </div>
-                </form>
+                    )}
+                </div>
 
-                {(isDetailLoading || isLoading) ? (
-                    <div className="flex justify-center pt-12"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+                {isPageLoading ? (
+                    <div className="flex justify-center pt-12">
+                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    </div>
+                ) : !currentLine ? (
+                    <div className="text-center py-12 text-muted-foreground text-sm">
+                        No se encontró la línea con código &quot;{lineCode}&quot;.
+                    </div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {products.map((prod: any) => (
-                            <Card
-                                key={prod.id}
-                                className="hover:shadow-md transition-shadow cursor-pointer"
-                                aria-label={`Abrir gestión de costos de ${prod.name}`}
-                                onClick={() => {
-                                    const firstVariant = prod.variants?.[0];
-                                    if (firstVariant) {
-                                        navigate(`/products/${prod.id}/variants/${firstVariant.id}/costing`);
-                                    } else {
-                                        setSelectedProduct(prod);
-                                        setIsDetailOpen(true);
-                                    }
-                                }}
-                            >
-                                <CardContent className="p-5">
-                                    <div className="flex items-start justify-between mb-4">
-                                        <div className="flex items-center gap-3">
-                                            <div className="p-2 bg-primary/10 rounded-lg"><Package className="h-5 w-5 text-primary" /></div>
-                                            <p className="font-semibold text-sm">{prod.name}</p>
+                        {filteredProducts.map((product) => (
+                            <Card key={product.id} className="hover:shadow-md transition-shadow border border-muted flex flex-col">
+                                <CardContent className="p-5 flex flex-col gap-4 h-full">
+                                    <div
+                                        className="flex items-start gap-3 cursor-pointer"
+                                        onClick={() => handleOpenProduct(product)}
+                                    >
+                                        <div className="p-2 bg-primary/10 rounded-lg shrink-0">
+                                            {openingProductId === product.id ? (
+                                                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                                            ) : (
+                                                <Package className="h-5 w-5 text-primary" />
+                                            )}
+                                        </div>
+                                        <div className="min-w-0">
+                                            <p className="font-semibold text-sm truncate">{product.name}</p>
+                                            <p className="text-xs text-muted-foreground mt-0.5">Código {product.code}</p>
                                         </div>
                                     </div>
-                                    <p className="text-xs text-muted-foreground mb-4 line-clamp-2">
-                                        {prod.description || "Sin descripción"}
-                                    </p>
-                                    <div className="flex items-center justify-between text-xs border-t pt-3">
-                                        <span className="flex items-center gap-1 font-medium">
-                                            <Tag className="h-3 w-3" /> {prod.variants?.length || 0} Variantes
+                                    <div className="flex items-center justify-between border-t pt-3 mt-auto">
+                                        <span
+                                            className="flex items-center gap-1 text-xs font-medium text-foreground cursor-pointer"
+                                            onClick={() => handleOpenProduct(product)}
+                                        >
+                                            <Tag className="h-3 w-3" /> Variantes y tallas
                                         </span>
+                                        <div className="flex items-center gap-1">
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-8 w-8"
+                                                onClick={() => openEditModal(product)}
+                                            >
+                                                <Pencil className="h-4 w-4" />
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-8 w-8 text-destructive hover:text-destructive"
+                                                onClick={() => setDeletingProduct(product)}
+                                            >
+                                                <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                        </div>
                                     </div>
                                 </CardContent>
                             </Card>
                         ))}
-                        {products.length === 0 && !isLoading && (
+
+                        {filteredProducts.length === 0 && (
                             <div className="col-span-full text-center py-12 text-muted-foreground text-sm">
-                                No se encontraron productos.
+                                {searchInput
+                                    ? "No se encontraron productos con ese criterio."
+                                    : "No hay productos registrados en esta línea."}
                             </div>
                         )}
                     </div>
                 )}
 
                 <div className="flex items-center justify-between border-t pt-4 px-1 text-sm text-muted-foreground">
-                    <div className="flex items-center gap-4">
-                        <span>Total: {pagination.totalCount}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={pagination.prevPage} disabled={!pagination.hasPrevious}>
-                            <ChevronLeft className="h-4 w-4" />
-                        </Button>
-                        <span className="text-xs px-2">Pág. {pagination.page}</span>
-                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={pagination.nextPage} disabled={!pagination.hasNext}>
-                            <ChevronRight className="h-4 w-4" />
-                        </Button>
-                    </div>
+                    <span>Total: {filteredProducts.length}</span>
                 </div>
             </div>
 
-            {/* Modal de Registro */}
-            <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-                <DialogContent className="sm:max-w-xl max-h-[85vh] overflow-y-auto">
+            <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
+                <DialogContent className="max-w-md">
                     <DialogHeader>
                         <DialogTitle>Registrar Nuevo Producto</DialogTitle>
                     </DialogHeader>
-                    <form onSubmit={handleSubmit} className="space-y-6">
-                        <div className="space-y-3">
-                            {/* Selector de Línea */}
-                            <div>
-                                <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
-                                    Línea de Producto
-                                </label>
-                                <select
-                                    className="w-full h-9 px-3 rounded-md border border-input bg-background text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                                    value={formData.line_id}
-                                    onChange={(e) => setFormData({ ...formData, line_id: e.target.value })}
-                                    required
-                                >
-                                    <option value="" disabled>Selecciona una línea</option>
-                                    {allLines.map((line: any) => (
-                                        <option key={line.id} value={line.id}>
-                                            {line.name} ({line.code})
-                                        </option>
-                                    ))}
-                                </select>
+                    <form onSubmit={handleCreateSubmit} className="space-y-4 pt-2">
+                        {currentLine && (
+                            <div className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                                Línea: <span className="font-medium text-foreground">{currentLine.name}</span> ({currentLine.code})
                             </div>
-
-                            <div>
-                                <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Nombre Base del Producto</label>
-                                <Input placeholder="Ej. Camiseta Polo Activa" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required />
-                            </div>
-                            <div>
-                                <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Descripción</label>
-                                <Input placeholder="Ej. Camiseta polo de alta resistencia." value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
-                            </div>
+                        )}
+                        <div className="space-y-2">
+                            <Label htmlFor="create-product-name">Nombre del producto</Label>
+                            <Input
+                                id="create-product-name"
+                                value={createFormData.name}
+                                onChange={(e) => setCreateFormData({ ...createFormData, name: e.target.value })}
+                                required
+                            />
                         </div>
-                        <div className="border-t pt-4 space-y-4">
-                            <div className="flex items-center justify-between">
-                                <h3 className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                                    <Tag className="h-3.5 w-3.5 text-primary" /> Configuración de Variantes
-                                </h3>
-                                <Button type="button" variant="outline" size="sm" className="h-7 text-xs px-2" onClick={addVariant}>
-                                    <Plus className="h-3 w-3 mr-1" /> Añadir Variante
-                                </Button>
-                            </div>
-                            {formData.variants.length === 0 ? (
-                                <div className="text-center py-6 border rounded-xl border-dashed text-xs text-muted-foreground">
-                                    Presiona "Añadir Variante" para configurar tallas, colores y costos.
-                                </div>
-                            ) : (
-                                <div className="space-y-4">
-                                    {formData.variants.map((variant, index) => (
-                                        <div key={index} className="p-4 bg-muted/40 border rounded-xl relative space-y-3">
-                                            <Button type="button" variant="ghost" size="icon" className="absolute top-2 right-2 h-7 w-7 text-destructive hover:bg-destructive/10" onClick={() => removeVariant(index)}>
-                                                <Trash2 className="h-3.5 w-3.5" />
-                                            </Button>
-                                            <div className="grid grid-cols-3 gap-2">
-                                                <div className="col-span-2">
-                                                    <label className="text-[10px] font-medium text-muted-foreground">Nombre de Referencia</label>
-                                                    <Input className="h-8 text-xs" placeholder="Ej. Camiseta Polo - Talla S - Azul" value={variant.name} onChange={(e) => handleVariantChange(index, "name", e.target.value)} required />
-                                                </div>
-                                                <div>
-                                                    <label className="text-[10px] font-medium text-muted-foreground">Costo Estimado</label>
-                                                    <CurrencyInput customInput={Input} className="h-8 text-xs" placeholder="18500" prefix="$ " groupSeparator="." decimalSeparator="," decimalsLimit={2} value={variant.estimated_cost} onValueChange={(value) => handleVariantChange(index, "estimated_cost", value ?? "")} required />
-                                                </div>
-                                            </div>
-                                            <div className="grid grid-cols-3 gap-2">
-                                                <div>
-                                                    <label className="text-[10px] font-medium text-muted-foreground">Talla</label>
-                                                    <Input className="h-8 text-xs" placeholder="S, M, L..." value={variant.attributes.talla} onChange={(e) => handleVariantChange(index, "talla", e.target.value, true)} required />
-                                                </div>
-                                                <div>
-                                                    <label className="text-[10px] font-medium text-muted-foreground">Color</label>
-                                                    <Input className="h-8 text-xs" placeholder="Azul, Negro..." value={variant.attributes.color} onChange={(e) => handleVariantChange(index, "color", e.target.value, true)} required />
-                                                </div>
-                                                <div>
-                                                    <label className="text-[10px] font-medium text-muted-foreground">Material</label>
-                                                    <Input className="h-8 text-xs" placeholder="Algodón..." value={variant.attributes.material} onChange={(e) => handleVariantChange(index, "material", e.target.value, true)} required />
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
+                        <div className="space-y-2">
+                            <Label htmlFor="create-product-code">Código interno</Label>
+                            <Input
+                                id="create-product-code"
+                                value={createFormData.code}
+                                onChange={(e) =>
+                                    setCreateFormData({ ...createFormData, code: e.target.value.toUpperCase() })
+                                }
+                                required
+                            />
                         </div>
-                        <Button type="submit" className="w-full" disabled={isCreating}>
+                        <Button type="submit" className="w-full" disabled={isCreating || !isCreateFormValid || !lineId}>
                             {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                            Guardar Producto Completo
+                            Guardar producto
                         </Button>
                     </form>
                 </DialogContent>
             </Dialog>
 
-            {/* Modal de Detalle */}
-            <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
-                <DialogContent className="sm:max-w-xl max-h-[85vh] overflow-y-auto">
+            <Dialog open={isEditModalOpen} onOpenChange={(open) => !open && closeEditModal()}>
+                <DialogContent className="max-w-md">
                     <DialogHeader>
-                        <DialogTitle>{selectedProduct?.name ?? "Detalle del producto"}</DialogTitle>
+                        <DialogTitle>Editar Producto</DialogTitle>
                     </DialogHeader>
-                    <p className="text-sm text-muted-foreground mb-4">{selectedProduct?.description || "Sin descripción"}</p>
-                    {selectedProduct?.variants?.length > 0 ? (
-                        <div className="space-y-3">
-                            {selectedProduct.variants.map((variant: any, idx: number) => (
-                                <div key={variant.id ?? idx} className="p-4 bg-muted/20 border rounded-lg">
-                                    <h4 className="font-medium mb-2">{variant.name}</h4>
-                                    <div className="grid grid-cols-2 gap-2 text-xs">
-                                        <div><strong>Talla:</strong> {variant.attributes?.talla ?? "-"}</div>
-                                        <div><strong>Color:</strong> {variant.attributes?.color ?? "-"}</div>
-                                        <div><strong>Material:</strong> {variant.attributes?.material ?? "-"}</div>
-                                        <div><strong>Costo:</strong> ${Number(variant.estimated_cost).toLocaleString()}</div>
-                                    </div>
-                                </div>
-                            ))}
+                    <form onSubmit={handleEditSubmit} className="space-y-4 pt-2">
+                        <div className="space-y-2">
+                            <Label htmlFor="edit-product-name">Nombre</Label>
+                            <Input
+                                id="edit-product-name"
+                                value={editFormData.name}
+                                onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                                required
+                            />
                         </div>
-                    ) : <p className="text-xs text-muted-foreground">Sin variantes.</p>}
-                    <div className="flex justify-end mt-4">
-                        <Button variant="outline" onClick={() => setIsDetailOpen(false)}>Cerrar</Button>
-                    </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="edit-product-code">Código</Label>
+                            <Input
+                                id="edit-product-code"
+                                value={editFormData.code}
+                                onChange={(e) =>
+                                    setEditFormData({ ...editFormData, code: e.target.value.toUpperCase() })
+                                }
+                                required
+                            />
+                        </div>
+                        <div className="flex gap-2">
+                            <Button type="button" variant="outline" className="flex-1" onClick={closeEditModal}>
+                                Cancelar
+                            </Button>
+                            <Button type="submit" className="flex-1" disabled={isUpdating || !isEditFormValid}>
+                                Guardar cambios
+                            </Button>
+                        </div>
+                    </form>
                 </DialogContent>
             </Dialog>
+
+            <AlertDialog open={!!deletingProduct} onOpenChange={(open) => !open && setDeletingProduct(null)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>¿Eliminar producto?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Se eliminará <strong>{deletingProduct?.name}</strong> (código {deletingProduct?.code}).
+                            Esta acción no se puede deshacer.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={isDeleting}>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={(e) => {
+                                e.preventDefault();
+                                handleDeleteConfirm();
+                            }}
+                            disabled={isDeleting}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        >
+                            {isDeleting ? "Eliminando..." : "Eliminar"}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </AppLayout>
     );
 }

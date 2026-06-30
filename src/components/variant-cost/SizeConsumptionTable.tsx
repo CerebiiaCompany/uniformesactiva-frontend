@@ -1,180 +1,301 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2 } from "lucide-react";
-import { SizeFabric } from "@/types/variant";
+import { Button } from "@/components/ui/button";
+import { Check, Loader2, Save } from "lucide-react";
+import { toast } from "sonner";
+import type { CatalogOption, SizeFabric } from "@/types/variant";
 import { useSizeConsumption } from "@/hooks/useSizeConsumption";
-
-// Configuración estática de tallas y mapeo a UUIDs
-const SIZE_SYSTEMS = {
-    alfa: [
-        { label: "XS", size_id: "a1fa0000-0000-0000-0000-000000000001" },
-        { label: "S", size_id: "a1fa0000-0000-0000-0000-000000000002" },
-        { label: "M", size_id: "a1fa0000-0000-0000-0000-000000000003" },
-        { label: "L", size_id: "a1fa0000-0000-0000-0000-000000000004" },
-        { label: "XL", size_id: "a1fa0000-0000-0000-0000-000000000005" },
-        { label: "XXL", size_id: "a1fa0000-0000-0000-0000-000000000006" }
-    ],
-    numerica: [
-        { label: "6", size_id: "d1910000-0000-0000-0000-000000000006" },
-        { label: "8", size_id: "d1910000-0000-0000-0000-000000000008" },
-        { label: "10", size_id: "d1910000-0000-0000-0000-000000000010" },
-        { label: "12", size_id: "d1910000-0000-0000-0000-000000000012" },
-        { label: "14", size_id: "d1910000-0000-0000-0000-000000000014" },
-        { label: "16", size_id: "d1910000-0000-0000-0000-000000000016" }
-    ],
-    infantil: [
-        { label: "2", size_id: "1fa80000-0000-0000-0000-000000000002" },
-        { label: "4", size_id: "1fa80000-0000-0000-0000-000000000004" },
-        { label: "6", size_id: "1fa80000-0000-0000-0000-000000000006" },
-        { label: "8", size_id: "1fa80000-0000-0000-0000-000000000008" },
-        { label: "10", size_id: "1fa80000-0000-0000-0000-000000000010" },
-        { label: "12", size_id: "1fa80000-0000-0000-0000-000000000012" }
-    ]
-};
-
-type SizeSystemType = "alfa" | "numerica" | "infantil";
 
 interface SizeTableProps {
     data: SizeFabric[];
     variantId: string;
+    sizes: CatalogOption[];
 }
 
-const detectActiveSystem = (savedRecords: SizeFabric[]): SizeSystemType => {
-    if (!savedRecords || savedRecords.length === 0) return "alfa";
-    let alfaCount = 0, numericaCount = 0, infantilCount = 0;
-    savedRecords.forEach(rec => {
-        if (SIZE_SYSTEMS.alfa.some(s => s.size_id === rec.size_id)) alfaCount++;
-        if (SIZE_SYSTEMS.numerica.some(s => s.size_id === rec.size_id)) numericaCount++;
-        if (SIZE_SYSTEMS.infantil.some(s => s.size_id === rec.size_id)) infantilCount++;
-    });
-    if (numericaCount > alfaCount && numericaCount > infantilCount) return "numerica";
-    if (infantilCount > alfaCount && infantilCount > numericaCount) return "infantil";
-    return "alfa";
+type LocalSizeState = {
+    checked: boolean;
+    consumption: string;
+    dbId?: string;
+    dirty?: boolean;
 };
 
-export function SizeConsumptionTable({ data, variantId }: SizeTableProps) {
-    const { addSizeConsumption, updateSizeConsumption, deleteSizeConsumption, loading } = useSizeConsumption();
-    const [sizeSystem, setSizeSystem] = useState<SizeSystemType>("alfa");
-    const [localValues, setLocalValues] = useState<Record<string, { checked: boolean; consumption: string; dbId?: string }>>({});
-    const debounceTimers = useRef<Record<string, NodeJS.Timeout>>({});
-
-    // Ref para evitar stale closures en el debounce
-    const localValuesRef = useRef(localValues);
-    useEffect(() => {
-        localValuesRef.current = localValues;
-    }, [localValues]);
+export function SizeConsumptionTable({ data, variantId, sizes }: SizeTableProps) {
+    const { addSizeConsumption, updateSizeConsumption, deleteSizeConsumption, loading } =
+        useSizeConsumption();
+    const [localValues, setLocalValues] = useState<Record<string, LocalSizeState>>({});
+    const [savedSizeIds, setSavedSizeIds] = useState<Set<string>>(new Set());
 
     useEffect(() => {
-        const detected = detectActiveSystem(data);
-        setSizeSystem(detected);
-        const newValues: Record<string, { checked: boolean; consumption: string; dbId?: string }> = {};
+        const newValues: Record<string, LocalSizeState> = {};
 
-        Object.values(SIZE_SYSTEMS).flat().forEach((s) => {
-            newValues[s.size_id] = { checked: false, consumption: "" };
+        sizes.forEach((size) => {
+            newValues[size.id] = { checked: false, consumption: "", dirty: false };
         });
 
         data.forEach((rec) => {
-            newValues[rec.size_id] = { checked: true, consumption: rec.consumption, dbId: rec.id };
+            if (!rec.size_id) return;
+            newValues[rec.size_id] = {
+                checked: true,
+                consumption: rec.consumption,
+                dbId: rec.id,
+                dirty: false,
+            };
         });
+
         setLocalValues(newValues);
-    }, [data]);
+        setSavedSizeIds(new Set(data.map((rec) => rec.size_id).filter(Boolean)));
+    }, [data, sizes]);
 
-    const executeSave = async (sizeId: string, val: string, dbId?: string) => {
-        const numValue = parseFloat(val);
-        if (isNaN(numValue) || numValue <= 0) return;
+    const executeSave = async (sizeId: string, item: LocalSizeState): Promise<boolean> => {
+        const numValue = parseFloat(item.consumption.replace(",", "."));
+        if (isNaN(numValue) || numValue <= 0) return false;
 
-        if (dbId) {
-            await updateSizeConsumption(dbId, { id: dbId, variant_id: variantId, size_id: sizeId, consumption: numValue.toString() }, variantId);
+        if (item.dbId) {
+            const ok = await updateSizeConsumption(item.dbId, { consumption: numValue.toString() }, variantId);
+            return ok;
+        }
+
+        const created = await addSizeConsumption({
+            variant_id: variantId,
+            talla_id: sizeId,
+            consumption: numValue.toString(),
+        });
+
+        if (created?.id) {
+            setLocalValues((prev) => ({
+                ...prev,
+                [sizeId]: { ...prev[sizeId], dbId: created.id, dirty: false },
+            }));
+            return true;
+        }
+
+        return false;
+    };
+
+    const handleSaveSize = async (sizeId: string) => {
+        const item = localValues[sizeId];
+        if (!item?.checked || !item.consumption.trim()) {
+            toast.error("Activa la talla e ingresa los metros antes de guardar.");
+            return;
+        }
+
+        const ok = await executeSave(sizeId, item);
+        if (ok) {
+            setSavedSizeIds((prev) => new Set(prev).add(sizeId));
+            setLocalValues((prev) => ({
+                ...prev,
+                [sizeId]: { ...prev[sizeId], dirty: false },
+            }));
+            toast.success("Consumo de talla guardado");
         } else {
-            const created = await addSizeConsumption({ variant_id: variantId, size_id: sizeId, consumption: numValue.toString() });
-            // Actualizar localmente con el nuevo dbId devuelto por el backend
-            if (created && created.id) {
-                setLocalValues(prev => ({
-                    ...prev,
-                    [sizeId]: { ...prev[sizeId], dbId: created.id }
-                }));
+            toast.error("No se pudo guardar el consumo. Verifica talla y metros.");
+        }
+    };
+
+    const handleSaveAll = async () => {
+        const pending = Object.entries(localValues).filter(([, item]) => {
+            const num = parseFloat(item.consumption.replace(",", "."));
+            return item.checked && !isNaN(num) && num > 0;
+        });
+
+        if (!pending.length) {
+            toast.error("No hay tallas activas con consumo para guardar.");
+            return;
+        }
+
+        let saved = 0;
+        for (const [sizeId, item] of pending) {
+            const ok = await executeSave(sizeId, item);
+            if (ok) {
+                saved++;
+                setSavedSizeIds((prev) => new Set(prev).add(sizeId));
             }
+        }
+
+        setLocalValues((prev) => {
+            const next = { ...prev };
+            pending.forEach(([sizeId]) => {
+                if (next[sizeId]) next[sizeId] = { ...next[sizeId], dirty: false };
+            });
+            return next;
+        });
+
+        if (saved === pending.length) {
+            toast.success(`Consumos guardados (${saved} talla${saved > 1 ? "s" : ""})`);
+        } else if (saved > 0) {
+            toast.warning(`Se guardaron ${saved} de ${pending.length} tallas`);
+        } else {
+            toast.error("No se pudo guardar ningún consumo");
         }
     };
 
     const handleInputChange = (sizeId: string, rawVal: string) => {
         const val = rawVal.replace(",", ".");
-
-        // Auto-check cuando el usuario escribe un valor
-        setLocalValues(prev => ({
+        setLocalValues((prev) => ({
             ...prev,
             [sizeId]: {
                 ...prev[sizeId],
                 consumption: val,
-                checked: val.length > 0 ? true : prev[sizeId]?.checked
-            }
+                checked: val.length > 0 ? true : prev[sizeId]?.checked ?? false,
+                dirty: true,
+            },
         }));
-
-        if (debounceTimers.current[sizeId]) clearTimeout(debounceTimers.current[sizeId]);
-        debounceTimers.current[sizeId] = setTimeout(() => {
-            // Uso de la ref para obtener el estado actualizado
-            const currentItem = localValuesRef.current[sizeId];
-            if (currentItem?.checked) executeSave(sizeId, val, currentItem.dbId);
-        }, 1000);
     };
 
     const handleCheckboxToggle = async (sizeId: string) => {
         const item = localValues[sizeId] || { checked: false, consumption: "", dbId: undefined };
         const isChecking = !item.checked;
-        setLocalValues(prev => ({ ...prev, [sizeId]: { ...prev[sizeId], checked: isChecking } }));
 
         if (!isChecking && item.dbId) {
-            await deleteSizeConsumption(item.dbId, variantId);
-        } else if (isChecking && item.consumption) {
-            executeSave(sizeId, item.consumption, item.dbId);
+            const ok = await deleteSizeConsumption(item.dbId, variantId);
+            if (!ok) {
+                toast.error("No se pudo quitar la talla");
+                return;
+            }
+            setSavedSizeIds((prev) => {
+                const next = new Set(prev);
+                next.delete(sizeId);
+                return next;
+            });
         }
+
+        setLocalValues((prev) => ({
+            ...prev,
+            [sizeId]: {
+                ...prev[sizeId],
+                checked: isChecking,
+                consumption: isChecking ? prev[sizeId]?.consumption ?? "" : "",
+                dbId: isChecking ? prev[sizeId]?.dbId : undefined,
+                dirty: isChecking,
+            },
+        }));
     };
+
+    const hasPendingChanges = useMemo(
+        () => Object.values(localValues).some((item) => item.dirty && item.checked && item.consumption),
+        [localValues]
+    );
 
     const { activeCount, averageConsumption } = useMemo(() => {
         const activeSizes = Object.entries(localValues).filter(([sizeId, item]) => {
-            const belongsToSystem = SIZE_SYSTEMS[sizeSystem].some(s => s.size_id === sizeId);
-            const num = parseFloat(item.consumption);
-            return belongsToSystem && item.checked && !isNaN(num) && num > 0;
+            const belongsToCatalog = sizes.some((s) => s.id === sizeId);
+            const num = parseFloat(item.consumption.replace(",", "."));
+            return belongsToCatalog && item.checked && !isNaN(num) && num > 0;
         });
         const count = activeSizes.length;
-        const sum = activeSizes.reduce((acc, [_, item]) => acc + parseFloat(item.consumption), 0);
-        return { activeCount: count, averageConsumption: count > 0 ? (sum / count).toFixed(2) : "0.00" };
-    }, [localValues, sizeSystem]);
+        const sum = activeSizes.reduce(
+            (acc, [, item]) => acc + parseFloat(item.consumption.replace(",", ".")),
+            0
+        );
+        return {
+            activeCount: count,
+            averageConsumption: count > 0 ? (sum / count).toFixed(2) : "0.00",
+        };
+    }, [localValues, sizes]);
+
+    if (!sizes.length) {
+        return (
+            <Card>
+                <CardContent className="py-10 text-center text-sm text-muted-foreground">
+                    No hay tallas disponibles en el catálogo.
+                </CardContent>
+            </Card>
+        );
+    }
 
     return (
         <Card className="w-full">
-            <CardHeader className="flex flex-row items-center justify-between py-4">
-                <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    📏 Tallas y consumo de tela {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-                </CardTitle>
-                <select value={sizeSystem} onChange={(e) => setSizeSystem(e.target.value as SizeSystemType)}
-                    className="border border-red-500 text-sm font-semibold rounded-md px-3 py-1.5 focus:outline-none ring-1 ring-red-500 bg-white cursor-pointer">
-                    <option value="alfa">Tipo: Alfa</option>
-                    <option value="numerica">Tipo: Numérica</option>
-                    <option value="infantil">Tipo: Infantil</option>
-                </select>
+            <CardHeader className="flex flex-row items-center justify-between py-4 gap-3">
+                <div>
+                    <CardTitle className="text-sm font-bold flex items-center gap-2">
+                        Tallas y consumo de tela
+                        {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                    </CardTitle>
+                    <p className="text-xs text-muted-foreground mt-1">
+                        Activa la talla, escribe los metros y pulsa Guardar (o Guardar todo).
+                    </p>
+                </div>
+                <Button
+                    size="sm"
+                    onClick={handleSaveAll}
+                    disabled={loading || !hasPendingChanges}
+                >
+                    <Save className="h-3.5 w-3.5 mr-1" />
+                    Guardar todo
+                </Button>
             </CardHeader>
             <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {SIZE_SYSTEMS[sizeSystem].map((size) => {
-                        const item = localValues[size.size_id] || { checked: false, consumption: "", dbId: undefined };
+                    {sizes.map((size) => {
+                        const item = localValues[size.id] || {
+                            checked: false,
+                            consumption: "",
+                            dbId: undefined,
+                            dirty: false,
+                        };
+                        const label = size.label || size.name || size.code || size.id;
+                        const isSaved = savedSizeIds.has(size.id) && item.dbId && !item.dirty;
+
                         return (
-                            <div key={size.size_id} className={`flex items-center justify-between border rounded-lg p-3 transition-all ${item.checked ? "border-red-500 bg-red-50/5" : "border-gray-200 bg-white"}`}>
-                                <div className="flex items-center gap-2.5 cursor-pointer select-none" onClick={() => handleCheckboxToggle(size.size_id)}>
-                                    <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${item.checked ? "border-red-500 bg-red-500 text-white" : "border-red-500 bg-white"}`}>
-                                        {item.checked && <svg className="w-3 h-3 fill-current" viewBox="0 0 20 20"><path d="M0 11l2-2 5 5L18 3l2 2L7 18z" /></svg>}
+                            <div
+                                key={size.id}
+                                className={`flex items-center justify-between border rounded-lg p-3 transition-all ${
+                                    item.checked
+                                        ? "border-primary bg-primary/5"
+                                        : "border-border bg-card"
+                                }`}
+                            >
+                                <div
+                                    className="flex items-center gap-2.5 cursor-pointer select-none min-w-0"
+                                    onClick={() => handleCheckboxToggle(size.id)}
+                                >
+                                    <div
+                                        className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${
+                                            item.checked
+                                                ? "border-primary bg-primary text-primary-foreground"
+                                                : "border-muted-foreground bg-background"
+                                        }`}
+                                    >
+                                        {item.checked && (
+                                            <svg className="w-3 h-3 fill-current" viewBox="0 0 20 20">
+                                                <path d="M0 11l2-2 5 5L18 3l2 2L7 18z" />
+                                            </svg>
+                                        )}
                                     </div>
-                                    <span className="font-bold text-sm text-gray-800">{size.label}</span>
+                                    <span className="font-bold text-sm truncate">{label}</span>
+                                    {isSaved && (
+                                        <Check className="h-3.5 w-3.5 text-green-600 shrink-0" aria-label="Guardado" />
+                                    )}
                                 </div>
-                                <input type="text" placeholder="m" value={item.consumption} onChange={(e) => handleInputChange(size.size_id, e.target.value)}
-                                    className="w-16 bg-gray-50/50 border border-gray-200 rounded px-2 py-1 text-right text-sm focus:border-red-500 outline-none" />
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                    <input
+                                        type="text"
+                                        placeholder="m"
+                                        value={item.consumption}
+                                        onChange={(e) => handleInputChange(size.id, e.target.value)}
+                                        onBlur={() => item.checked && item.consumption && handleSaveSize(size.id)}
+                                        className="w-16 bg-muted/50 border border-input rounded px-2 py-1 text-right text-sm focus:border-primary outline-none"
+                                    />
+                                    {item.dirty && item.checked && (
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-7 w-7"
+                                            onClick={() => handleSaveSize(size.id)}
+                                            disabled={loading}
+                                        >
+                                            <Save className="h-3.5 w-3.5" />
+                                        </Button>
+                                    )}
+                                </div>
                             </div>
                         );
                     })}
                 </div>
-                <div className="w-full flex items-center justify-between bg-gray-50 rounded-lg p-3.5 text-sm text-gray-500 font-medium">
+                <div className="w-full flex items-center justify-between bg-muted/40 rounded-lg p-3.5 text-sm text-muted-foreground font-medium">
                     <span>Consumo promedio ({activeCount} tallas)</span>
-                    <span className="font-bold text-gray-900 text-base">{averageConsumption} m</span>
+                    <span className="font-bold text-foreground text-base">{averageConsumption} m</span>
                 </div>
             </CardContent>
         </Card>
