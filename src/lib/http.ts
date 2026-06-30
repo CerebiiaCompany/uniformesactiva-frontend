@@ -18,7 +18,11 @@ export async function http<T>(input: RequestInfo, init?: RequestInit): Promise<T
     }
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Error ${response.status}: ${response.statusText}`);
+        const message =
+            (typeof errorData.detail === "string" ? errorData.detail : null) ||
+            errorData.message ||
+            `Error ${response.status}: ${response.statusText}`;
+        throw new Error(message);
     }
     return (await response.json()) as T;
 }
