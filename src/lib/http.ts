@@ -18,8 +18,15 @@ export async function http<T>(input: RequestInfo, init?: RequestInit): Promise<T
     }
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        const nestedDetails = errorData.error?.details;
+        const detailFromNested =
+            nestedDetails && typeof nestedDetails === "object"
+                ? Object.values(nestedDetails).flat().join(" ")
+                : null;
         const message =
             (typeof errorData.detail === "string" ? errorData.detail : null) ||
+            detailFromNested ||
+            errorData.error?.message ||
             errorData.message ||
             `Error ${response.status}: ${response.statusText}`;
         throw new Error(message);

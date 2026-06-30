@@ -13,6 +13,7 @@ import {
   Scissors,
   Settings,
   LogOut,
+  Layers,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
@@ -32,6 +33,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import { jwtDecode } from "jwt-decode";
+import { Layer } from "recharts";
 
 interface ModulePermission {
   module: string;
@@ -77,7 +79,7 @@ const comercialItems = [
 const operacionItems = [
   { title: "Fábrica", url: "/production", icon: Factory },
   { title: "Inventario", url: "/inventory", icon: Package },
-  { title: "Líneas", url: "/lines", icon: Package },
+  { title: "Líneas", url: "/lines", icon: Layers },
   { title: "Costos", url: "/costing", icon: DollarSign },
 ];
 
@@ -220,13 +222,17 @@ export function AppSidebar() {
     <Sidebar collapsible="icon" className="h-screen flex flex-col">
       <SidebarHeader className="p-4 border-b border-sidebar-border shrink-0">
         <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-lg bg-sidebar-primary flex items-center justify-center shrink-0">
-            <Scissors className="h-5 w-5 text-sidebar-primary-foreground" />
+          <div className="h-9 w-9 rounded-lg bg-white flex items-center justify-center shrink-0 overflow-hidden">
+            <img
+              src="/activ@600x_negro.webp"
+              alt="Logo"
+              className="h-full w-full object-contain p-2"
+            />
           </div>
           {!collapsed && (
             <div className="animate-fade-in">
-              <h1 className="text-sm font-bold text-sidebar-accent-foreground tracking-tight">FlowTextil</h1>
-              <p className="text-[10px] text-sidebar-foreground/60">Uniformes Activa</p>
+              <h1 className="text-sm font-bold text-sidebar-accent-foreground tracking-tight">Uniformes Activa</h1>
+              <p className="text-[10px] text-sidebar-foreground/60">Sistema de gestión</p>
             </div>
           )}
         </div>

@@ -2,38 +2,33 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
+import type { LineProduct } from "@/hooks/useGetLineProducts";
 
-export interface UpdateLinePayload {
+export interface UpdateProductPayload {
     name?: string;
     code?: string;
 }
 
-export interface ProductLine {
-    id: string;
-    code: string;
-    name: string;
-    products_count?: number;
-}
-
-export const useUpdateLine = () => {
+export function useUpdateProduct() {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const queryClient = useQueryClient();
 
-    const updateLine = async (id: string, data: UpdateLinePayload) => {
+    const updateProduct = async (id: string, lineId: string, data: UpdateProductPayload) => {
         setIsLoading(true);
         setError(null);
 
         try {
-            const updated = await http<ProductLine>(endpoints.lineas.detail(id), {
+            const updated = await http<LineProduct>(endpoints.productos.detail(id), {
                 method: "PATCH",
                 body: JSON.stringify(data),
             });
 
-            queryClient.invalidateQueries({ queryKey: ["product-lines"] });
+            queryClient.invalidateQueries({ queryKey: ["line-products", lineId] });
+            queryClient.invalidateQueries({ queryKey: ["product-detail", id] });
             return { success: true, data: updated };
         } catch (err: any) {
-            const message = err.message || "Error al actualizar la línea de producto.";
+            const message = err.message || "Error al actualizar el producto.";
             setError(message);
             return { success: false, error: message };
         } finally {
@@ -41,5 +36,5 @@ export const useUpdateLine = () => {
         }
     };
 
-    return { updateLine, isLoading, error };
-};
+    return { updateProduct, isLoading, error };
+}

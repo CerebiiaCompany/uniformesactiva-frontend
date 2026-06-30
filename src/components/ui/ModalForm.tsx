@@ -15,6 +15,7 @@ export interface FieldDefinition {
     type: string;
     placeholder?: string;
     defaultValue?: string | number;
+    options?: { value: string; label: string }[];
 }
 
 interface ModalFormProps {
@@ -45,14 +46,33 @@ export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading,
                     {fields.map((field) => (
                         <div key={field.name} className="space-y-2">
                             <Label htmlFor={field.name}>{field.label}</Label>
-                            <Input
-                                id={field.name}
-                                name={field.name}
-                                type={field.type}
-                                placeholder={field.placeholder}
-                                defaultValue={initialData?.[field.name] ?? field.defaultValue ?? ""}
-                                required
-                            />
+                            {field.type === "select" ? (
+                                <select
+                                    id={field.name}
+                                    name={field.name}
+                                    defaultValue={initialData?.[field.name] ?? field.defaultValue ?? ""}
+                                    required
+                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                >
+                                    <option value="" disabled>
+                                        Seleccionar...
+                                    </option>
+                                    {field.options?.map((opt) => (
+                                        <option key={opt.value} value={opt.value}>
+                                            {opt.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <Input
+                                    id={field.name}
+                                    name={field.name}
+                                    type={field.type}
+                                    placeholder={field.placeholder}
+                                    defaultValue={initialData?.[field.name] ?? field.defaultValue ?? ""}
+                                    required
+                                />
+                            )}
                         </div>
                     ))}
                     <div className="flex justify-end gap-2 pt-4">

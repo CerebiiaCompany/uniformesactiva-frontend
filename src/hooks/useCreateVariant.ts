@@ -1,29 +1,27 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { http } from "@/lib/http";
-
-interface CreateVariantPayload {
-    name: string;
-    attributes: {
-        talla?: string;
-        color?: string;
-        material?: string;
-    };
-    estimated_cost: number;
-}
+import { endpoints } from "@/lib/api-endpoints";
+import type { CreateVariantPayload } from "@/types/variant";
 
 export function useCreateVariant() {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+    const queryClient = useQueryClient();
 
     const createVariant = async (productId: string, payload: CreateVariantPayload) => {
         setIsLoading(true);
         setError(null);
         try {
-            const data = await http(`${API_BASE_URL}/api/v1/products/productos/${productId}/variantes/`, {
+            const data = await http(endpoints.productos.variantes(productId), {
                 method: "POST",
-                body: JSON.stringify(payload),
+                body: JSON.stringify({
+                    name: payload.name.trim(),
+                    code: payload.code.trim().toUpperCase(),
+                }),
             });
+            queryClient.invalidateQueries({ queryKey: ["product-variants", productId] });
+            queryClient.invalidateQueries({ queryKey: ["product-detail", productId] });
             return { success: true, data };
         } catch (err: any) {
             setError(err.message || "Error al crear la variante.");

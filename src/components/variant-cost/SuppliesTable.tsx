@@ -1,26 +1,15 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Pencil, Trash2 } from "lucide-react";
-import { SupplyRecord } from "@/types/variant";
-
-// Asegúrate de que el tipo de payload coincida con lo que espera tu hook useSupplyCosts
-interface UpdateSupplyPayload {
-    description: string;
-    quantity: number;
-    unit_price: number;
-}
+import { Plus, Trash2 } from "lucide-react";
+import type { SupplyRecord } from "@/types/variant";
 
 interface SuppliesTableProps {
     data: SupplyRecord[];
-    variantId: string;
     onAdd: () => void;
-    onEdit: (supply: SupplyRecord) => void;
-    // Cambiado a Promise<any> para ser compatible con el retorno de tu función (boolean)
-    onUpdate: (id: string, payload: UpdateSupplyPayload, variantId: string) => Promise<any>;
     onDelete: (id: string) => void;
 }
 
-export function SuppliesTable({ data, variantId, onAdd, onEdit, onUpdate, onDelete }: SuppliesTableProps) {
+export function SuppliesTable({ data, onAdd, onDelete }: SuppliesTableProps) {
     return (
         <Card className="w-full">
             <CardHeader className="flex flex-row items-center justify-between py-4">
@@ -30,31 +19,24 @@ export function SuppliesTable({ data, variantId, onAdd, onEdit, onUpdate, onDele
                 </Button>
             </CardHeader>
             <CardContent>
-                {data && data.length > 0 ? (
+                {data.length > 0 ? (
                     <div className="space-y-2">
                         <div className="grid grid-cols-5 text-xs font-semibold text-muted-foreground border-b pb-2">
-                            <div className="col-span-1">Descripción</div>
-                            <div className="col-span-1">Cantidad</div>
-                            <div className="col-span-1">Valor Unit.</div>
-                            <div className="col-span-1">Total</div>
-                            <div className="col-span-1"></div>
+                            <div className="col-span-2">Tipo</div>
+                            <div>Cantidad</div>
+                            <div>Valor unit.</div>
+                            <div>Total</div>
                         </div>
                         {data.map((item) => (
                             <div key={item.id} className="grid grid-cols-5 text-sm items-center border-b py-2">
-                                <div className="col-span-1">{item.description}</div>
-                                <div className="col-span-1">{item.quantity}</div>
-                                <div className="col-span-1">${item.unit_price}</div>
-                                <div className="col-span-1 font-bold">${Number(item.total).toFixed(2)}</div>
-                                <div className="col-span-1 flex justify-end gap-2">
-                                    <Pencil
-                                        className="h-4 w-4 cursor-pointer text-muted-foreground hover:text-primary"
-                                        onClick={() => onEdit(item)}
-                                        aria-label="Editar insumo"
-                                    />
+                                <div className="col-span-2">{item.tipo_label || item.tipo || "—"}</div>
+                                <div>{item.quantity}</div>
+                                <div>${item.unit_price}</div>
+                                <div className="flex items-center justify-between">
+                                    <span className="font-bold">${Number(item.total).toFixed(2)}</span>
                                     <Trash2
                                         className="h-4 w-4 cursor-pointer text-red-500 hover:text-red-700"
                                         onClick={() => onDelete(item.id)}
-                                        aria-label="Eliminar insumo"
                                     />
                                 </div>
                             </div>

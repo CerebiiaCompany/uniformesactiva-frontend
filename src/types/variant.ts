@@ -1,24 +1,47 @@
+export interface CatalogOption {
+    id: string;
+    code?: string;
+    name: string;
+    label?: string;
+}
+
+export interface Proveedor {
+    id: string;
+    name: string;
+}
+
+export interface ProductVariant {
+    id: string;
+    code: string;
+    name: string;
+    product_id?: string;
+}
+
 export interface SizeFabric {
     id: string;
     variant_id: string;
     size_id: string;
     consumption: string;
+    size_label?: string;
 }
 
 export interface FabricRecord {
     id: string;
     variant_id: string;
-    provider: string;
+    proveedor_id: string;
+    proveedor_nombre?: string;
     reference: string;
     meters: string;
     price_per_meter: string;
+    tiene_iva: boolean;
     total: string;
 }
 
 export interface SupplyRecord {
     id: string;
     variant_id: string;
-    description: string;
+    tipo: string;
+    tipo_label?: string;
     quantity: string;
     unit_price: string;
     total: string;
@@ -27,41 +50,51 @@ export interface SupplyRecord {
 export interface LaborPhase {
     id: string;
     variant_id: string;
-    activity_name: string;
+    fase: string;
+    fase_id?: string;
+    fase_label?: string;
+    cantidad: string;
     unit_price: string;
     total: string;
 }
 
-export interface VariantCostData {
-    sizeFabric: SizeFabric[];
-    fabrics: FabricRecord[];
-    supplies: SupplyRecord[];
-    labor: LaborPhase[];
+export interface VariantCostSummary {
+    tela: string | number;
+    insumos: string | number;
+    mano_de_obra: string | number;
+    total: string | number;
 }
 
 export interface CreateFabricPayload {
     variant_id: string;
-    provider: string;
+    proveedor_id: string;
     reference: string;
     meters: string | number;
     price_per_meter: string | number;
+    tiene_iva: boolean;
 }
 
 export interface CreateSupplyPayload {
     variant_id: string;
-    description: string;
+    tipo_id: string;
     quantity: string | number;
     unit_price: string | number;
 }
 
 export interface CreateLaborPayload {
     variant_id: string;
-    activity_name: string;
+    fase_id: string;
+    cantidad: string | number;
     unit_price: string | number;
 }
 
 export interface CreateSizeConsumptionPayload {
     variant_id: string;
-    size_id: string;
+    talla_id: string;
     consumption: string | number;
+}
+
+export interface CreateVariantPayload {
+    name: string;
+    code: string;
 }

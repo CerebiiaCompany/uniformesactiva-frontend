@@ -1,27 +1,33 @@
 import { useState } from "react";
-import { http } from "@/lib/http";
 import { useQueryClient } from "@tanstack/react-query";
-import { CreateLaborPayload } from "@/types/variant";
-
-export interface UpdateLaborPayload extends Partial<CreateLaborPayload> {
-    id?: string;
-}
+import { http } from "@/lib/http";
+import { endpoints } from "@/lib/api-endpoints";
+import type { CreateLaborPayload } from "@/types/variant";
 
 export function useLaborCosts() {
     const queryClient = useQueryClient();
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const API_URL = import.meta.env.VITE_API_BASE_URL;
+
+    const invalidate = (variantId: string) => {
+        queryClient.invalidateQueries({ queryKey: ["labor-costs", variantId] });
+        queryClient.invalidateQueries({ queryKey: ["cost-summary", variantId] });
+    };
 
     const addLabor = async (payload: CreateLaborPayload) => {
         setLoading(true);
         setError(null);
         try {
-            await http(`${API_URL}/api/v1/costos/labor/`, {
+            await http(endpoints.costos.manoDeObra(), {
                 method: "POST",
-                body: JSON.stringify(payload),
+                body: JSON.stringify({
+                    variant_id: payload.variant_id,
+                    fase_id: payload.fase_id,
+                    cantidad: String(payload.cantidad),
+                    unit_price: String(payload.unit_price),
+                }),
             });
-            queryClient.invalidateQueries({ queryKey: ["labor-costs", payload.variant_id] });
+            invalidate(payload.variant_id);
             return true;
         } catch (err: any) {
             setError(err.message || "Error al agregar la fase de mano de obra");
@@ -31,15 +37,24 @@ export function useLaborCosts() {
         }
     };
 
-    const updateLabor = async (id: string, payload: UpdateLaborPayload, variantId: string) => {
+    const updateLabor = async (
+        id: string,
+        payload: Partial<Pick<CreateLaborPayload, "fase_id" | "cantidad" | "unit_price">>,
+        variantId: string
+    ) => {
         setLoading(true);
         setError(null);
         try {
-            await http(`${API_URL}/api/v1/costos/labor/${id}/`, {
-                method: "PUT",
-                body: JSON.stringify(payload),
+            const body: Record<string, string> = {};
+            if (payload.fase_id != null) body.fase_id = payload.fase_id;
+            if (payload.cantidad != null) body.cantidad = String(payload.cantidad);
+            if (payload.unit_price != null) body.unit_price = String(payload.unit_price);
+
+            await http(endpoints.costos.manoDeObraDetalle(id), {
+                method: "PATCH",
+                body: JSON.stringify(body),
             });
-            queryClient.invalidateQueries({ queryKey: ["labor-costs", variantId] });
+            invalidate(variantId);
             return true;
         } catch (err: any) {
             setError(err.message || "Error al actualizar la fase de mano de obra");
@@ -53,10 +68,8 @@ export function useLaborCosts() {
         setLoading(true);
         setError(null);
         try {
-            await http(`${API_URL}/api/v1/costos/labor/${id}/`, {
-                method: "DELETE",
-            });
-            queryClient.invalidateQueries({ queryKey: ["labor-costs", variantId] });
+            await http(endpoints.costos.manoDeObraDetalle(id), { method: "DELETE" });
+            invalidate(variantId);
             return true;
         } catch (err: any) {
             setError(err.message || "Error al eliminar la fase de mano de obra");
@@ -66,11 +79,5 @@ export function useLaborCosts() {
         }
     };
 
-    return {
-        loading,
-        error,
-        addLabor,
-        updateLabor,
-        deleteLabor,
-    };
+    return { loading, error, addLabor, updateLabor, deleteLabor };
 }

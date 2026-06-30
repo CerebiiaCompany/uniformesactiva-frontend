@@ -1,15 +1,14 @@
 import { useState } from "react";
-import { http } from "@/lib/http";
 import { useQueryClient } from "@tanstack/react-query";
-import { CreateSizeConsumptionPayload } from "@/types/variant";
+import { http } from "@/lib/http";
+import { endpoints } from "@/lib/api-endpoints";
+import type { CreateSizeConsumptionPayload } from "@/types/variant";
 
-export interface UpdateSizeConsumptionPayload extends Partial<CreateSizeConsumptionPayload> {
-    id: string;
-}
 export interface SizeConsumptionResponse {
     id: string;
     variant_id: string;
-    size_id: string;
+    talla_id?: string;
+    size_id?: string;
     consumption: number | string;
 }
 
@@ -17,57 +16,70 @@ export function useSizeConsumption() {
     const queryClient = useQueryClient();
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const API_URL = import.meta.env.VITE_API_BASE_URL;
 
-    const addSizeConsumption = async (payload: CreateSizeConsumptionPayload): Promise<SizeConsumptionResponse | null> => {
+    const invalidate = (variantId: string) => {
+        queryClient.invalidateQueries({ queryKey: ["size-consumption", variantId] });
+        queryClient.invalidateQueries({ queryKey: ["cost-summary", variantId] });
+    };
+
+    const addSizeConsumption = async (
+        payload: CreateSizeConsumptionPayload
+    ): Promise<SizeConsumptionResponse | null> => {
         setLoading(true);
         setError(null);
         try {
-            const data = await http<SizeConsumptionResponse>(`${API_URL}/api/v1/costos/size-consumption/`, {
+            const data = await http<SizeConsumptionResponse>(endpoints.costos.tallasConsumo(), {
                 method: "POST",
-                body: JSON.stringify(payload),
+                body: JSON.stringify({
+                    variant_id: payload.variant_id,
+                    talla_id: payload.talla_id,
+                    consumption: String(payload.consumption),
+                }),
             });
-            queryClient.invalidateQueries({ queryKey: ["size-consumption", payload.variant_id] });
+            invalidate(payload.variant_id);
             return data;
         } catch (err: any) {
-            setError(err.message || "Error al asignar el consumo de talla");
+            const message = err.message || "Error al asignar el consumo de talla";
+            setError(message);
             return null;
         } finally {
             setLoading(false);
         }
     };
 
-    // Actualizar consumo por talla
-    const updateSizeConsumption = async (id: string, payload: UpdateSizeConsumptionPayload, variantId: string) => {
+    const updateSizeConsumption = async (
+        id: string,
+        payload: Pick<CreateSizeConsumptionPayload, "consumption">,
+        variantId: string
+    ) => {
         setLoading(true);
         setError(null);
         try {
-            await http(`${API_URL}/api/v1/costos/size-consumption/detail/${id}/`, {
-                method: "PUT",
-                body: JSON.stringify(payload),
+            await http(endpoints.costos.tallasConsumoDetalle(id), {
+                method: "PATCH",
+                body: JSON.stringify({ consumption: String(payload.consumption) }),
             });
-            queryClient.invalidateQueries({ queryKey: ["size-consumption", variantId] });
+            invalidate(variantId);
             return true;
         } catch (err: any) {
-            setError(err.message || "Error al actualizar el consumo de talla");
+            const message = err.message || "Error al actualizar el consumo de talla";
+            setError(message);
             return false;
         } finally {
             setLoading(false);
         }
     };
 
-    // Eliminar consumo por talla
     const deleteSizeConsumption = async (id: string, variantId: string) => {
         setLoading(true);
         setError(null);
         try {
-            await http(`${API_URL}/api/v1/costos/size-consumption/detail/${id}/`, {
-                method: "DELETE",
-            });
-            queryClient.invalidateQueries({ queryKey: ["size-consumption", variantId] });
+            await http(endpoints.costos.tallasConsumoDetalle(id), { method: "DELETE" });
+            invalidate(variantId);
             return true;
         } catch (err: any) {
-            setError(err.message || "Error al eliminar el consumo de talla");
+            const message = err.message || "Error al eliminar el consumo de talla";
+            setError(message);
             return false;
         } finally {
             setLoading(false);
