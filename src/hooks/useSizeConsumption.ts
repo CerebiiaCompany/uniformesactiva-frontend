@@ -3,9 +3,14 @@ import { http } from "@/lib/http";
 import { useQueryClient } from "@tanstack/react-query";
 import { CreateSizeConsumptionPayload } from "@/types/variant";
 
-// Interfaz para actualizar el consumo de talla
 export interface UpdateSizeConsumptionPayload extends Partial<CreateSizeConsumptionPayload> {
     id: string;
+}
+export interface SizeConsumptionResponse {
+    id: string;
+    variant_id: string;
+    size_id: string;
+    consumption: number | string;
 }
 
 export function useSizeConsumption() {
@@ -14,20 +19,19 @@ export function useSizeConsumption() {
     const [error, setError] = useState<string | null>(null);
     const API_URL = import.meta.env.VITE_API_BASE_URL;
 
-    // Crear consumo por talla
-    const addSizeConsumption = async (payload: CreateSizeConsumptionPayload) => {
+    const addSizeConsumption = async (payload: CreateSizeConsumptionPayload): Promise<SizeConsumptionResponse | null> => {
         setLoading(true);
         setError(null);
         try {
-            await http(`${API_URL}/api/v1/costos/size-consumption/`, {
+            const data = await http<SizeConsumptionResponse>(`${API_URL}/api/v1/costos/size-consumption/`, {
                 method: "POST",
                 body: JSON.stringify(payload),
             });
             queryClient.invalidateQueries({ queryKey: ["size-consumption", payload.variant_id] });
-            return true;
+            return data;
         } catch (err: any) {
             setError(err.message || "Error al asignar el consumo de talla");
-            return false;
+            return null;
         } finally {
             setLoading(false);
         }
@@ -38,7 +42,7 @@ export function useSizeConsumption() {
         setLoading(true);
         setError(null);
         try {
-            await http(`${API_URL}/api/v1/costos/size-consumption/${id}/`, {
+            await http(`${API_URL}/api/v1/costos/size-consumption/detail/${id}/`, {
                 method: "PUT",
                 body: JSON.stringify(payload),
             });
@@ -57,7 +61,7 @@ export function useSizeConsumption() {
         setLoading(true);
         setError(null);
         try {
-            await http(`${API_URL}/api/v1/costos/size-consumption/${id}/`, {
+            await http(`${API_URL}/api/v1/costos/size-consumption/detail/${id}/`, {
                 method: "DELETE",
             });
             queryClient.invalidateQueries({ queryKey: ["size-consumption", variantId] });

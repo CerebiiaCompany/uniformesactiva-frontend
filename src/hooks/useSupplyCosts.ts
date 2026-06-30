@@ -3,9 +3,8 @@ import { http } from "@/lib/http";
 import { useQueryClient } from "@tanstack/react-query";
 import { CreateSupplyPayload } from "@/types/variant";
 
-// Interfaz para actualizar insumos
 export interface UpdateSupplyPayload extends Partial<CreateSupplyPayload> {
-    id: string;
+    id?: string;
 }
 
 export function useSupplyCosts() {

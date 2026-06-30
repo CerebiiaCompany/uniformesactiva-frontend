@@ -3,15 +3,23 @@ import { Button } from "@/components/ui/button";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { LaborPhase } from "@/types/variant";
 
+// Define el payload esperado para la actualización de mano de obra
+interface UpdateLaborPayload {
+    activity_name: string;
+    total: number;
+}
+
 interface LaborTableProps {
     data: LaborPhase[];
     variantId: string;
     onAdd: () => void;
     onEdit: (labor: LaborPhase) => void;
-    onDelete: (id: string) => void;
+    // Cambiado a Promise<any> para resolver la discrepancia de tipos (boolean vs void)
+    onUpdate: (id: string, payload: UpdateLaborPayload, variantId: string) => Promise<any>;
+    onDelete: (id: string) => Promise<void>;
 }
 
-export function LaborCostsTable({ data, variantId, onAdd, onEdit, onDelete }: LaborTableProps) {
+export function LaborCostsTable({ data, variantId, onAdd, onEdit, onUpdate, onDelete }: LaborTableProps) {
     return (
         <Card className="w-full">
             <CardHeader className="flex flex-row items-center justify-between py-4">

@@ -3,15 +3,24 @@ import { Button } from "@/components/ui/button";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { SupplyRecord } from "@/types/variant";
 
+// Asegúrate de que el tipo de payload coincida con lo que espera tu hook useSupplyCosts
+interface UpdateSupplyPayload {
+    description: string;
+    quantity: number;
+    unit_price: number;
+}
+
 interface SuppliesTableProps {
     data: SupplyRecord[];
     variantId: string;
     onAdd: () => void;
     onEdit: (supply: SupplyRecord) => void;
+    // Cambiado a Promise<any> para ser compatible con el retorno de tu función (boolean)
+    onUpdate: (id: string, payload: UpdateSupplyPayload, variantId: string) => Promise<any>;
     onDelete: (id: string) => void;
 }
 
-export function SuppliesTable({ data, variantId, onAdd, onEdit, onDelete }: SuppliesTableProps) {
+export function SuppliesTable({ data, variantId, onAdd, onEdit, onUpdate, onDelete }: SuppliesTableProps) {
     return (
         <Card className="w-full">
             <CardHeader className="flex flex-row items-center justify-between py-4">

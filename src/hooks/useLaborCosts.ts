@@ -3,9 +3,8 @@ import { http } from "@/lib/http";
 import { useQueryClient } from "@tanstack/react-query";
 import { CreateLaborPayload } from "@/types/variant";
 
-// Interfaz para actualizar mano de obra
 export interface UpdateLaborPayload extends Partial<CreateLaborPayload> {
-    id: string;
+    id?: string;
 }
 
 export function useLaborCosts() {
@@ -14,7 +13,6 @@ export function useLaborCosts() {
     const [error, setError] = useState<string | null>(null);
     const API_URL = import.meta.env.VITE_API_BASE_URL;
 
-    // Crear fase de mano de obra
     const addLabor = async (payload: CreateLaborPayload) => {
         setLoading(true);
         setError(null);
@@ -33,7 +31,6 @@ export function useLaborCosts() {
         }
     };
 
-    // Actualizar fase de mano de obra
     const updateLabor = async (id: string, payload: UpdateLaborPayload, variantId: string) => {
         setLoading(true);
         setError(null);
@@ -52,7 +49,6 @@ export function useLaborCosts() {
         }
     };
 
-    // Eliminar fase de mano de obra
     const deleteLabor = async (id: string, variantId: string) => {
         setLoading(true);
         setError(null);
