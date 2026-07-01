@@ -34,9 +34,15 @@ export function SizeConsumptionTable({ data, variantId, sizes }: SizeTableProps)
 
         data.forEach((rec) => {
             if (!rec.size_id) return;
+
+            // Convertimos a número para limpiar ceros (ej: "40.000" -> "40") y usamos coma
+            const cleanConsumption = rec.consumption
+                ? parseFloat(rec.consumption).toString().replace(".", ",")
+                : "";
+
             newValues[rec.size_id] = {
                 checked: true,
-                consumption: rec.consumption,
+                consumption: cleanConsumption,
                 dbId: rec.id,
                 dirty: false,
             };
@@ -130,7 +136,12 @@ export function SizeConsumptionTable({ data, variantId, sizes }: SizeTableProps)
     };
 
     const handleInputChange = (sizeId: string, rawVal: string) => {
-        const val = rawVal.replace(",", ".");
+        // Convertimos el punto a coma automáticamente
+        const val = rawVal.replace(".", ",");
+
+        // Validación para permitir solo números y una única coma (evita letras)
+        if (val !== "" && !/^[0-9]*,?[0-9]*$/.test(val)) return;
+
         setLocalValues((prev) => ({
             ...prev,
             [sizeId]: {
@@ -187,9 +198,13 @@ export function SizeConsumptionTable({ data, variantId, sizes }: SizeTableProps)
             (acc, [, item]) => acc + parseFloat(item.consumption.replace(",", ".")),
             0
         );
+
+        // Redondeamos a máximo 2 decimales y aplicamos la coma
+        const avg = count > 0 ? Math.round((sum / count) * 100) / 100 : 0;
+
         return {
             activeCount: count,
-            averageConsumption: count > 0 ? (sum / count).toFixed(2) : "0.00",
+            averageConsumption: avg.toString().replace(".", ","),
         };
     }, [localValues, sizes]);
 
@@ -239,22 +254,20 @@ export function SizeConsumptionTable({ data, variantId, sizes }: SizeTableProps)
                         return (
                             <div
                                 key={size.id}
-                                className={`flex items-center justify-between border rounded-lg p-3 transition-all ${
-                                    item.checked
+                                className={`flex items-center justify-between border rounded-lg p-3 transition-all ${item.checked
                                         ? "border-primary bg-primary/5"
                                         : "border-border bg-card"
-                                }`}
+                                    }`}
                             >
                                 <div
                                     className="flex items-center gap-2.5 cursor-pointer select-none min-w-0"
                                     onClick={() => handleCheckboxToggle(size.id)}
                                 >
                                     <div
-                                        className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${
-                                            item.checked
+                                        className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${item.checked
                                                 ? "border-primary bg-primary text-primary-foreground"
                                                 : "border-muted-foreground bg-background"
-                                        }`}
+                                            }`}
                                     >
                                         {item.checked && (
                                             <svg className="w-3 h-3 fill-current" viewBox="0 0 20 20">

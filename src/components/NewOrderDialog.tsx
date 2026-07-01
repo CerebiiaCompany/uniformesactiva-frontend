@@ -68,7 +68,7 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
 
     const fetchProducts = async () => {
         try {
-            const res = await fetch(`${API_URL}/api/v1/products/`, {
+            const res = await fetch(`${API_URL}/api/v1/products/productos/`, {
                 headers: { "Authorization": `Bearer ${getToken()}` }
             });
             const data = await res.json();

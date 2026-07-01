@@ -117,7 +117,7 @@ export default function VariantCostPage() {
                 if (result.success) {
                     toast.success("Variante creada correctamente");
                     await refetchVariants();
-                    const newVariantId = result.data?.id;
+                    const newVariantId = (result.data as { id: string })?.id;
                     if (newVariantId) {
                         navigate(variantCostingUrl(newVariantId));
                     }
@@ -226,9 +226,8 @@ export default function VariantCostPage() {
                                 return (
                                     <div
                                         key={v.id}
-                                        className={`grid grid-cols-3 px-6 py-3 border-b items-center text-sm cursor-pointer hover:bg-muted/10 ${
-                                            isActive ? "bg-muted/5 font-semibold" : ""
-                                        }`}
+                                        className={`grid grid-cols-3 px-6 py-3 border-b items-center text-sm cursor-pointer hover:bg-muted/10 ${isActive ? "bg-muted/5 font-semibold" : ""
+                                            }`}
                                         onClick={() => !isActive && navigate(variantCostingUrl(v.id))}
                                     >
                                         <div className={isActive ? "text-primary font-bold" : "text-foreground"}>
@@ -324,7 +323,7 @@ export default function VariantCostPage() {
                                         options: supplyTypeOptions,
                                     },
                                     { name: "quantity", label: "Cantidad", type: "number", placeholder: "2.000" },
-                                    { name: "unit_price", label: "Precio unitario", type: "number", placeholder: "3500" },
+                                    { name: "unit_price", label: "Precio unitario", type: "text", placeholder: "$3.500" },
                                 ])
                             }
                             onDelete={(id) => deleteSupply(id, activeVariantId)}
