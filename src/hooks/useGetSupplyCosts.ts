@@ -30,6 +30,7 @@ const mapSupply = (item: any, catalogById: Map<string, string>): SupplyRecord =>
     return {
         id: item.id,
         variant_id: item.variant_id,
+        tipo_id: tipoId ?? (typeof item.tipo === "string" ? item.tipo : ""),
         tipo: tipoId ?? (typeof item.tipo === "string" ? item.tipo : ""),
         tipo_label: tipoLabel,
         quantity: String(item.quantity ?? "0"),

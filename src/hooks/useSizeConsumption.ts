@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
-import type { CreateSizeConsumptionPayload } from "@/types/variant";
+import type { CreateSizeConsumptionPayload, UpdateSizeConsumptionPayload } from "@/types/variant";
 
 export interface SizeConsumptionResponse {
     id: string;
@@ -49,15 +49,21 @@ export function useSizeConsumption() {
 
     const updateSizeConsumption = async (
         id: string,
-        payload: Pick<CreateSizeConsumptionPayload, "consumption">,
+        payload: UpdateSizeConsumptionPayload,
         variantId: string
     ) => {
         setLoading(true);
         setError(null);
         try {
+            const body: Record<string, string> = {};
+            if (payload.talla_id != null) body.talla_id = payload.talla_id;
+            if (payload.consumption != null) body.consumption = String(payload.consumption);
+
+            if (Object.keys(body).length === 0) return true;
+
             await http(endpoints.costos.tallasConsumoDetalle(id), {
                 method: "PATCH",
-                body: JSON.stringify({ consumption: String(payload.consumption) }),
+                body: JSON.stringify(body),
             });
             invalidate(variantId);
             return true;

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { AppLayout } from "@/components/AppLayout";
@@ -13,6 +13,7 @@ import { useGetLaborCosts } from "@/hooks/useGetLaborCosts";
 import { useGetSizeConsumption } from "@/hooks/useGetSizeConsumption";
 import { useGetSupplyCosts } from "@/hooks/useGetSupplyCosts";
 import { useGetCostCatalogs } from "@/hooks/useGetCostCatalogs";
+import { useGetCostSummary } from "@/hooks/useGetCostSummary";
 import { useFabricCosts } from "@/hooks/useFabricCost";
 import { useSupplyCosts } from "@/hooks/useSupplyCosts";
 import { useLaborCosts } from "@/hooks/useLaborCosts";
@@ -24,8 +25,18 @@ import { SuppliesTable } from "@/components/variant-cost/SuppliesTable";
 import { LaborCostsTable } from "@/components/variant-cost/LaborCostsTable";
 import { SizeConsumptionTable } from "@/components/variant-cost/SizeConsumptionTable";
 import { ModalForm, FieldDefinition } from "@/components/ui/ModalForm";
+import { normalizeDecimalInput } from "@/lib/decimal-input";
+import { formatCurrency, formatDecimal, formatForInput } from "@/lib/format-number";
 
-type ModalType = "new_variant" | "supply" | "labor" | "edit_labor" | "new_proveedor" | "";
+type ModalType =
+    | "new_variant"
+    | "supply"
+    | "edit_supply"
+    | "edit_fabric"
+    | "labor"
+    | "edit_labor"
+    | "new_proveedor"
+    | "";
 
 export default function VariantCostPage() {
     const { productId, variantId } = useParams<{ productId: string; variantId?: string }>();
@@ -39,8 +50,9 @@ export default function VariantCostPage() {
     const { createProveedor } = useCreateProveedor();
 
     const { createVariant } = useCreateVariant();
-    const { addFabric } = useFabricCosts();
-    const { addSupply, deleteSupply } = useSupplyCosts();
+    const { addFabric, updateFabric, deleteFabric, setFabricPrincipal, loading: isFabricLoading } =
+        useFabricCosts();
+    const { addSupply, updateSupply, deleteSupply } = useSupplyCosts();
     const { addLabor, updateLabor, deleteLabor } = useLaborCosts();
 
     const activeVariantId = variantId ?? "";
@@ -50,24 +62,17 @@ export default function VariantCostPage() {
     const { data: labor } = useGetLaborCosts(activeVariantId);
     const { data: sizeCons } = useGetSizeConsumption(activeVariantId);
     const { data: supplies } = useGetSupplyCosts(activeVariantId);
+    const { data: summary, isLoading: isSummaryLoading } = useGetCostSummary(activeVariantId);
 
-    const sumRecordTotals = (items: { total: string }[] | undefined) =>
-        (items ?? []).reduce((acc, item) => acc + Number(item.total || 0), 0);
+    const formatMeters = (value: number) => formatDecimal(value);
 
-    const { totalTela, totalInsumos, totalManoObra, totalGeneral } = useMemo(() => {
-        const tela = sumRecordTotals(fabrics);
-        const insumos = sumRecordTotals(supplies);
-        const manoObra = sumRecordTotals(labor);
-        return {
-            totalTela: tela,
-            totalInsumos: insumos,
-            totalManoObra: manoObra,
-            totalGeneral: tela + insumos + manoObra,
-        };
-    }, [fabrics, supplies, labor]);
-
-    const formatCurrency = (value: number) =>
-        value.toLocaleString("es-CO", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    const fabricTotal = Number(summary?.fabric_total ?? 0);
+    const suppliesTotal = Number(summary?.supplies_total ?? 0);
+    const laborTotal = Number(summary?.labor_total ?? 0);
+    const overallTotal = Number(summary?.overall_total ?? 0);
+    const avgConsumption = Number(summary?.average_consumption ?? 0);
+    const fabricPricePerMeter = Number(summary?.fabric_price_per_meter ?? 0);
+    const showFabricBreakdown = avgConsumption > 0 && fabricPricePerMeter > 0;
 
     const [modalConfig, setModalConfig] = useState<{
         isOpen: boolean;
@@ -133,6 +138,45 @@ export default function VariantCostPage() {
                 });
                 if (ok) toast.success("Insumo agregado");
                 else toast.error("No se pudo agregar el insumo");
+            } else if (modalConfig.type === "edit_supply" && modalConfig.initialData?.id && hasActiveVariant) {
+                const initial = modalConfig.initialData;
+                const payload: Record<string, string> = {};
+                const initialTipoId = initial.tipo_id || initial.tipo;
+
+                if (data.tipo_id !== initialTipoId) payload.tipo_id = data.tipo_id;
+                if (data.quantity !== initial.quantity) payload.quantity = data.quantity;
+                if (data.unit_price !== initial.unit_price) payload.unit_price = data.unit_price;
+
+                if (Object.keys(payload).length === 0) {
+                    toast.info("No hay cambios para guardar");
+                } else {
+                    const ok = await updateSupply(initial.id, payload, activeVariantId);
+                    if (ok) toast.success("Insumo actualizado");
+                    else toast.error("No se pudo actualizar el insumo");
+                }
+            } else if (modalConfig.type === "edit_fabric" && modalConfig.initialData?.id && hasActiveVariant) {
+                const initial = modalConfig.initialData;
+                const payload: Record<string, string | boolean> = {};
+                const tieneIva = data.tiene_iva === "true";
+                const initialTieneIva = Boolean(initial.tiene_iva);
+                const meters = normalizeDecimalInput(data.meters);
+                const pricePerMeter = normalizeDecimalInput(data.price_per_meter);
+
+                if (data.proveedor_id !== initial.proveedor_id) payload.proveedor_id = data.proveedor_id;
+                if (data.reference !== initial.reference) payload.reference = data.reference;
+                if (meters !== normalizeDecimalInput(String(initial.meters))) payload.meters = meters;
+                if (pricePerMeter !== normalizeDecimalInput(String(initial.price_per_meter))) {
+                    payload.price_per_meter = pricePerMeter;
+                }
+                if (tieneIva !== initialTieneIva) payload.tiene_iva = tieneIva;
+
+                if (Object.keys(payload).length === 0) {
+                    toast.info("No hay cambios para guardar");
+                } else {
+                    const ok = await updateFabric(initial.id, payload, activeVariantId);
+                    if (ok) toast.success("Costo de tela actualizado");
+                    else toast.error("No se pudo actualizar el costo de tela");
+                }
             } else if (modalConfig.type === "labor" && hasActiveVariant) {
                 const ok = await addLabor({
                     variant_id: activeVariantId,
@@ -143,17 +187,21 @@ export default function VariantCostPage() {
                 if (ok) toast.success("Fase de mano de obra agregada");
                 else toast.error("No se pudo agregar la fase");
             } else if (modalConfig.type === "edit_labor" && modalConfig.initialData?.id) {
-                const ok = await updateLabor(
-                    modalConfig.initialData.id,
-                    {
-                        fase_id: data.fase_id,
-                        cantidad: data.cantidad,
-                        unit_price: data.unit_price,
-                    },
-                    activeVariantId
-                );
-                if (ok) toast.success("Fase actualizada");
-                else toast.error("No se pudo actualizar la fase");
+                const initial = modalConfig.initialData;
+                const payload: Record<string, string> = {};
+                const initialFaseId = initial.fase_id || initial.fase;
+
+                if (data.fase_id !== initialFaseId) payload.fase_id = data.fase_id;
+                if (data.cantidad !== initial.cantidad) payload.cantidad = data.cantidad;
+                if (data.unit_price !== initial.unit_price) payload.unit_price = data.unit_price;
+
+                if (Object.keys(payload).length === 0) {
+                    toast.info("No hay cambios para guardar");
+                } else {
+                    const ok = await updateLabor(initial.id, payload, activeVariantId);
+                    if (ok) toast.success("Fase actualizada");
+                    else toast.error("No se pudo actualizar la fase");
+                }
             } else if (modalConfig.type === "new_proveedor") {
                 const result = await createProveedor(data.name);
                 if (result.success) {
@@ -177,6 +225,34 @@ export default function VariantCostPage() {
         value: f.id,
         label: f.label || f.name,
     }));
+
+    const proveedorOptions = proveedores.map((p) => ({
+        value: p.id,
+        label: p.name,
+    }));
+
+    const ivaOptions = [
+        { value: "false", label: "No" },
+        { value: "true", label: "Sí" },
+    ];
+
+    const fabricEditFields: FieldDefinition[] = [
+        { name: "proveedor_id", label: "Proveedor", type: "select", options: proveedorOptions },
+        { name: "reference", label: "Referencia", type: "text", placeholder: "REF-001" },
+        {
+            name: "meters",
+            label: "Metros",
+            type: "decimal",
+            placeholder: "2,500",
+        },
+        {
+            name: "price_per_meter",
+            label: "Precio por metro",
+            type: "decimal",
+            placeholder: "5000,00",
+        },
+        { name: "tiene_iva", label: "IVA", type: "select", options: ivaOptions },
+    ];
 
     return (
         <AppLayout
@@ -276,25 +352,39 @@ export default function VariantCostPage() {
                                         <CardTitle className="text-sm font-bold">Resumen de costos</CardTitle>
                                     </CardHeader>
                                     <CardContent className="space-y-4 text-sm">
-                                        <p className="text-xs text-muted-foreground pb-1">
-                                            Suma de los registros de tela, insumos y mano de obra.
-                                        </p>
-                                        <div className="flex justify-between">
-                                            <span>Tela ({fabrics?.length ?? 0})</span>
-                                            <span>${formatCurrency(totalTela)}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span>Insumos ({supplies?.length ?? 0})</span>
-                                            <span>${formatCurrency(totalInsumos)}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span>Mano de obra ({labor?.length ?? 0})</span>
-                                            <span>${formatCurrency(totalManoObra)}</span>
-                                        </div>
-                                        <div className="border-t pt-2 font-bold flex justify-between text-base">
-                                            <span>Costo base</span>
-                                            <span>${formatCurrency(totalGeneral)}</span>
-                                        </div>
+                                        {isSummaryLoading && !summary ? (
+                                            <div className="flex items-center gap-2 text-muted-foreground py-4">
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                Calculando resumen...
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className="flex justify-between items-start gap-3">
+                                                    <div>
+                                                        <span>Tela</span>
+                                                        {showFabricBreakdown && (
+                                                            <p className="text-xs text-muted-foreground mt-0.5">
+                                                                {formatMeters(avgConsumption)} m × $
+                                                                {formatCurrency(fabricPricePerMeter)}/m
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                    <span>${formatCurrency(fabricTotal)}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span>Insumos</span>
+                                                    <span>${formatCurrency(suppliesTotal)}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span>Mano de obra</span>
+                                                    <span>${formatCurrency(laborTotal)}</span>
+                                                </div>
+                                                <div className="border-t pt-2 font-bold flex justify-between text-base">
+                                                    <span>Costo base</span>
+                                                    <span>${formatCurrency(overallTotal)}</span>
+                                                </div>
+                                            </>
+                                        )}
                                     </CardContent>
                                 </Card>
                             </div>
@@ -304,7 +394,27 @@ export default function VariantCostPage() {
                             data={fabrics || []}
                             variantId={activeVariantId}
                             proveedores={proveedores}
+                            isSettingPrincipal={isFabricLoading}
                             onAdd={addFabric}
+                            onSetPrincipal={async (id) => {
+                                const ok = await setFabricPrincipal(id, activeVariantId);
+                                if (ok) toast.success("Tela marcada como principal para el costeo");
+                                else toast.error("No se pudo marcar la tela como principal");
+                                return ok;
+                            }}
+                            onEdit={(item) =>
+                                handleOpenModal("edit_fabric", "Editar costo de tela", fabricEditFields, {
+                                    ...item,
+                                    meters: formatForInput(item.meters),
+                                    price_per_meter: formatForInput(item.price_per_meter),
+                                    tiene_iva: item.tiene_iva ? "true" : "false",
+                                })
+                            }
+                            onDelete={async (id) => {
+                                const ok = await deleteFabric(id, activeVariantId);
+                                if (ok) toast.success("Costo de tela eliminado");
+                                else toast.error("No se pudo eliminar el costo de tela");
+                            }}
                             onCreateProveedor={() =>
                                 handleOpenModal("new_proveedor", "Nuevo proveedor", [
                                     { name: "name", label: "Nombre del proveedor", type: "text", placeholder: "Textil del Norte" },
@@ -322,9 +432,31 @@ export default function VariantCostPage() {
                                         type: "select",
                                         options: supplyTypeOptions,
                                     },
-                                    { name: "quantity", label: "Cantidad", type: "number", placeholder: "2.000" },
-                                    { name: "unit_price", label: "Precio unitario", type: "text", placeholder: "$3.500" },
+                                    { name: "quantity", label: "Cantidad", type: "number", placeholder: "8" },
+                                    { name: "unit_price", label: "Precio unitario", type: "number", placeholder: "3500" },
                                 ])
+                            }
+                            onEdit={(item) =>
+                                handleOpenModal(
+                                    "edit_supply",
+                                    "Editar insumo",
+                                    [
+                                        {
+                                            name: "tipo_id",
+                                            label: "Tipo de insumo",
+                                            type: "select",
+                                            options: supplyTypeOptions,
+                                        },
+                                        { name: "quantity", label: "Cantidad", type: "number" },
+                                        { name: "unit_price", label: "Precio unitario", type: "number" },
+                                    ],
+                                    {
+                                        ...item,
+                                        tipo_id: item.tipo_id || item.tipo,
+                                        quantity: formatForInput(item.quantity),
+                                        unit_price: formatForInput(item.unit_price),
+                                    }
+                                )
                             }
                             onDelete={(id) => deleteSupply(id, activeVariantId)}
                         />
@@ -339,7 +471,7 @@ export default function VariantCostPage() {
                                         type: "select",
                                         options: laborPhaseOptions,
                                     },
-                                    { name: "cantidad", label: "Cantidad", type: "number", placeholder: "1.000" },
+                                    { name: "cantidad", label: "Cantidad", type: "number", placeholder: "1" },
                                     { name: "unit_price", label: "Precio unitario", type: "number", placeholder: "25000" },
                                 ])
                             }
@@ -360,6 +492,8 @@ export default function VariantCostPage() {
                                     {
                                         ...item,
                                         fase_id: item.fase_id || item.fase,
+                                        cantidad: formatForInput(item.cantidad),
+                                        unit_price: formatForInput(item.unit_price),
                                     }
                                 )
                             }
@@ -369,6 +503,7 @@ export default function VariantCostPage() {
                 )}
 
                 <ModalForm
+                    key={`${modalConfig.type}-${modalConfig.initialData?.id ?? "new"}-${modalConfig.isOpen}`}
                     isOpen={modalConfig.isOpen}
                     title={modalConfig.title}
                     fields={modalConfig.fields}

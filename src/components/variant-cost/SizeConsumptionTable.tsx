@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Check, Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import type { CatalogOption, SizeFabric } from "@/types/variant";
+import { formatForInput } from "@/lib/format-number";
 import { useSizeConsumption } from "@/hooks/useSizeConsumption";
 
 interface SizeTableProps {
@@ -35,10 +36,8 @@ export function SizeConsumptionTable({ data, variantId, sizes }: SizeTableProps)
         data.forEach((rec) => {
             if (!rec.size_id) return;
 
-            // Convertimos a número para limpiar ceros (ej: "40.000" -> "40") y usamos coma
-            const cleanConsumption = rec.consumption
-                ? parseFloat(rec.consumption).toString().replace(".", ",")
-                : "";
+            // Limpia ceros de más del API (ej: "40.000" → "40")
+            const cleanConsumption = rec.consumption ? formatForInput(rec.consumption) : "";
 
             newValues[rec.size_id] = {
                 checked: true,

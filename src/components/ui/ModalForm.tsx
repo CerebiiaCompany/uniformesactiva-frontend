@@ -15,8 +15,20 @@ export interface FieldDefinition {
     type: string;
     placeholder?: string;
     defaultValue?: string | number;
+    step?: string;
+    inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
     options?: { value: string; label: string }[];
 }
+
+const resolveInputType = (field: FieldDefinition) => {
+    if (field.type === "decimal") return "text";
+    return field.type;
+};
+
+const resolveInputMode = (field: FieldDefinition) => {
+    if (field.type === "decimal") return "decimal" as const;
+    return field.inputMode;
+};
 
 interface ModalFormProps {
     isOpen: boolean;
@@ -42,7 +54,7 @@ export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading,
                 <DialogHeader>
                     <DialogTitle>{title}</DialogTitle>
                 </DialogHeader>
-                <form onSubmit={handleSubmit} className="space-y-4">
+                <form onSubmit={handleSubmit} className="space-y-4" noValidate>
                     {fields.map((field) => (
                         <div key={field.name} className="space-y-2">
                             <Label htmlFor={field.name}>{field.label}</Label>
@@ -67,7 +79,9 @@ export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading,
                                 <Input
                                     id={field.name}
                                     name={field.name}
-                                    type={field.type}
+                                    type={resolveInputType(field)}
+                                    step={field.type === "decimal" ? undefined : field.step}
+                                    inputMode={resolveInputMode(field)}
                                     placeholder={field.placeholder}
                                     defaultValue={initialData?.[field.name] ?? field.defaultValue ?? ""}
                                     required

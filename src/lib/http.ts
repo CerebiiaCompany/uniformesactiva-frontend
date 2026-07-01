@@ -31,5 +31,15 @@ export async function http<T>(input: RequestInfo, init?: RequestInit): Promise<T
             `Error ${response.status}: ${response.statusText}`;
         throw new Error(message);
     }
-    return (await response.json()) as T;
+
+    if (response.status === 204) {
+        return undefined as T;
+    }
+
+    const text = await response.text();
+    if (!text.trim()) {
+        return undefined as T;
+    }
+
+    return JSON.parse(text) as T;
 }

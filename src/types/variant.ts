@@ -34,6 +34,7 @@ export interface FabricRecord {
     meters: string;
     price_per_meter: string;
     tiene_iva: boolean;
+    es_principal: boolean;
     total: string;
 }
 
@@ -41,6 +42,7 @@ export interface SupplyRecord {
     id: string;
     variant_id: string;
     tipo: string;
+    tipo_id?: string;
     tipo_label?: string;
     quantity: string;
     unit_price: string;
@@ -59,19 +61,32 @@ export interface LaborPhase {
 }
 
 export interface VariantCostSummary {
-    tela: string | number;
-    insumos: string | number;
-    mano_de_obra: string | number;
-    total: string | number;
+    variant_id?: string;
+    average_consumption?: string | number;
+    fabric_price_per_meter?: string | number;
+    fabric_total: string | number;
+    supplies_total: string | number;
+    labor_total: string | number;
+    overall_total: string | number;
 }
 
 export interface CreateFabricPayload {
     variant_id: string;
-    proveedor_id: string;
+    proveedor_id?: string;
     reference: string;
     meters: string | number;
     price_per_meter: string | number;
-    tiene_iva: boolean;
+    tiene_iva?: boolean;
+    es_principal?: boolean;
+}
+
+export interface UpdateFabricPayload {
+    proveedor_id?: string;
+    reference?: string;
+    meters?: string | number;
+    price_per_meter?: string | number;
+    tiene_iva?: boolean;
+    es_principal?: boolean;
 }
 
 export interface CreateSupplyPayload {
@@ -79,6 +94,12 @@ export interface CreateSupplyPayload {
     tipo_id: string;
     quantity: string | number;
     unit_price: string | number;
+}
+
+export interface UpdateSupplyPayload {
+    tipo_id?: string;
+    quantity?: string | number;
+    unit_price?: string | number;
 }
 
 export interface CreateLaborPayload {
@@ -92,6 +113,11 @@ export interface CreateSizeConsumptionPayload {
     variant_id: string;
     talla_id: string;
     consumption: string | number;
+}
+
+export interface UpdateSizeConsumptionPayload {
+    talla_id?: string;
+    consumption?: string | number;
 }
 
 export interface CreateVariantPayload {

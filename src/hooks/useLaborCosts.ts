@@ -50,6 +50,8 @@ export function useLaborCosts() {
             if (payload.cantidad != null) body.cantidad = String(payload.cantidad);
             if (payload.unit_price != null) body.unit_price = String(payload.unit_price);
 
+            if (Object.keys(body).length === 0) return true;
+
             await http(endpoints.costos.manoDeObraDetalle(id), {
                 method: "PATCH",
                 body: JSON.stringify(body),

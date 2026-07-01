@@ -33,6 +33,7 @@ const mapFabric = (item: any, catalogById: Map<string, string>): FabricRecord =>
         meters: String(item.meters ?? "0"),
         price_per_meter: String(item.price_per_meter ?? "0"),
         tiene_iva: tieneIva,
+        es_principal: Boolean(item.es_principal),
         total: String(total),
     };
 };

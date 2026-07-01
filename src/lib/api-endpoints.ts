@@ -19,6 +19,7 @@ export const endpoints = {
         fasesManoDeObra: () => `${base()}/api/v1/costos/fases-mano-de-obra/`,
         tela: () => `${base()}/api/v1/costos/tela/`,
         telaByVariant: (variantId: string) => `${base()}/api/v1/costos/tela/${variantId}/`,
+        telaDetalle: (id: string) => `${base()}/api/v1/costos/tela/detalle/${id}/`,
         tallasConsumo: () => `${base()}/api/v1/costos/tallas-consumo/`,
         tallasConsumoByVariant: (variantId: string) =>
             `${base()}/api/v1/costos/tallas-consumo/${variantId}/`,

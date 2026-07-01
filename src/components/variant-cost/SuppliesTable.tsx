@@ -1,15 +1,17 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2 } from "lucide-react";
 import type { SupplyRecord } from "@/types/variant";
+import { formatCurrency, formatQuantity } from "@/lib/format-number";
 
 interface SuppliesTableProps {
     data: SupplyRecord[];
     onAdd: () => void;
+    onEdit: (supply: SupplyRecord) => void;
     onDelete: (id: string) => void;
 }
 
-export function SuppliesTable({ data, onAdd, onDelete }: SuppliesTableProps) {
+export function SuppliesTable({ data, onAdd, onEdit, onDelete }: SuppliesTableProps) {
     return (
         <Card className="w-full">
             <CardHeader className="flex flex-row items-center justify-between py-4">
@@ -30,14 +32,20 @@ export function SuppliesTable({ data, onAdd, onDelete }: SuppliesTableProps) {
                         {data.map((item) => (
                             <div key={item.id} className="grid grid-cols-5 text-sm items-center border-b py-2">
                                 <div className="col-span-2">{item.tipo_label || item.tipo || "—"}</div>
-                                <div>{item.quantity}</div>
-                                <div>${item.unit_price}</div>
+                                <div>{formatQuantity(item.quantity)}</div>
+                                <div>${formatCurrency(item.unit_price)}</div>
                                 <div className="flex items-center justify-between">
-                                    <span className="font-bold">${Number(item.total).toFixed(2)}</span>
-                                    <Trash2
-                                        className="h-4 w-4 cursor-pointer text-red-500 hover:text-red-700"
-                                        onClick={() => onDelete(item.id)}
-                                    />
+                                    <span className="font-bold">${formatCurrency(item.total)}</span>
+                                    <div className="flex gap-2">
+                                        <Pencil
+                                            className="h-4 w-4 cursor-pointer text-muted-foreground hover:text-primary"
+                                            onClick={() => onEdit(item)}
+                                        />
+                                        <Trash2
+                                            className="h-4 w-4 cursor-pointer text-red-500 hover:text-red-700"
+                                            onClick={() => onDelete(item.id)}
+                                        />
+                                    </div>
                                 </div>
                             </div>
                         ))}

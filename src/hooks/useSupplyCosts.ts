@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
-import type { CreateSupplyPayload } from "@/types/variant";
+import type { CreateSupplyPayload, UpdateSupplyPayload } from "@/types/variant";
 
 export function useSupplyCosts() {
     const queryClient = useQueryClient();
@@ -37,6 +37,31 @@ export function useSupplyCosts() {
         }
     };
 
+    const updateSupply = async (id: string, payload: UpdateSupplyPayload, variantId: string) => {
+        setLoading(true);
+        setError(null);
+        try {
+            const body: Record<string, string> = {};
+            if (payload.tipo_id != null) body.tipo_id = payload.tipo_id;
+            if (payload.quantity != null) body.quantity = String(payload.quantity);
+            if (payload.unit_price != null) body.unit_price = String(payload.unit_price);
+
+            if (Object.keys(body).length === 0) return true;
+
+            await http(endpoints.costos.insumosDetalle(id), {
+                method: "PATCH",
+                body: JSON.stringify(body),
+            });
+            invalidate(variantId);
+            return true;
+        } catch (err: any) {
+            setError(err.message || "Error al actualizar el insumo");
+            return false;
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const deleteSupply = async (id: string, variantId: string) => {
         setLoading(true);
         setError(null);
@@ -52,5 +77,5 @@ export function useSupplyCosts() {
         }
     };
 
-    return { loading, error, addSupply, deleteSupply };
+    return { loading, error, addSupply, updateSupply, deleteSupply };
 }
