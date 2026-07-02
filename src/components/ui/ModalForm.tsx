@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
     Dialog,
     DialogContent,
@@ -8,6 +8,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { formatCurrency } from "@/lib/format-number";
 
 export interface FieldDefinition {
     name: string;
@@ -20,16 +21,6 @@ export interface FieldDefinition {
     options?: { value: string; label: string }[];
 }
 
-const resolveInputType = (field: FieldDefinition) => {
-    if (field.type === "decimal") return "text";
-    return field.type;
-};
-
-const resolveInputMode = (field: FieldDefinition) => {
-    if (field.type === "decimal") return "decimal" as const;
-    return field.inputMode;
-};
-
 interface ModalFormProps {
     isOpen: boolean;
     onClose: () => void;
@@ -41,11 +32,32 @@ interface ModalFormProps {
 }
 
 export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading, initialData }: ModalFormProps) {
+    const [formData, setFormData] = useState<Record<string, string>>({});
+
+    // Inicializar el estado cuando el modal se abre
+    useEffect(() => {
+        if (isOpen) {
+            const initial: Record<string, string> = {};
+            fields.forEach((f) => {
+                initial[f.name] = initialData?.[f.name]?.toString() ?? f.defaultValue?.toString() ?? "";
+            });
+            setFormData(initial);
+        }
+    }, [isOpen, initialData, fields]);
+
+    const handleChange = (name: string, value: string) => {
+        // Si es unit_price, limpiamos todo lo que no sea dígito para mantener el valor crudo
+        if (name === "unit_price") {
+            const rawValue = value.replace(/[^0-9]/g, "");
+            setFormData((prev) => ({ ...prev, [name]: rawValue }));
+        } else {
+            setFormData((prev) => ({ ...prev, [name]: value }));
+        }
+    };
+
     const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
-        const formData = new FormData(e.currentTarget);
-        const data = Object.fromEntries(formData.entries()) as Record<string, string>;
-        onSubmit(data);
+        onSubmit(formData);
     };
 
     return (
@@ -62,13 +74,12 @@ export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading,
                                 <select
                                     id={field.name}
                                     name={field.name}
-                                    defaultValue={initialData?.[field.name] ?? field.defaultValue ?? ""}
+                                    value={formData[field.name] || ""}
+                                    onChange={(e) => handleChange(field.name, e.target.value)}
                                     required
                                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                                 >
-                                    <option value="" disabled>
-                                        Seleccionar...
-                                    </option>
+                                    <option value="" disabled>Seleccionar...</option>
                                     {field.options?.map((opt) => (
                                         <option key={opt.value} value={opt.value}>
                                             {opt.label}
@@ -79,11 +90,15 @@ export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading,
                                 <Input
                                     id={field.name}
                                     name={field.name}
-                                    type={resolveInputType(field)}
-                                    step={field.type === "decimal" ? undefined : field.step}
-                                    inputMode={resolveInputMode(field)}
+                                    type={field.name === "unit_price" ? "text" : field.type === "decimal" ? "text" : field.type}
                                     placeholder={field.placeholder}
-                                    defaultValue={initialData?.[field.name] ?? field.defaultValue ?? ""}
+                                    // Si es unit_price, mostramos formateado, si no, el valor crudo
+                                    value={
+                                        field.name === "unit_price" && formData[field.name]
+                                            ? formatCurrency(Number(formData[field.name]))
+                                            : formData[field.name] || ""
+                                    }
+                                    onChange={(e) => handleChange(field.name, e.target.value)}
                                     required
                                 />
                             )}
