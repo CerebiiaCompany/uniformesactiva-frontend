@@ -1,3 +1,5 @@
+import { clearSessionAndRedirectToLogin } from "@/lib/auth-redirect";
+
 export async function http<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
     const token = localStorage.getItem("token");
 
@@ -11,9 +13,7 @@ export async function http<T>(input: RequestInfo, init?: RequestInit): Promise<T
     const response = await fetch(input, { ...init, headers });
 
     if (response.status === 401) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
-        window.location.replace("/login");
+        clearSessionAndRedirectToLogin();
         throw new Error("Unauthorized");
     }
     if (!response.ok) {

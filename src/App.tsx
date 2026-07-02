@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Login from "./pages/login"
 import ProtectedRoute from "./components/ProtectedRoute";
+import { AuthRedirectBinder } from "./components/AuthRedirectBinder";
 import Dashboard from "./pages/Dashboard";
 import Customers from "./pages/Customers";
 import Quotations from "./pages/Quotations";
@@ -30,6 +31,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        <AuthRedirectBinder />
         <Routes>
           <Route path="/" element={<Login />} />
           <Route path="/login" element={<Login />} />
