@@ -17,10 +17,14 @@ export const endpoints = {
         list: () => `${base()}/api/v1/orders/`,
         estado: (orderId: string) => `${base()}/api/v1/orders/${orderId}/estado/`,
         valorVenta: (orderId: string) => `${base()}/api/v1/orders/${orderId}/valor-venta/`,
+        comentarios: (orderId: string) => `${base()}/api/v1/orders/${orderId}/comentarios/`,
         logs: (orderId: string) => `${base()}/api/v1/orders/${orderId}/logs/`,
     },
     clients: {
         list: () => `${base()}/api/v1/clients/`,
+    },
+    users: {
+        list: () => `${base()}/api/v1/users/`,
     },
     costos: {
         proveedores: () => `${base()}/api/v1/costos/proveedores/`,

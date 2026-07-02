@@ -19,6 +19,7 @@ export interface FieldDefinition {
     step?: string;
     inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
     options?: { value: string; label: string }[];
+    required?: boolean;
 }
 
 interface ModalFormProps {
@@ -76,10 +77,14 @@ export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading,
                                     name={field.name}
                                     value={formData[field.name] || ""}
                                     onChange={(e) => handleChange(field.name, e.target.value)}
-                                    required
+                                    required={field.required !== false}
                                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                                 >
-                                    <option value="" disabled>Seleccionar...</option>
+                                    {field.required !== false && (
+                                        <option value="" disabled>
+                                            Seleccionar...
+                                        </option>
+                                    )}
                                     {field.options?.map((opt) => (
                                         <option key={opt.value} value={opt.value}>
                                             {opt.label}
@@ -92,14 +97,13 @@ export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading,
                                     name={field.name}
                                     type={field.name === "unit_price" ? "text" : field.type === "decimal" ? "text" : field.type}
                                     placeholder={field.placeholder}
-                                    // Si es unit_price, mostramos formateado, si no, el valor crudo
                                     value={
                                         field.name === "unit_price" && formData[field.name]
                                             ? formatCurrency(Number(formData[field.name]))
                                             : formData[field.name] || ""
                                     }
                                     onChange={(e) => handleChange(field.name, e.target.value)}
-                                    required
+                                    required={field.required !== false}
                                 />
                             )}
                         </div>

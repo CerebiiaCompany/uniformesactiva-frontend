@@ -1,63 +1,87 @@
 import { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Check, Loader2, Save } from "lucide-react";
+import { Check, Loader2, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { CatalogOption, SizeFabric } from "@/types/variant";
 import { formatForInput } from "@/lib/format-number";
 import { useSizeConsumption } from "@/hooks/useSizeConsumption";
+import { cn } from "@/lib/utils";
 
 interface SizeTableProps {
     data: SizeFabric[];
     variantId: string;
     sizes: CatalogOption[];
+    selectedSizeId?: string | null;
+    onSelectedSizeChange?: (sizeId: string) => void;
 }
 
 type LocalSizeState = {
-    checked: boolean;
     consumption: string;
     dbId?: string;
     dirty?: boolean;
 };
 
-export function SizeConsumptionTable({ data, variantId, sizes }: SizeTableProps) {
+export function SizeConsumptionTable({
+    data,
+    variantId,
+    sizes,
+    selectedSizeId: controlledSelectedSizeId,
+    onSelectedSizeChange,
+}: SizeTableProps) {
     const { addSizeConsumption, updateSizeConsumption, deleteSizeConsumption, loading } =
         useSizeConsumption();
     const [localValues, setLocalValues] = useState<Record<string, LocalSizeState>>({});
-    const [savedSizeIds, setSavedSizeIds] = useState<Set<string>>(new Set());
+    const [internalSelectedSizeId, setInternalSelectedSizeId] = useState<string>("");
+
+    const selectedSizeId = controlledSelectedSizeId ?? internalSelectedSizeId;
+
+    const setSelectedSizeId = (sizeId: string) => {
+        if (onSelectedSizeChange) {
+            onSelectedSizeChange(sizeId);
+        } else {
+            setInternalSelectedSizeId(sizeId);
+        }
+    };
 
     useEffect(() => {
         const newValues: Record<string, LocalSizeState> = {};
 
         sizes.forEach((size) => {
-            newValues[size.id] = { checked: false, consumption: "", dirty: false };
+            newValues[size.id] = { consumption: "", dirty: false };
         });
 
         data.forEach((rec) => {
             if (!rec.size_id) return;
-
-            // Limpia ceros de más del API (ej: "40.000" → "40")
-            const cleanConsumption = rec.consumption ? formatForInput(rec.consumption) : "";
-
             newValues[rec.size_id] = {
-                checked: true,
-                consumption: cleanConsumption,
+                consumption: rec.consumption ? formatForInput(rec.consumption) : "",
                 dbId: rec.id,
                 dirty: false,
             };
         });
 
         setLocalValues(newValues);
-        setSavedSizeIds(new Set(data.map((rec) => rec.size_id).filter(Boolean)));
+
+        const firstConfigured = data.find((rec) => rec.size_id)?.size_id;
+        const fallback = firstConfigured ?? sizes[0]?.id ?? "";
+        if (fallback && !selectedSizeId) {
+            setSelectedSizeId(fallback);
+        }
     }, [data, sizes]);
+
+    useEffect(() => {
+        if (selectedSizeId && sizes.some((s) => s.id === selectedSizeId)) return;
+        const firstConfigured = data.find((rec) => rec.size_id)?.size_id;
+        const fallback = firstConfigured ?? sizes[0]?.id;
+        if (fallback) setSelectedSizeId(fallback);
+    }, [selectedSizeId, sizes, data]);
 
     const executeSave = async (sizeId: string, item: LocalSizeState): Promise<boolean> => {
         const numValue = parseFloat(item.consumption.replace(",", "."));
         if (isNaN(numValue) || numValue <= 0) return false;
 
         if (item.dbId) {
-            const ok = await updateSizeConsumption(item.dbId, { consumption: numValue.toString() }, variantId);
-            return ok;
+            return updateSizeConsumption(item.dbId, { consumption: numValue.toString() }, variantId);
         }
 
         const created = await addSizeConsumption({
@@ -79,66 +103,48 @@ export function SizeConsumptionTable({ data, variantId, sizes }: SizeTableProps)
 
     const handleSaveSize = async (sizeId: string) => {
         const item = localValues[sizeId];
-        if (!item?.checked || !item.consumption.trim()) {
-            toast.error("Activa la talla e ingresa los metros antes de guardar.");
+        if (!item?.consumption.trim()) {
+            toast.error("Ingresa los metros de tela antes de guardar.");
             return;
         }
 
         const ok = await executeSave(sizeId, item);
         if (ok) {
-            setSavedSizeIds((prev) => new Set(prev).add(sizeId));
             setLocalValues((prev) => ({
                 ...prev,
                 [sizeId]: { ...prev[sizeId], dirty: false },
             }));
             toast.success("Consumo de talla guardado");
         } else {
-            toast.error("No se pudo guardar el consumo. Verifica talla y metros.");
+            toast.error("No se pudo guardar el consumo. Verifica los metros.");
         }
     };
 
-    const handleSaveAll = async () => {
-        const pending = Object.entries(localValues).filter(([, item]) => {
-            const num = parseFloat(item.consumption.replace(",", "."));
-            return item.checked && !isNaN(num) && num > 0;
-        });
-
-        if (!pending.length) {
-            toast.error("No hay tallas activas con consumo para guardar.");
+    const handleRemoveSize = async (sizeId: string) => {
+        const item = localValues[sizeId];
+        if (!item?.dbId) {
+            setLocalValues((prev) => ({
+                ...prev,
+                [sizeId]: { consumption: "", dirty: false, dbId: undefined },
+            }));
             return;
         }
 
-        let saved = 0;
-        for (const [sizeId, item] of pending) {
-            const ok = await executeSave(sizeId, item);
-            if (ok) {
-                saved++;
-                setSavedSizeIds((prev) => new Set(prev).add(sizeId));
-            }
+        const ok = await deleteSizeConsumption(item.dbId, variantId);
+        if (!ok) {
+            toast.error("No se pudo quitar el consumo de esta talla");
+            return;
         }
 
-        setLocalValues((prev) => {
-            const next = { ...prev };
-            pending.forEach(([sizeId]) => {
-                if (next[sizeId]) next[sizeId] = { ...next[sizeId], dirty: false };
-            });
-            return next;
-        });
-
-        if (saved === pending.length) {
-            toast.success(`Consumos guardados (${saved} talla${saved > 1 ? "s" : ""})`);
-        } else if (saved > 0) {
-            toast.warning(`Se guardaron ${saved} de ${pending.length} tallas`);
-        } else {
-            toast.error("No se pudo guardar ningún consumo");
-        }
+        setLocalValues((prev) => ({
+            ...prev,
+            [sizeId]: { consumption: "", dirty: false, dbId: undefined },
+        }));
+        toast.success("Consumo eliminado");
     };
 
     const handleInputChange = (sizeId: string, rawVal: string) => {
-        // Convertimos el punto a coma automáticamente
         const val = rawVal.replace(".", ",");
-
-        // Validación para permitir solo números y una única coma (evita letras)
         if (val !== "" && !/^[0-9]*,?[0-9]*$/.test(val)) return;
 
         setLocalValues((prev) => ({
@@ -146,66 +152,24 @@ export function SizeConsumptionTable({ data, variantId, sizes }: SizeTableProps)
             [sizeId]: {
                 ...prev[sizeId],
                 consumption: val,
-                checked: val.length > 0 ? true : prev[sizeId]?.checked ?? false,
                 dirty: true,
             },
         }));
     };
 
-    const handleCheckboxToggle = async (sizeId: string) => {
-        const item = localValues[sizeId] || { checked: false, consumption: "", dbId: undefined };
-        const isChecking = !item.checked;
-
-        if (!isChecking && item.dbId) {
-            const ok = await deleteSizeConsumption(item.dbId, variantId);
-            if (!ok) {
-                toast.error("No se pudo quitar la talla");
-                return;
-            }
-            setSavedSizeIds((prev) => {
-                const next = new Set(prev);
-                next.delete(sizeId);
-                return next;
-            });
-        }
-
-        setLocalValues((prev) => ({
-            ...prev,
-            [sizeId]: {
-                ...prev[sizeId],
-                checked: isChecking,
-                consumption: isChecking ? prev[sizeId]?.consumption ?? "" : "",
-                dbId: isChecking ? prev[sizeId]?.dbId : undefined,
-                dirty: isChecking,
-            },
-        }));
-    };
-
-    const hasPendingChanges = useMemo(
-        () => Object.values(localValues).some((item) => item.dirty && item.checked && item.consumption),
+    const configuredCount = useMemo(
+        () =>
+            Object.entries(localValues).filter(([, item]) => {
+                const num = parseFloat(item.consumption.replace(",", "."));
+                return item.dbId && !isNaN(num) && num > 0;
+            }).length,
         [localValues]
     );
 
-    const { activeCount, averageConsumption } = useMemo(() => {
-        const activeSizes = Object.entries(localValues).filter(([sizeId, item]) => {
-            const belongsToCatalog = sizes.some((s) => s.id === sizeId);
-            const num = parseFloat(item.consumption.replace(",", "."));
-            return belongsToCatalog && item.checked && !isNaN(num) && num > 0;
-        });
-        const count = activeSizes.length;
-        const sum = activeSizes.reduce(
-            (acc, [, item]) => acc + parseFloat(item.consumption.replace(",", ".")),
-            0
-        );
-
-        // Redondeamos a máximo 2 decimales y aplicamos la coma
-        const avg = count > 0 ? Math.round((sum / count) * 100) / 100 : 0;
-
-        return {
-            activeCount: count,
-            averageConsumption: avg.toString().replace(".", ","),
-        };
-    }, [localValues, sizes]);
+    const selectedItem = selectedSizeId ? localValues[selectedSizeId] : undefined;
+    const selectedSize = sizes.find((s) => s.id === selectedSizeId);
+    const selectedLabel =
+        selectedSize?.label || selectedSize?.name || selectedSize?.code || selectedSizeId;
 
     if (!sizes.length) {
         return (
@@ -226,88 +190,104 @@ export function SizeConsumptionTable({ data, variantId, sizes }: SizeTableProps)
                         {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
                     </CardTitle>
                     <p className="text-xs text-muted-foreground mt-1">
-                        Activa la talla, escribe los metros y pulsa Guardar (o Guardar todo).
+                        Selecciona una talla a la vez y configura sus metros. Cada talla tiene su propio costo en
+                        cotizaciones y órdenes.
                     </p>
                 </div>
-                <Button
-                    size="sm"
-                    onClick={handleSaveAll}
-                    disabled={loading || !hasPendingChanges}
-                >
-                    <Save className="h-3.5 w-3.5 mr-1" />
-                    Guardar todo
-                </Button>
             </CardHeader>
             <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                     {sizes.map((size) => {
-                        const item = localValues[size.id] || {
-                            checked: false,
-                            consumption: "",
-                            dbId: undefined,
-                            dirty: false,
-                        };
+                        const item = localValues[size.id] || { consumption: "", dirty: false };
                         const label = size.label || size.name || size.code || size.id;
-                        const isSaved = savedSizeIds.has(size.id) && item.dbId && !item.dirty;
+                        const isSelected = selectedSizeId === size.id;
+                        const isConfigured = Boolean(item.dbId && item.consumption);
 
                         return (
-                            <div
+                            <button
                                 key={size.id}
-                                className={`flex items-center justify-between border rounded-lg p-3 transition-all ${item.checked
-                                        ? "border-primary bg-primary/5"
-                                        : "border-border bg-card"
-                                    }`}
+                                type="button"
+                                onClick={() => setSelectedSizeId(size.id)}
+                                className={cn(
+                                    "flex flex-col items-center gap-1 rounded-lg border p-2.5 text-center transition-all",
+                                    isSelected
+                                        ? "border-primary bg-primary/10 ring-1 ring-primary"
+                                        : "border-border bg-card hover:bg-muted/40",
+                                    isConfigured && !isSelected && "border-green-200/80"
+                                )}
                             >
                                 <div
-                                    className="flex items-center gap-2.5 cursor-pointer select-none min-w-0"
-                                    onClick={() => handleCheckboxToggle(size.id)}
+                                    className={cn(
+                                        "w-4 h-4 rounded-full border-2 flex items-center justify-center",
+                                        isSelected ? "border-primary" : "border-muted-foreground/40"
+                                    )}
                                 >
-                                    <div
-                                        className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${item.checked
-                                                ? "border-primary bg-primary text-primary-foreground"
-                                                : "border-muted-foreground bg-background"
-                                            }`}
-                                    >
-                                        {item.checked && (
-                                            <svg className="w-3 h-3 fill-current" viewBox="0 0 20 20">
-                                                <path d="M0 11l2-2 5 5L18 3l2 2L7 18z" />
-                                            </svg>
-                                        )}
-                                    </div>
-                                    <span className="font-bold text-sm truncate">{label}</span>
-                                    {isSaved && (
-                                        <Check className="h-3.5 w-3.5 text-green-600 shrink-0" aria-label="Guardado" />
-                                    )}
+                                    {isSelected && <div className="w-2 h-2 rounded-full bg-primary" />}
                                 </div>
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                    <input
-                                        type="text"
-                                        placeholder="m"
-                                        value={item.consumption}
-                                        onChange={(e) => handleInputChange(size.id, e.target.value)}
-                                        onBlur={() => item.checked && item.consumption && handleSaveSize(size.id)}
-                                        className="w-16 bg-muted/50 border border-input rounded px-2 py-1 text-right text-sm focus:border-primary outline-none"
-                                    />
-                                    {item.dirty && item.checked && (
-                                        <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="icon"
-                                            className="h-7 w-7"
-                                            onClick={() => handleSaveSize(size.id)}
-                                            disabled={loading}
-                                        >
-                                            <Save className="h-3.5 w-3.5" />
-                                        </Button>
-                                    )}
-                                </div>
-                            </div>
+                                <span className="font-bold text-sm">{label}</span>
+                                {isConfigured ? (
+                                    <span className="text-[10px] text-muted-foreground">{item.consumption} m</span>
+                                ) : (
+                                    <span className="text-[10px] text-muted-foreground/60">Sin config.</span>
+                                )}
+                            </button>
                         );
                     })}
                 </div>
+
+                {selectedSizeId && selectedItem && (
+                    <div className="rounded-lg border bg-muted/20 p-4 space-y-3">
+                        <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-semibold">
+                                Configurar talla <span className="text-primary">{selectedLabel}</span>
+                            </p>
+                            {selectedItem.dbId && !selectedItem.dirty && (
+                                <span className="flex items-center gap-1 text-xs text-green-600">
+                                    <Check className="h-3.5 w-3.5" /> Guardada
+                                </span>
+                            )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            <label className="text-xs text-muted-foreground shrink-0">Metros de tela</label>
+                            <input
+                                type="text"
+                                placeholder="Ej. 2,5"
+                                value={selectedItem.consumption}
+                                onChange={(e) => handleInputChange(selectedSizeId, e.target.value)}
+                                className="flex-1 max-w-[120px] bg-background border border-input rounded-md px-3 py-2 text-sm text-right focus:border-primary outline-none"
+                            />
+                            <span className="text-sm text-muted-foreground">m</span>
+                            <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => handleSaveSize(selectedSizeId)}
+                                disabled={loading || !selectedItem.consumption.trim()}
+                            >
+                                <Save className="h-3.5 w-3.5 mr-1" />
+                                Guardar
+                            </Button>
+                            {(selectedItem.dbId || selectedItem.consumption) && (
+                                <Button
+                                    type="button"
+                                    size="icon"
+                                    variant="ghost"
+                                    className="text-destructive hover:text-destructive shrink-0"
+                                    onClick={() => handleRemoveSize(selectedSizeId)}
+                                    disabled={loading}
+                                >
+                                    <Trash2 className="h-4 w-4" />
+                                </Button>
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 <div className="w-full flex items-center justify-between bg-muted/40 rounded-lg p-3.5 text-sm text-muted-foreground font-medium">
-                    <span>Consumo promedio ({activeCount} tallas)</span>
-                    <span className="font-bold text-foreground text-base">{averageConsumption} m</span>
+                    <span>Tallas configuradas</span>
+                    <span className="font-bold text-foreground text-base">
+                        {configuredCount} de {sizes.length}
+                    </span>
                 </div>
             </CardContent>
         </Card>

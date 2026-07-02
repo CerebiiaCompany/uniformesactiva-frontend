@@ -6,16 +6,30 @@ import { endpoints } from "@/lib/api-endpoints";
 export interface OrderItem {
     subproducto_id: string;
     subproducto_nombre?: string;
+    talla_id?: string | null;
+    talla_nombre?: string | null;
     cantidad: number;
     costo_unitario: string | number;
 }
 
-export interface Order {
+export interface OrderLogoFields {
+    logo_manga_derecha: boolean;
+    logo_manga_izquierda: boolean;
+    logo_delantero_derecha: boolean;
+    logo_delantero_izquierda: boolean;
+    logo_espalda: boolean;
+    logo_bolsillo: boolean;
+}
+
+export interface Order extends OrderLogoFields {
     id: string;
     cliente_id: string;
     cliente_nombre: string;
     producto_id: string;
     producto_nombre: string;
+    tomado_por_id: string | null;
+    tomado_por_nombre: string | null;
+    comentarios: string | null;
     estado: StatusType;
     valor_venta_proyectado: string;
     costo_total: string;
@@ -28,15 +42,24 @@ export interface Order {
 
 export interface CreateOrderItemPayload {
     subproducto_id: string;
+    talla_id: string;
     cantidad: number;
 }
 
 export interface CreateOrderPayload {
     cliente_id: string;
     producto_id: string;
+    tomado_por_id: string;
     valor_venta_proyectado: number;
     items: CreateOrderItemPayload[];
     fecha_estimada_entrega?: string;
+    comentarios?: string;
+    logo_manga_derecha?: boolean;
+    logo_manga_izquierda?: boolean;
+    logo_delantero_derecha?: boolean;
+    logo_delantero_izquierda?: boolean;
+    logo_espalda?: boolean;
+    logo_bolsillo?: boolean;
 }
 
 export interface OrderListFilters {
@@ -85,11 +108,18 @@ function buildOrderQueryParams(filters: OrderListFilters): URLSearchParams {
     return params;
 }
 
+function resolveHttpErrorMessage(err: unknown, fallback: string): string {
+    if (err instanceof HttpError) return err.message || fallback;
+    if (err instanceof Error) return err.message;
+    return fallback;
+}
+
 export function useOrders() {
     const [orders, setOrders] = useState<Order[]>([]);
     const [totalCount, setTotalCount] = useState<number>(0);
     const [loading, setLoading] = useState(false);
     const [updatingSalePriceId, setUpdatingSalePriceId] = useState<string | null>(null);
+    const [updatingCommentsId, setUpdatingCommentsId] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     const mergeOrderInList = useCallback((updated: Order) => {
@@ -107,7 +137,7 @@ export function useOrders() {
             setOrders(data.items || []);
             setTotalCount(data.total_count || 0);
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : "Error al obtener las órdenes";
+            const message = resolveHttpErrorMessage(err, "Error al obtener las órdenes");
             setError(message);
         } finally {
             setLoading(false);
@@ -122,13 +152,15 @@ export function useOrders() {
             const data = await http<OrderListResponse>(`${endpoints.orders.list()}?${queryParams}`);
             return data.items?.[0] ?? null;
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : "Error al obtener la orden";
+            const message = resolveHttpErrorMessage(err, "Error al obtener la orden");
             setError(message);
             return null;
         }
     }, []);
 
-    const createOrder = async (payload: CreateOrderPayload) => {
+    const createOrder = async (
+        payload: CreateOrderPayload
+    ): Promise<{ success: boolean; errorMessage: string | null }> => {
         setLoading(true);
         setError(null);
 
@@ -136,12 +168,23 @@ export function useOrders() {
             const body: Record<string, unknown> = {
                 cliente_id: payload.cliente_id,
                 producto_id: payload.producto_id,
+                tomado_por_id: payload.tomado_por_id,
                 valor_venta_proyectado: payload.valor_venta_proyectado,
                 items: payload.items,
+                logo_manga_derecha: payload.logo_manga_derecha ?? false,
+                logo_manga_izquierda: payload.logo_manga_izquierda ?? false,
+                logo_delantero_derecha: payload.logo_delantero_derecha ?? false,
+                logo_delantero_izquierda: payload.logo_delantero_izquierda ?? false,
+                logo_espalda: payload.logo_espalda ?? false,
+                logo_bolsillo: payload.logo_bolsillo ?? false,
             };
 
             if (payload.fecha_estimada_entrega) {
                 body.fecha_estimada_entrega = payload.fecha_estimada_entrega;
+            }
+
+            if (payload.comentarios?.trim()) {
+                body.comentarios = payload.comentarios.trim();
             }
 
             await http<Order>(endpoints.orders.list(), {
@@ -149,11 +192,11 @@ export function useOrders() {
                 body: JSON.stringify(body),
             });
 
-            return true;
+            return { success: true, errorMessage: null };
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : "Error al crear la orden";
+            const message = resolveHttpErrorMessage(err, "Error al crear la orden");
             setError(message);
-            return false;
+            return { success: false, errorMessage: message };
         } finally {
             setLoading(false);
         }
@@ -209,7 +252,7 @@ export function useOrders() {
         try {
             return await http<OrderLog[]>(endpoints.orders.logs(ordenId));
         } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : "Error al obtener el historial";
+            const message = resolveHttpErrorMessage(err, "Error al obtener el historial");
             setError(message);
             return [];
         }
@@ -230,22 +273,39 @@ export function useOrders() {
             mergeOrderInList(updated);
             return { order: updated, errorMessage: null };
         } catch (err: unknown) {
-            let mensaje = "Error al actualizar el valor de venta";
+            const mensaje = resolveHttpErrorMessage(err, "Error al actualizar el valor de venta");
+            setError(mensaje);
+            return { order: null, errorMessage: mensaje };
+        } finally {
+            setUpdatingSalePriceId(null);
+        }
+    };
 
-            if (err instanceof HttpError) {
-                if (err.status === 404) {
-                    mensaje = "La orden no existe.";
-                } else {
-                    mensaje = err.message;
-                }
-            } else if (err instanceof Error) {
-                mensaje = err.message;
+    const updateOrderComments = async (
+        orderId: string,
+        comentarios: string
+    ): Promise<{ order: Order | null; errorMessage: string | null }> => {
+        setUpdatingCommentsId(orderId);
+        setError(null);
+
+        try {
+            const updated = await http<Order>(endpoints.orders.comentarios(orderId), {
+                method: "PATCH",
+                body: JSON.stringify({ comentarios }),
+            });
+            mergeOrderInList(updated);
+            return { order: updated, errorMessage: null };
+        } catch (err: unknown) {
+            let mensaje = resolveHttpErrorMessage(err, "Error al actualizar los comentarios");
+
+            if (err instanceof HttpError && err.status === 404) {
+                mensaje = "La orden no existe.";
             }
 
             setError(mensaje);
             return { order: null, errorMessage: mensaje };
         } finally {
-            setUpdatingSalePriceId(null);
+            setUpdatingCommentsId(null);
         }
     };
 
@@ -254,12 +314,14 @@ export function useOrders() {
         totalCount,
         loading,
         updatingSalePriceId,
+        updatingCommentsId,
         error,
         fetchOrders,
         fetchOrderById,
         createOrder,
         updateOrderStatus,
         updateOrderSalePrice,
+        updateOrderComments,
         mergeOrderInList,
         fetchOrderLogs,
     };

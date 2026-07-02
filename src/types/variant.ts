@@ -45,6 +45,8 @@ export interface SupplyRecord {
     tipo: string;
     tipo_id?: string;
     tipo_label?: string;
+    talla_id?: string | null;
+    talla_nombre?: string | null;
     quantity: string;
     unit_price: string;
     total: string;
@@ -56,9 +58,21 @@ export interface LaborPhase {
     fase: string;
     fase_id?: string;
     fase_label?: string;
+    talla_id?: string | null;
+    talla_nombre?: string | null;
     cantidad: string;
     unit_price: string;
     total: string;
+}
+
+export interface VariantSizeCostSummary {
+    talla_id: string;
+    talla_nombre: string;
+    consumption: string | number;
+    fabric_total: string | number;
+    supplies_total: string | number;
+    labor_total: string | number;
+    overall_total: string | number;
 }
 
 export interface VariantCostSummary {
@@ -69,6 +83,7 @@ export interface VariantCostSummary {
     supplies_total: string | number;
     labor_total: string | number;
     overall_total: string | number;
+    sizes?: VariantSizeCostSummary[];
 }
 
 export interface CreateFabricPayload {
@@ -93,12 +108,14 @@ export interface UpdateFabricPayload {
 export interface CreateSupplyPayload {
     variant_id: string;
     tipo_id: string;
+    talla_id?: string | null;
     quantity: string | number;
     unit_price: string | number;
 }
 
 export interface UpdateSupplyPayload {
     tipo_id?: string;
+    talla_id?: string | null;
     quantity?: string | number;
     unit_price?: string | number;
 }
@@ -106,8 +123,16 @@ export interface UpdateSupplyPayload {
 export interface CreateLaborPayload {
     variant_id: string;
     fase_id: string;
+    talla_id?: string | null;
     cantidad: string | number;
     unit_price: string | number;
+}
+
+export interface UpdateLaborPayload {
+    fase_id?: string;
+    talla_id?: string | null;
+    cantidad?: string | number;
+    unit_price?: string | number;
 }
 
 export interface CreateSizeConsumptionPayload {
