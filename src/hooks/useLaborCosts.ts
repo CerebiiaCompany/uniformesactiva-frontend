@@ -8,7 +8,23 @@ import {
     invalidateVariantCostLists,
     type CostMutationResponse,
 } from "@/lib/variant-cost-cache";
-import type { CreateLaborPayload } from "@/types/variant";
+import type { CreateLaborPayload, UpdateLaborPayload } from "@/types/variant";
+
+function buildLaborBody(payload: CreateLaborPayload | UpdateLaborPayload, isCreate: boolean) {
+    const body: Record<string, unknown> = {};
+    if (isCreate && "variant_id" in payload && payload.variant_id) {
+        body.variant_id = payload.variant_id;
+    }
+    if (payload.fase_id != null) body.fase_id = payload.fase_id;
+    if (payload.cantidad != null) body.cantidad = String(payload.cantidad);
+    if (payload.unit_price != null) body.unit_price = String(payload.unit_price);
+    if (payload.talla_id !== undefined) {
+        body.talla_id = payload.talla_id || null;
+    } else if (isCreate) {
+        body.talla_id = null;
+    }
+    return body;
+}
 
 export function useLaborCosts() {
     const queryClient = useQueryClient();
@@ -25,14 +41,11 @@ export function useLaborCosts() {
         setLoading(true);
         setError(null);
         try {
+            const body = buildLaborBody(payload, true);
+
             const response = await http<CostMutationResponse>(endpoints.costos.manoDeObra(), {
                 method: "POST",
-                body: JSON.stringify({
-                    variant_id: payload.variant_id,
-                    fase_id: payload.fase_id,
-                    cantidad: String(payload.cantidad),
-                    unit_price: String(payload.unit_price),
-                }),
+                body: JSON.stringify(body),
             });
             afterMutation(payload.variant_id, response);
             return true;
@@ -44,18 +57,11 @@ export function useLaborCosts() {
         }
     };
 
-    const updateLabor = async (
-        id: string,
-        payload: Partial<Pick<CreateLaborPayload, "fase_id" | "cantidad" | "unit_price">>,
-        variantId: string
-    ) => {
+    const updateLabor = async (id: string, payload: UpdateLaborPayload, variantId: string) => {
         setLoading(true);
         setError(null);
         try {
-            const body: Record<string, string> = {};
-            if (payload.fase_id != null) body.fase_id = payload.fase_id;
-            if (payload.cantidad != null) body.cantidad = String(payload.cantidad);
-            if (payload.unit_price != null) body.unit_price = String(payload.unit_price);
+            const body = buildLaborBody(payload, false);
 
             if (Object.keys(body).length === 0) return true;
 

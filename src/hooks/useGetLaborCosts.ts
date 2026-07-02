@@ -37,6 +37,8 @@ const mapLabor = (item: any, catalogById: Map<string, string>): LaborPhase => {
         fase_id: faseId ?? "",
         fase: faseId ?? (typeof item.fase === "string" ? item.fase : ""),
         fase_label: faseLabel,
+        talla_id: item.talla_id ?? null,
+        talla_nombre: item.talla_nombre ?? null,
         cantidad: String(item.cantidad ?? "1"),
         unit_price: String(item.unit_price ?? "0"),
         total: computeLineTotal(item.total, cantidad, unitPrice),

@@ -9,8 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus, Search, FileText, Settings, Loader2, ChevronLeft, ChevronRight, SlidersHorizontal, Eye } from "lucide-react";
 import { useOrders, Order } from "@/hooks/useOrders";
 import { NewOrderDialog } from "@/components/NewOrderDialog";
+import { OrderDetailDialog } from "@/components/OrderDetailDialog";
 import { OrderStatusPanel } from "@/components/OrderStatusPanel";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
 import { EditableSalePriceCell, getOrderProfitPreview } from "@/components/EditableSalePriceCell";
 
@@ -20,7 +20,7 @@ const formatMoney = (value: string | number) => formatCurrency(value);
 
 export default function Orders() {
   const { toast } = useToast();
-  const { orders, loading, error, fetchOrders, fetchOrderById, totalCount, updateOrderSalePrice, updatingSalePriceId } = useOrders();
+  const { orders, loading, error, fetchOrders, fetchOrderById, totalCount, updateOrderSalePrice, updateOrderComments, updatingSalePriceId, updatingCommentsId } = useOrders();
   const [statusPanelOrder, setStatusPanelOrder] = useState<Order | null>(null);
   const [statusPanelOpen, setStatusPanelOpen] = useState(false);
   const [isNewOrderOpen, setIsNewOrderOpen] = useState(false);
@@ -32,6 +32,7 @@ export default function Orders() {
 
   const [searchTerm, setSearchTerm] = useState("");
   const [salePriceDrafts, setSalePriceDrafts] = useState<Record<string, string>>({});
+  const [commentsDraft, setCommentsDraft] = useState("");
 
   const [filters, setFilters] = useState({
     id: "",
@@ -113,12 +114,34 @@ export default function Orders() {
     setDetailOpen(true);
     setLoadingDetail(true);
     setDetailOrder(order);
+    setCommentsDraft(order.comentarios ?? "");
 
     const freshOrder = await fetchOrderById(order.id);
     if (freshOrder) {
       setDetailOrder(freshOrder);
+      setCommentsDraft(freshOrder.comentarios ?? "");
     }
     setLoadingDetail(false);
+  };
+
+  const handleSaveComments = async () => {
+    if (!detailOrder) return;
+
+    const { order: updated, errorMessage } = await updateOrderComments(detailOrder.id, commentsDraft);
+    if (updated) {
+      setDetailOrder(updated);
+      toast({
+        title: "Comentarios actualizados",
+        description: "Los comentarios se guardaron sin afectar costos ni estado.",
+      });
+      return;
+    }
+
+    toast({
+      title: "No se pudieron guardar los comentarios",
+      description: errorMessage || "Intenta de nuevo.",
+      variant: "destructive",
+    });
   };
 
   return (
@@ -368,46 +391,16 @@ export default function Orders() {
         onStatusChange={() => fetchOrders(filters)}
       />
 
-      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Detalle de ítems</DialogTitle>
-            <DialogDescription>
-              Orden: {detailOrder?.id.slice(0, 8).toUpperCase()}
-            </DialogDescription>
-          </DialogHeader>
-          {loadingDetail ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-center">Variante</TableHead>
-                  <TableHead className="text-center">Cant.</TableHead>
-                  <TableHead className="text-center">Costo unit.</TableHead>
-                  <TableHead className="text-center">Total</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {detailOrder?.items?.map((item) => (
-                  <TableRow key={item.subproducto_id}>
-                    <TableCell className="text-center">
-                      {item.subproducto_nombre || item.subproducto_id}
-                    </TableCell>
-                    <TableCell className="text-center">{item.cantidad}</TableCell>
-                    <TableCell className="text-center">${formatMoney(item.costo_unitario)}</TableCell>
-                    <TableCell className="text-center">
-                      ${formatMoney(Number(item.costo_unitario) * item.cantidad)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </DialogContent>
-      </Dialog>
+      <OrderDetailDialog
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+        order={detailOrder}
+        loading={loadingDetail}
+        commentsDraft={commentsDraft}
+        onCommentsChange={setCommentsDraft}
+        onSaveComments={handleSaveComments}
+        savingComments={updatingCommentsId === detailOrder?.id}
+      />
     </AppLayout>
   );
 }

@@ -11,6 +11,12 @@ interface LaborTableProps {
     onDelete: (id: string) => void;
 }
 
+const formatTalla = (item: Pick<LaborPhase, "talla_nombre" | "talla_id">) => {
+    if (item.talla_id && item.talla_nombre) return item.talla_nombre;
+    if (item.talla_id) return item.talla_id;
+    return "Todas las tallas (compartido)";
+};
+
 export function LaborCostsTable({ data, onAdd, onEdit, onDelete }: LaborTableProps) {
     return (
         <Card className="w-full">
@@ -23,20 +29,25 @@ export function LaborCostsTable({ data, onAdd, onEdit, onDelete }: LaborTablePro
             <CardContent>
                 {data.length > 0 ? (
                     <div className="space-y-2">
-                        <div className="grid grid-cols-5 text-xs font-semibold text-muted-foreground border-b pb-2">
-                            <div className="col-span-2">Fase</div>
+                        <div className="grid grid-cols-[1.2fr_0.8fr_0.6fr_0.8fr_1fr] gap-2 text-xs font-semibold text-muted-foreground border-b pb-2">
+                            <div>Fase</div>
+                            <div>Talla</div>
                             <div>Cantidad</div>
                             <div>Precio unit.</div>
                             <div>Total</div>
                         </div>
                         {data.map((item) => (
-                            <div key={item.id} className="grid grid-cols-5 text-sm items-center border-b py-2">
-                                <div className="col-span-2">{item.fase_label || item.fase || "—"}</div>
+                            <div
+                                key={item.id}
+                                className="grid grid-cols-[1.2fr_0.8fr_0.6fr_0.8fr_1fr] gap-2 text-sm items-center border-b py-2"
+                            >
+                                <div className="truncate">{item.fase_label || item.fase || "—"}</div>
+                                <div className="text-xs text-muted-foreground truncate">{formatTalla(item)}</div>
                                 <div>{formatQuantity(item.cantidad)}</div>
                                 <div>${formatCurrency(item.unit_price)}</div>
-                                <div className="flex items-center justify-between">
+                                <div className="flex items-center justify-between gap-1">
                                     <span className="font-bold">${formatCurrency(item.total)}</span>
-                                    <div className="flex gap-2">
+                                    <div className="flex gap-1 shrink-0">
                                         <Pencil
                                             className="h-4 w-4 cursor-pointer text-muted-foreground hover:text-primary"
                                             onClick={() => onEdit(item)}

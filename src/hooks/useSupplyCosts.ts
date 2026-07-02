@@ -10,6 +10,22 @@ import {
 } from "@/lib/variant-cost-cache";
 import type { CreateSupplyPayload, UpdateSupplyPayload } from "@/types/variant";
 
+function buildSupplyBody(payload: CreateSupplyPayload | UpdateSupplyPayload, isCreate: boolean) {
+    const body: Record<string, unknown> = {};
+    if (isCreate && "variant_id" in payload && payload.variant_id) {
+        body.variant_id = payload.variant_id;
+    }
+    if (payload.tipo_id != null) body.tipo_id = payload.tipo_id;
+    if (payload.quantity != null) body.quantity = String(payload.quantity);
+    if (payload.unit_price != null) body.unit_price = String(payload.unit_price);
+    if (payload.talla_id !== undefined) {
+        body.talla_id = payload.talla_id || null;
+    } else if (isCreate) {
+        body.talla_id = null;
+    }
+    return body;
+}
+
 export function useSupplyCosts() {
     const queryClient = useQueryClient();
     const [loading, setLoading] = useState(false);
@@ -25,14 +41,11 @@ export function useSupplyCosts() {
         setLoading(true);
         setError(null);
         try {
+            const body = buildSupplyBody(payload, true);
+
             const response = await http<CostMutationResponse>(endpoints.costos.insumos(), {
                 method: "POST",
-                body: JSON.stringify({
-                    variant_id: payload.variant_id,
-                    tipo_id: payload.tipo_id,
-                    quantity: String(payload.quantity),
-                    unit_price: String(payload.unit_price),
-                }),
+                body: JSON.stringify(body),
             });
             afterMutation(payload.variant_id, response);
             return true;
@@ -48,10 +61,7 @@ export function useSupplyCosts() {
         setLoading(true);
         setError(null);
         try {
-            const body: Record<string, string> = {};
-            if (payload.tipo_id != null) body.tipo_id = payload.tipo_id;
-            if (payload.quantity != null) body.quantity = String(payload.quantity);
-            if (payload.unit_price != null) body.unit_price = String(payload.unit_price);
+            const body = buildSupplyBody(payload, false);
 
             if (Object.keys(body).length === 0) return true;
 
