@@ -30,13 +30,13 @@ export function OrderStatusPanel({ order, open, onOpenChange, onStatusChange }: 
 
   // Integración del historial
   const [logs, setLogs] = useState<OrderLog[]>([]);
-  const { fetchOrderLogs, updateOrderStatus } = useOrders();
+  const { fetchOrderLogs, updateOrderStatus, error: ordersError } = useOrders();
 
   useEffect(() => {
     if (open && order) {
       fetchOrderLogs(order.id).then(setLogs);
     }
-  }, [open, order]);
+  }, [open, order, fetchOrderLogs]);
 
   if (!order) return null;
 
@@ -54,10 +54,11 @@ export function OrderStatusPanel({ order, open, onOpenChange, onStatusChange }: 
       setIsConfirming(false);
       onStatusChange();
       onOpenChange(false);
+      toast({ title: "Estado actualizado", description: "La orden avanzó correctamente." });
     } else {
       toast({
         title: "Error al cambiar el estado",
-        description: "El usuario no tiene permisos para cambiar la orden de estado.",
+        description: ordersError || "No se pudo actualizar el estado de la orden.",
         variant: "destructive",
       });
     }

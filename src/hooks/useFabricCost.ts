@@ -2,6 +2,12 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
+import {
+    handleCostMutationResponse,
+    invalidateVariantCostAfterDelete,
+    invalidateVariantCostLists,
+    type CostMutationResponse,
+} from "@/lib/variant-cost-cache";
 import type { CreateFabricPayload, UpdateFabricPayload } from "@/types/variant";
 
 export function useFabricCosts() {
@@ -9,8 +15,9 @@ export function useFabricCosts() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const invalidate = (variantId: string) => {
-        queryClient.invalidateQueries({ queryKey: ["fabric-costs", variantId] });
+    const afterMutation = (variantId: string, response: CostMutationResponse) => {
+        handleCostMutationResponse(queryClient, variantId, response);
+        invalidateVariantCostLists(queryClient, variantId);
         queryClient.invalidateQueries({ queryKey: ["cost-summary", variantId] });
     };
 
@@ -28,11 +35,11 @@ export function useFabricCosts() {
             if (payload.tiene_iva != null) body.tiene_iva = payload.tiene_iva;
             if (payload.es_principal != null) body.es_principal = payload.es_principal;
 
-            await http(endpoints.costos.tela(), {
+            const response = await http<CostMutationResponse>(endpoints.costos.tela(), {
                 method: "POST",
                 body: JSON.stringify(body),
             });
-            invalidate(payload.variant_id);
+            afterMutation(payload.variant_id, response);
             return true;
         } catch (err: any) {
             setError(err.message || "Error al agregar el costo de tela");
@@ -56,11 +63,11 @@ export function useFabricCosts() {
 
             if (Object.keys(body).length === 0) return true;
 
-            await http(endpoints.costos.telaDetalle(id), {
+            const response = await http<CostMutationResponse>(endpoints.costos.telaDetalle(id), {
                 method: "PATCH",
                 body: JSON.stringify(body),
             });
-            invalidate(variantId);
+            afterMutation(variantId, response);
             return true;
         } catch (err: any) {
             setError(err.message || "Error al actualizar el costo de tela");
@@ -75,7 +82,7 @@ export function useFabricCosts() {
         setError(null);
         try {
             await http(endpoints.costos.telaDetalle(id), { method: "DELETE" });
-            invalidate(variantId);
+            invalidateVariantCostAfterDelete(queryClient, variantId);
             return true;
         } catch (err: any) {
             setError(err.message || "Error al eliminar el costo de tela");

@@ -2,9 +2,15 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
+import {
+    handleCostMutationResponse,
+    invalidateVariantCostAfterDelete,
+    invalidateVariantCostLists,
+    type CostMutationResponse,
+} from "@/lib/variant-cost-cache";
 import type { CreateSizeConsumptionPayload, UpdateSizeConsumptionPayload } from "@/types/variant";
 
-export interface SizeConsumptionResponse {
+export interface SizeConsumptionResponse extends CostMutationResponse {
     id: string;
     variant_id: string;
     talla_id?: string;
@@ -17,8 +23,9 @@ export function useSizeConsumption() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const invalidate = (variantId: string) => {
-        queryClient.invalidateQueries({ queryKey: ["size-consumption", variantId] });
+    const afterMutation = (variantId: string, response: CostMutationResponse) => {
+        handleCostMutationResponse(queryClient, variantId, response);
+        invalidateVariantCostLists(queryClient, variantId);
         queryClient.invalidateQueries({ queryKey: ["cost-summary", variantId] });
     };
 
@@ -36,7 +43,7 @@ export function useSizeConsumption() {
                     consumption: String(payload.consumption),
                 }),
             });
-            invalidate(payload.variant_id);
+            afterMutation(payload.variant_id, data);
             return data;
         } catch (err: any) {
             const message = err.message || "Error al asignar el consumo de talla";
@@ -61,11 +68,11 @@ export function useSizeConsumption() {
 
             if (Object.keys(body).length === 0) return true;
 
-            await http(endpoints.costos.tallasConsumoDetalle(id), {
+            const response = await http<CostMutationResponse>(endpoints.costos.tallasConsumoDetalle(id), {
                 method: "PATCH",
                 body: JSON.stringify(body),
             });
-            invalidate(variantId);
+            afterMutation(variantId, response);
             return true;
         } catch (err: any) {
             const message = err.message || "Error al actualizar el consumo de talla";
@@ -81,7 +88,7 @@ export function useSizeConsumption() {
         setError(null);
         try {
             await http(endpoints.costos.tallasConsumoDetalle(id), { method: "DELETE" });
-            invalidate(variantId);
+            invalidateVariantCostAfterDelete(queryClient, variantId);
             return true;
         } catch (err: any) {
             const message = err.message || "Error al eliminar el consumo de talla";

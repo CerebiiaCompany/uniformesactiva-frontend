@@ -15,6 +15,7 @@ export interface ProductVariant {
     code: string;
     name: string;
     product_id?: string;
+    estimated_cost?: string | number;
 }
 
 export interface SizeFabric {

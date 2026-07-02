@@ -9,8 +9,18 @@ export const endpoints = {
         productos: (lineId: string) => `${base()}/api/v1/products/lineas/${lineId}/productos/`,
     },
     productos: {
+        list: () => `${base()}/api/v1/products/productos/`,
         detail: (id: string) => `${base()}/api/v1/products/productos/${id}/`,
         variantes: (productId: string) => `${base()}/api/v1/products/productos/${productId}/variantes/`,
+    },
+    orders: {
+        list: () => `${base()}/api/v1/orders/`,
+        estado: (orderId: string) => `${base()}/api/v1/orders/${orderId}/estado/`,
+        valorVenta: (orderId: string) => `${base()}/api/v1/orders/${orderId}/valor-venta/`,
+        logs: (orderId: string) => `${base()}/api/v1/orders/${orderId}/logs/`,
+    },
+    clients: {
+        list: () => `${base()}/api/v1/clients/`,
     },
     costos: {
         proveedores: () => `${base()}/api/v1/costos/proveedores/`,

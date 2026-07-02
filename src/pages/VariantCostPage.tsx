@@ -309,7 +309,7 @@ export default function VariantCostPage() {
                                         <div className={isActive ? "text-primary font-bold" : "text-foreground"}>
                                             {v.code}
                                         </div>
-                                        <div className="col-span-2 flex items-center justify-between">
+                                        <div className="col-span-2 flex items-center justify-between gap-2">
                                             <span>
                                                 {v.name}
                                                 {isActive && (
@@ -318,6 +318,11 @@ export default function VariantCostPage() {
                                                     </span>
                                                 )}
                                             </span>
+                                            {v.estimated_cost != null && Number(v.estimated_cost) > 0 && (
+                                                <span className="text-xs text-muted-foreground shrink-0">
+                                                    ${formatCurrency(v.estimated_cost)}
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                 );
