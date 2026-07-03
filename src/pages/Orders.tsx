@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Search, FileText, Settings, Loader2, ChevronLeft, ChevronRight, SlidersHorizontal, Eye } from "lucide-react";
-import { useOrders, Order } from "@/hooks/useOrders";
+import { useOrders, Order, OrderListFilters } from "@/hooks/useOrders";
 import { NewOrderDialog } from "@/components/NewOrderDialog";
 import { OrderDetailDialog } from "@/components/OrderDetailDialog";
 import { OrderStatusPanel } from "@/components/OrderStatusPanel";
@@ -34,9 +34,10 @@ export default function Orders() {
   const [salePriceDrafts, setSalePriceDrafts] = useState<Record<string, string>>({});
   const [commentsDraft, setCommentsDraft] = useState("");
 
-  const [filters, setFilters] = useState({
+  const [filters, setFilters] = useState<OrderListFilters>({
     id: "",
     estado: "todos",
+    payment_status: "todos",
     cliente_id: "",
     producto_id: "",
     fecha_creacion: "",
@@ -44,7 +45,7 @@ export default function Orders() {
     page_size: 10,
   });
 
-  const totalPages = Math.max(1, Math.ceil(totalCount / filters.page_size));
+  const totalPages = Math.max(1, Math.ceil(totalCount / (filters.page_size || 10)));
 
   useEffect(() => {
     if (error) {
@@ -179,6 +180,24 @@ export default function Orders() {
                   <SelectItem value="pending">Pendiente</SelectItem>
                   <SelectItem value="in_production">En producción</SelectItem>
                   <SelectItem value="delivered">Entregado</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Select
+                value={filters.payment_status}
+                onValueChange={(v) => setFilters((prev) => ({
+                  ...prev,
+                  payment_status: v as "paid" | "unpaid" | "todos",
+                  page: 1
+                }))}
+              >
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="Estado pago" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos los pagos</SelectItem>
+                  <SelectItem value="paid">Pagado</SelectItem>
+                  <SelectItem value="unpaid">No pagado</SelectItem>
                 </SelectContent>
               </Select>
 
@@ -322,7 +341,7 @@ export default function Orders() {
                         <TableCell className="text-center">
                           <div className="flex items-center justify-center gap-2">
                             <span className="bg-slate-100 px-2 py-0.5 rounded text-[10px] font-bold text-slate-600">
-                              NO
+                              {order.pagado ? "SI" : "NO"}
                             </span>
                             <FileText className="h-4 w-4 text-muted-foreground cursor-pointer hover:text-primary" />
                           </div>
@@ -361,16 +380,16 @@ export default function Orders() {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={filters.page <= 1}
-                onClick={() => setFilters((p) => ({ ...p, page: Math.max(1, p.page - 1) }))}
+                disabled={(filters.page ?? 1) <= 1}
+                onClick={() => setFilters((p) => ({ ...p, page: Math.max(1, (p.page ?? 1) - 1) }))}
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               <Button
                 variant="outline"
                 size="sm"
-                disabled={filters.page >= totalPages}
-                onClick={() => setFilters((p) => ({ ...p, page: p.page + 1 }))}
+                disabled={(filters.page ?? 1) >= totalPages}
+                onClick={() => setFilters((p) => ({ ...p, page: (p.page ?? 1) + 1 }))}
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
