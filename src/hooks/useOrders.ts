@@ -31,6 +31,7 @@ export interface Order extends OrderLogoFields {
     tomado_por_nombre: string | null;
     comentarios: string | null;
     estado: StatusType;
+    pagado: boolean; // Ahora es booleano
     valor_venta_proyectado: string;
     costo_total: string;
     ganancia: string;
@@ -67,6 +68,7 @@ export interface OrderListFilters {
     cliente_id?: string;
     producto_id?: string;
     estado?: string;
+    payment_status?: 'paid' | 'unpaid' | 'todos'; // Ajustado a los valores del selector
     fecha_creacion?: string;
     page?: number;
     page_size?: number;
@@ -96,6 +98,11 @@ function buildOrderQueryParams(filters: OrderListFilters): URLSearchParams {
 
     if (filters.estado && filters.estado !== "todos") {
         params.set("estado", filters.estado);
+    }
+
+    // Mapeo del filtro de pago a valor booleano para el backend
+    if (filters.payment_status && filters.payment_status !== "todos") {
+        params.set("pagado", filters.payment_status === "paid" ? "true" : "false");
     }
 
     if (filters.fecha_creacion) {
@@ -146,7 +153,6 @@ export function useOrders() {
 
     const fetchOrderById = useCallback(async (id: string): Promise<Order | null> => {
         setError(null);
-
         try {
             const queryParams = buildOrderQueryParams({ id, page: 1, page_size: 1 }).toString();
             const data = await http<OrderListResponse>(`${endpoints.orders.list()}?${queryParams}`);
@@ -158,40 +164,15 @@ export function useOrders() {
         }
     }, []);
 
-    const createOrder = async (
-        payload: CreateOrderPayload
-    ): Promise<{ success: boolean; errorMessage: string | null }> => {
+    const createOrder = async (payload: CreateOrderPayload): Promise<{ success: boolean; errorMessage: string | null }> => {
         setLoading(true);
         setError(null);
-
         try {
-            const body: Record<string, unknown> = {
-                cliente_id: payload.cliente_id,
-                producto_id: payload.producto_id,
-                tomado_por_id: payload.tomado_por_id,
-                valor_venta_proyectado: payload.valor_venta_proyectado,
-                items: payload.items,
-                logo_manga_derecha: payload.logo_manga_derecha ?? false,
-                logo_manga_izquierda: payload.logo_manga_izquierda ?? false,
-                logo_delantero_derecha: payload.logo_delantero_derecha ?? false,
-                logo_delantero_izquierda: payload.logo_delantero_izquierda ?? false,
-                logo_espalda: payload.logo_espalda ?? false,
-                logo_bolsillo: payload.logo_bolsillo ?? false,
-            };
-
-            if (payload.fecha_estimada_entrega) {
-                body.fecha_estimada_entrega = payload.fecha_estimada_entrega;
-            }
-
-            if (payload.comentarios?.trim()) {
-                body.comentarios = payload.comentarios.trim();
-            }
-
+            const body = { ...payload, logo_manga_derecha: payload.logo_manga_derecha ?? false };
             await http<Order>(endpoints.orders.list(), {
                 method: "POST",
                 body: JSON.stringify(body),
             });
-
             return { success: true, errorMessage: null };
         } catch (err: unknown) {
             const message = resolveHttpErrorMessage(err, "Error al crear la orden");
@@ -202,44 +183,17 @@ export function useOrders() {
         }
     };
 
-    const updateOrderStatus = async (
-        ordenId: string,
-        nuevoEstado: string,
-        observacion: string | null
-    ) => {
+    const updateOrderStatus = async (ordenId: string, nuevoEstado: string, observacion: string | null) => {
         setLoading(true);
         setError(null);
-
         try {
             await http<Order>(endpoints.orders.estado(ordenId), {
                 method: "PATCH",
-                body: JSON.stringify({
-                    nuevo_estado: nuevoEstado,
-                    observacion: observacion ?? "",
-                }),
+                body: JSON.stringify({ nuevo_estado: nuevoEstado, observacion: observacion ?? "" }),
             });
-
             return true;
         } catch (err: unknown) {
-            let mensaje = "Error al actualizar el estado";
-
-            if (err instanceof HttpError) {
-                if (err.status === 401 || err.status === 403) {
-                    mensaje = "No tienes permisos para cambiar el estado de esta orden.";
-                } else if (err.status === 404) {
-                    mensaje = "La orden no existe.";
-                } else if (err.status === 422) {
-                    mensaje = err.message || "La orden ya está en ese estado.";
-                } else if (err.status >= 500) {
-                    mensaje = "Error del servidor al cambiar el estado.";
-                } else {
-                    mensaje = err.message;
-                }
-            } else if (err instanceof Error) {
-                mensaje = err.message;
-            }
-
-            setError(mensaje);
+            setError(resolveHttpErrorMessage(err, "Error al actualizar estado"));
             return false;
         } finally {
             setLoading(false);
@@ -247,24 +201,15 @@ export function useOrders() {
     };
 
     const fetchOrderLogs = async (ordenId: string): Promise<OrderLog[]> => {
-        setError(null);
-
         try {
             return await http<OrderLog[]>(endpoints.orders.logs(ordenId));
-        } catch (err: unknown) {
-            const message = resolveHttpErrorMessage(err, "Error al obtener el historial");
-            setError(message);
+        } catch {
             return [];
         }
     };
 
-    const updateOrderSalePrice = async (
-        orderId: string,
-        valorVentaProyectado: number
-    ): Promise<{ order: Order | null; errorMessage: string | null }> => {
+    const updateOrderSalePrice = async (orderId: string, valorVentaProyectado: number) => {
         setUpdatingSalePriceId(orderId);
-        setError(null);
-
         try {
             const updated = await http<Order>(endpoints.orders.valorVenta(orderId), {
                 method: "PATCH",
@@ -272,22 +217,15 @@ export function useOrders() {
             });
             mergeOrderInList(updated);
             return { order: updated, errorMessage: null };
-        } catch (err: unknown) {
-            const mensaje = resolveHttpErrorMessage(err, "Error al actualizar el valor de venta");
-            setError(mensaje);
-            return { order: null, errorMessage: mensaje };
+        } catch (err) {
+            return { order: null, errorMessage: resolveHttpErrorMessage(err, "Error") };
         } finally {
             setUpdatingSalePriceId(null);
         }
     };
 
-    const updateOrderComments = async (
-        orderId: string,
-        comentarios: string
-    ): Promise<{ order: Order | null; errorMessage: string | null }> => {
+    const updateOrderComments = async (orderId: string, comentarios: string) => {
         setUpdatingCommentsId(orderId);
-        setError(null);
-
         try {
             const updated = await http<Order>(endpoints.orders.comentarios(orderId), {
                 method: "PATCH",
@@ -295,34 +233,16 @@ export function useOrders() {
             });
             mergeOrderInList(updated);
             return { order: updated, errorMessage: null };
-        } catch (err: unknown) {
-            let mensaje = resolveHttpErrorMessage(err, "Error al actualizar los comentarios");
-
-            if (err instanceof HttpError && err.status === 404) {
-                mensaje = "La orden no existe.";
-            }
-
-            setError(mensaje);
-            return { order: null, errorMessage: mensaje };
+        } catch (err) {
+            return { order: null, errorMessage: resolveHttpErrorMessage(err, "Error") };
         } finally {
             setUpdatingCommentsId(null);
         }
     };
 
     return {
-        orders,
-        totalCount,
-        loading,
-        updatingSalePriceId,
-        updatingCommentsId,
-        error,
-        fetchOrders,
-        fetchOrderById,
-        createOrder,
-        updateOrderStatus,
-        updateOrderSalePrice,
-        updateOrderComments,
-        mergeOrderInList,
-        fetchOrderLogs,
+        orders, totalCount, loading, updatingSalePriceId, updatingCommentsId, error,
+        fetchOrders, fetchOrderById, createOrder, updateOrderStatus,
+        updateOrderSalePrice, updateOrderComments, mergeOrderInList, fetchOrderLogs,
     };
 }
