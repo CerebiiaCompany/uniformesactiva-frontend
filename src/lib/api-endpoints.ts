@@ -49,4 +49,8 @@ export const endpoints = {
         resumenByVariant: (variantId: string) =>
             `${base()}/api/v1/costos/variante/${variantId}/resumen/`,
     },
+    quotes: {
+        list: () => `${base()}/api/v1/quotes/quotes/`,
+        detail: (id: string) => `${base()}/api/v1/quotes/quotes/${id}/`,
+    },
 };
