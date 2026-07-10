@@ -5,13 +5,12 @@ import { endpoints } from "@/lib/api-endpoints";
 export interface Quote {
     id: string;
     customerName: string;
-    customerId: string;  // Nuevo campo para la relación con el cliente
+    customerId: string;
     items: string;
     totalAmount: number;
     status: "draft" | "sent" | "approved" | "rejected" | "inactive";
     createdAt: string;
     validUntil: string;
-    // Nuevos campos
     takenBy?: string;
     probability?: number;
     shippingDate?: string;
@@ -20,13 +19,12 @@ export interface Quote {
 interface ApiQuote {
     id: string;
     client: string;
-    client_id: string;  // Nuevo campo del backend
+    client_id: string;
     articulos: string[];
     monto: string | number;
     estado: "draft" | "sent" | "approved" | "rejected" | "inactive";
     creacion: string;
     validez: string;
-    // Nuevos campos del backend
     tomado_por?: string;
     probabilidad?: number;
     fecha_envio?: string;
@@ -34,15 +32,23 @@ interface ApiQuote {
 
 
 interface CreateQuotePayload {
-    client: string;  // Ahora es el ID del cliente (UUID)
+    client: string;
     articulos: string[];
     monto: number;
     estado: Quote["status"];
     validez: string;
-    // Nuevos campos
     tomado_por?: string | null;
     probabilidad?: number | null;
     fecha_envio?: string | null;
+}
+
+export interface FetchQuotesFilters {
+    client?: string;
+    estado?: string;
+    tomado_por?: string;
+    probabilidad?: number;
+    fecha_envio_desde?: string;
+    fecha_envio_hasta?: string;
 }
 
 type UpdateQuotePayload = Partial<CreateQuotePayload>;
@@ -60,13 +66,12 @@ function mapApiQuoteToQuote(api: ApiQuote): Quote {
     return {
         id: api.id,
         customerName: api.client,
-        customerId: api.client_id || "",  // Mapear client_id a customerId
+        customerId: api.client_id || "",
         items: itemsString,
         totalAmount: typeof api.monto === "string" ? parseFloat(api.monto) : api.monto,
         status: api.estado,
         createdAt: api.creacion,
         validUntil: api.validez,
-        // Nuevos campos
         takenBy: api.tomado_por || undefined,
         probability: api.probabilidad || undefined,
         shippingDate: api.fecha_envio ? api.fecha_envio.split("T")[0] : undefined,
@@ -79,12 +84,11 @@ function mapFormToCreatePayload(data: Omit<Quote, "id" | "createdAt">): CreateQu
         : [];
 
     return {
-        client: data.customerId,  // Enviar el ID del cliente, no el nombre
+        client: data.customerId,
         articulos: articulosList,
         monto: data.totalAmount,
         estado: data.status,
         validez: data.validUntil,
-        // Nuevos campos
         tomado_por: data.takenBy || null,
         probabilidad: data.probability !== undefined ? data.probability : null,
         fecha_envio: data.shippingDate ? new Date(data.shippingDate).toISOString() : null,
@@ -95,8 +99,7 @@ function mapFormToCreatePayload(data: Omit<Quote, "id" | "createdAt">): CreateQu
 function mapFormToUpdatePayload(data: Partial<Omit<Quote, "id" | "createdAt">>): UpdateQuotePayload {
     const payload: UpdateQuotePayload = {};
 
-    if (data.customerId !== undefined) payload.client = data.customerId;  // Enviar ID del cliente
-    // Nota: customerName ya no se envía al backend, solo se usa para mostrar en la UI
+    if (data.customerId !== undefined) payload.client = data.customerId;
 
     if (data.items !== undefined) {
         const articulosList = data.items
@@ -109,7 +112,6 @@ function mapFormToUpdatePayload(data: Partial<Omit<Quote, "id" | "createdAt">>):
     if (data.status !== undefined) payload.estado = data.status;
     if (data.validUntil !== undefined) payload.validez = data.validUntil;
 
-    // Nuevos campos
     if (data.takenBy !== undefined) payload.tomado_por = data.takenBy || null;
     if (data.probability !== undefined) payload.probabilidad = data.probability !== undefined ? data.probability : null;
     if (data.shippingDate !== undefined) {
@@ -126,12 +128,28 @@ export function useQuotes() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-
-    const fetchQuotes = useCallback(async () => {
+    const fetchQuotes = useCallback(async (filters?: FetchQuotesFilters) => {
         setLoading(true);
         setError(null);
         try {
-            const data = await http<ApiQuote[]>(endpoints.quotes.list());
+            let url = endpoints.quotes.list();
+
+            if (filters) {
+                const params = new URLSearchParams();
+                if (filters.client) params.append("client", filters.client);
+                if (filters.estado) params.append("estado", filters.estado);
+                if (filters.tomado_por) params.append("tomado_por", filters.tomado_por);
+                if (filters.probabilidad !== undefined) params.append("probabilidad", filters.probabilidad.toString());
+                if (filters.fecha_envio_desde) params.append("fecha_envio_desde", filters.fecha_envio_desde);
+                if (filters.fecha_envio_hasta) params.append("fecha_envio_hasta", filters.fecha_envio_hasta);
+
+                const queryString = params.toString();
+                if (queryString) {
+                    url = `${url}?${queryString}`;
+                }
+            }
+
+            const data = await http<ApiQuote[]>(url);
             const mapped = data.map(mapApiQuoteToQuote);
             setQuotes(mapped);
         } catch (err) {
