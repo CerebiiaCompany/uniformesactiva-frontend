@@ -9,6 +9,7 @@ export interface ClientDetail {
     phone: string;
     address: string;
     city: string;
+    tipo_cliente: string;
     status: string;
     orders: any[]; // Historial de pedidos simulado
 }

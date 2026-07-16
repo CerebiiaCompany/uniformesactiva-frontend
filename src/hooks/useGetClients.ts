@@ -9,6 +9,7 @@ export interface Client {
     phone: string;
     address: string;
     city: string;
+    tipo_cliente: string;
     status: string;
 }
 
@@ -49,7 +50,6 @@ export function useGetClients(initialPage = 1, initialPageSize = 10) {
         });
 
         try {
-            // Utilizamos el wrapper http que inyecta el token y gestiona el 401
             const data = await http<{ results: Client[], count: number, next: any, previous: any }>(
                 `${baseUrl}/api/v1/clients/?${queryParams.toString()}`
             );
