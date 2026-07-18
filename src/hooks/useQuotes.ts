@@ -8,7 +8,7 @@ export interface Quote {
     customerId: string;
     items: string;
     totalAmount: number;
-    status: "draft" | "sent" | "approved" | "rejected" | "inactive";
+    status: "draft" | "sent" | "approved" | "rejected" | "inactive" | "in_review";
     createdAt: string;
     validUntil: string;
     takenBy?: string;
@@ -22,14 +22,13 @@ interface ApiQuote {
     client_id: string;
     articulos: string[];
     monto: string | number;
-    estado: "draft" | "sent" | "approved" | "rejected" | "inactive";
+    estado: "draft" | "sent" | "approved" | "rejected" | "inactive" | "in_review";
     creacion: string;
     validez: string;
     tomado_por?: string;
     probabilidad?: number;
     fecha_envio?: string;
 }
-
 
 interface CreateQuotePayload {
     client: string;
@@ -52,6 +51,7 @@ export interface FetchQuotesFilters {
 }
 
 type UpdateQuotePayload = Partial<CreateQuotePayload>;
+
 function resolveHttpErrorMessage(err: unknown, fallback: string): string {
     if (err instanceof HttpError) return err.message || fallback;
     if (err instanceof Error) return err.message;
@@ -95,7 +95,6 @@ function mapFormToCreatePayload(data: Omit<Quote, "id" | "createdAt">): CreateQu
     };
 }
 
-
 function mapFormToUpdatePayload(data: Partial<Omit<Quote, "id" | "createdAt">>): UpdateQuotePayload {
     const payload: UpdateQuotePayload = {};
 
@@ -120,7 +119,6 @@ function mapFormToUpdatePayload(data: Partial<Omit<Quote, "id" | "createdAt">>):
 
     return payload;
 }
-
 
 export function useQuotes() {
 
@@ -160,7 +158,6 @@ export function useQuotes() {
         }
     }, []);
 
-
     const createQuote = useCallback(async (data: Omit<Quote, "id" | "createdAt">) => {
         setLoading(true);
         setError(null);
@@ -180,7 +177,6 @@ export function useQuotes() {
             setLoading(false);
         }
     }, [fetchQuotes]);
-
 
     const updateQuote = useCallback(async (id: string, data: Partial<Omit<Quote, "id" | "createdAt">>) => {
         setLoading(true);
@@ -220,6 +216,48 @@ export function useQuotes() {
         }
     }, [fetchQuotes]);
 
+    const updateQuoteStatus = useCallback(async (id: string, status: string) => {
+        setLoading(true);
+        setError(null);
+        try {
+            const result = await http<{ id: string; estado: string }>(
+                endpoints.quotes.status(id),
+                {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ status }),
+                }
+            );
+            await fetchQuotes();
+            return { success: true, data: result, errorMessage: null };
+        } catch (err) {
+            const message = resolveHttpErrorMessage(err, "Error al actualizar el estado");
+            setError(message);
+            return { success: false, data: null, errorMessage: message };
+        } finally {
+            setLoading(false);
+        }
+    }, [fetchQuotes]);
+
+    const convertQuoteToOrder = useCallback(async (id: string) => {
+        setLoading(true);
+        setError(null);
+        try {
+            const result = await http<{ id: string; message: string }>(
+                endpoints.quotes.convert(id),
+                { method: "POST" }
+            );
+            await fetchQuotes();
+            return { success: true, data: result, errorMessage: null };
+        } catch (err) {
+            const message = resolveHttpErrorMessage(err, "Error al convertir a orden");
+            setError(message);
+            return { success: false, data: null, errorMessage: message };
+        } finally {
+            setLoading(false);
+        }
+    }, [fetchQuotes]);
+
     return {
         quotes,
         loading,
@@ -228,5 +266,7 @@ export function useQuotes() {
         createQuote,
         updateQuote,
         deleteQuote,
+        updateQuoteStatus,    // ✅ Nuevo
+        convertQuoteToOrder,  // ✅ Nuevo
     };
 }

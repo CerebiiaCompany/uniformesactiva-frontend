@@ -35,11 +35,19 @@ export default function Quotations() {
     createQuote,
     updateQuote,
     deleteQuote,
+    updateQuoteStatus,
+    convertQuoteToOrder,
   } = useQuotes();
 
   // Estado del modal
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingQuote, setEditingQuote] = useState<Quote | null>(null);
+
+  // Estado para el modal de cambio de estado
+  const [statusModalOpen, setStatusModalOpen] = useState(false);
+  const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
+  const [newStatus, setNewStatus] = useState<string>("");
+  const [isStatusUpdating, setIsStatusUpdating] = useState(false);
 
   // Estado para filtros
   const [searchTerm, setSearchTerm] = useState("");
@@ -72,6 +80,19 @@ export default function Quotations() {
     r === "Administrador" || r === "admin"
   );
 
+  // Obtener permisos del usuario desde localStorage
+  const userPermissions = user?.permissions || [];
+
+  // Permiso para crear cotizaciones
+  const canCreateQuotes = isAdmin || userPermissions.some(
+    (perm: any) => perm.module === "quotations" && perm.actions?.includes("create")
+  );
+
+  // Permiso para cambiar estado de cotizaciones (update)
+  const canUpdateQuotes = isAdmin || userPermissions.some(
+    (perm: any) => perm.module === "quotations" && perm.actions?.includes("update")
+  );
+
   // Función para generar ID con formato Q-### (tres dígitos)
   const getFormattedId = (id: string) => {
     const shortId = id.slice(-3);
@@ -86,6 +107,20 @@ export default function Quotations() {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(amount).replace('CLP', '').trim();
+  };
+
+  // Abrir modal de cambio de estado
+  const openStatusModal = (quoteId: string) => {
+    setSelectedQuoteId(quoteId);
+    setNewStatus("");
+    setStatusModalOpen(true);
+  };
+
+  // Cerrar modal de cambio de estado
+  const closeStatusModal = () => {
+    setSelectedQuoteId(null);
+    setNewStatus("");
+    setStatusModalOpen(false);
   };
 
   // Debounce para searchTerm
@@ -288,7 +323,7 @@ export default function Quotations() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-3">
           <CardTitle className="text-sm font-semibold">Cotizaciones</CardTitle>
-          {isAdmin && (
+          {canCreateQuotes && (
             <Button
               size="sm"
               className="bg-red-500 text-white hover:bg-red-600"
@@ -348,6 +383,7 @@ export default function Quotations() {
                   <SelectItem value="sent">Enviada</SelectItem>
                   <SelectItem value="approved">Aprobada</SelectItem>
                   <SelectItem value="rejected">Rechazada</SelectItem>
+                  <SelectItem value="in_review">En Revisión</SelectItem>
                   <SelectItem value="inactive">Inactiva</SelectItem>
                 </SelectContent>
               </Select>
@@ -424,12 +460,12 @@ export default function Quotations() {
                 <TableHead className="min-w-[120px] text-[10px]">Cliente</TableHead>
                 <TableHead className="min-w-[140px] text-[10px]">Artículos</TableHead>
                 <TableHead className="w-[90px] text-right text-[10px]">Monto</TableHead>
-                <TableHead className="w-[90px] text-[10px]">Estado</TableHead>
+                <TableHead className="w-[110px] text-[10px]">Estado</TableHead>
                 <TableHead className="w-[100px] text-[10px]">Tomada por</TableHead>
                 <TableHead className="w-[80px] text-center text-[10px]">Prob.</TableHead>
                 <TableHead className="w-[85px] text-center text-[10px]">Envío</TableHead>
                 <TableHead className="w-[85px] text-[10px]">Validez</TableHead>
-                <TableHead className="w-[60px] text-center text-[10px]">Noved.</TableHead>
+                <TableHead className="w-[60px] text-center text-[10px]">Novedades</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -455,7 +491,19 @@ export default function Quotations() {
                       {formatAmount(q.totalAmount)}
                     </TableCell>
                     <TableCell>
-                      <StatusBadge status={q.status} />
+                      <div className="flex flex-col items-start gap-1">
+                        <StatusBadge status={q.status} />
+                        {canUpdateQuotes && q.status !== "inactive" && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="h-5 px-1.5 text-[9px] font-normal"
+                            onClick={() => openStatusModal(q.id)}
+                          >
+                            Cambiar estado
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground text-xs truncate max-w-[100px]">
                       {q.takenBy || "-"}
@@ -515,6 +563,96 @@ export default function Quotations() {
             onSubmit={editingQuote ? handleUpdate : handleCreate}
             onCancel={closeModal}
           />
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de cambio de estado */}
+      <Dialog open={statusModalOpen} onOpenChange={closeStatusModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cambiar estado de cotización</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Selecciona el nuevo estado para esta cotización.
+              {newStatus === "approved" && " Al aprobar, se creará automáticamente una orden."}
+            </p>
+
+            <Select
+              value={newStatus}
+              onValueChange={setNewStatus}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Selecciona un estado" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="rejected">DESCARTADO</SelectItem>
+                <SelectItem value="in_review">EN REVISIÓN</SelectItem>
+                <SelectItem value="approved">APROBADO</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <div className="flex justify-end gap-2 mt-4">
+              <Button
+                variant="outline"
+                onClick={closeStatusModal}
+                disabled={isStatusUpdating}
+              >
+                Cancelar
+              </Button>
+              <Button
+                disabled={!newStatus || isStatusUpdating}
+                onClick={async () => {
+                  if (!selectedQuoteId) return;
+                  setIsStatusUpdating(true);
+
+                  try {
+                    const statusResult = await updateQuoteStatus(selectedQuoteId, newStatus);
+
+                    if (!statusResult.success) {
+                      throw new Error(statusResult.errorMessage || "Error al actualizar el estado");
+                    }
+                    if (newStatus === "approved") {
+                      const convertResult = await convertQuoteToOrder(selectedQuoteId);
+
+                      if (!convertResult.success) {
+                        throw new Error(convertResult.errorMessage || "Error al crear la orden");
+                      }
+
+                      toast({
+                        title: "✅ Orden creada",
+                        description: `Orden #${convertResult.data?.id.slice(-6)} generada correctamente`,
+                      });
+                    } else {
+                      const statusLabels: Record<string, string> = {
+                        rejected: "Descartado",
+                        in_review: "En Revisión",
+                        approved: "Aprobado",
+                      };
+                      toast({
+                        title: "✅ Estado actualizado",
+                        description: `Nuevo estado: ${statusLabels[newStatus] || newStatus}`,
+                      });
+                    }
+                    await fetchQuotes();
+                    closeStatusModal();
+                  } catch (err: any) {
+                    const errorMessage = err?.message || "Error al actualizar el estado";
+                    toast({
+                      variant: "destructive",
+                      title: "❌ Error",
+                      description: errorMessage,
+                    });
+                  } finally {
+                    setIsStatusUpdating(false);
+                  }
+                }}
+              >
+                {isStatusUpdating ? "Guardando..." : "Guardar"}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </AppLayout>

@@ -54,6 +54,8 @@ export const endpoints = {
     quotes: {
         list: () => `${base()}/api/v1/quotes/quotes/`,
         detail: (id: string) => `${base()}/api/v1/quotes/quotes/${id}/`,
+        status: (id: string) => `${base()}/api/v1/quotes/quotes/${id}/status/`,
+        convert: (id: string) => `${base()}/api/v1/quotes/quotes/${id}/convert/`,
     },
     users: {
         list: () => `${base()}/api/v1/users/`,
