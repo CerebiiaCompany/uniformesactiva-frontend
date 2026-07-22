@@ -3,7 +3,9 @@ import { cn } from "@/lib/utils";
 export type StatusType =
   | "draft" | "sent" | "approved" | "rejected"
   | "pending" | "in_production" | "delivered"
-  | "design" | "cutting" | "sewing" | "embroidery" | "quality" | "printing" | "dispatch";
+  | "design" | "cutting" | "sewing" | "embroidery" | "quality" | "printing" | "dispatch"
+  | "inactive"
+  | "in_review";
 
 const statusConfig: Record<StatusType, { label: string; className: string }> = {
   draft: { label: "Borrador", className: "bg-muted text-muted-foreground" },
@@ -20,6 +22,8 @@ const statusConfig: Record<StatusType, { label: string; className: string }> = {
   quality: { label: "Calidad", className: "bg-success/15 text-success" },
   printing: { label: "Estampado", className: "bg-warning/15 text-warning" },
   dispatch: { label: "Despacho", className: "bg-muted text-muted-foreground" },
+  inactive: { label: "Inactiva", className: "bg-gray-100 text-gray-500 border border-gray-200" },
+  in_review: { label: "En revisión", className: "bg-yellow-100 text-yellow-800 border border-yellow-200" },
 };
 
 export function StatusBadge({ status }: { status: StatusType }) {

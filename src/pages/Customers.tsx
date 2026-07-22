@@ -2,7 +2,7 @@ import { useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Mail, Phone, Building2, ShieldAlert, MapPin, Loader2, ChevronLeft, ChevronRight, Search, X, ClipboardList } from "lucide-react";
+import { Plus, Mail, Phone, Building2, ShieldAlert, MapPin, Loader2, ChevronLeft, ChevronRight, Search, X, ClipboardList, Pencil, Trash2 } from "lucide-react";  // <-- NUEVOS ICONOS
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { toast } from "sonner";
 
@@ -13,20 +13,49 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
 import { Input } from "@/components/ui/input";
 
 import { useCreateClient } from "@/hooks/useCreateClient";
 import { useGetClients } from "@/hooks/useGetClients";
 import { useGetClientDetail } from "@/hooks/useGetClientDetail";
+import { useUpdateClient } from "@/hooks/useUpdateClient";
+import { useDeleteClient } from "@/hooks/useDeleteClient";
 
 export default function Customers() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingClient, setEditingClient] = useState<any | null>(null);
+  const [editFormData, setEditFormData] = useState({
+    name: "",
+    email: "",
+    phone: "",
+    address: "",
+    city: "",
+    tipo_cliente: "Natural",
+  });
+  const [deletingClient, setDeletingClient] = useState<any | null>(null);
+
   const { clients, isLoading: isReading, refetch, pagination, filters } = useGetClients();
   const { createClient, isLoading: isCreating, error: apiError } = useCreateClient();
   const { client: clientDetail, isLoading: isReadingDetail, error: detailError } = useGetClientDetail(selectedClientId);
+
+  const { updateClient, isLoading: isUpdating, error: updateError } = useUpdateClient();
+  const { deleteClient, isLoading: isDeleting } = useDeleteClient();
 
   const [searchInputs, setSearchInputs] = useState({
     name: "",
@@ -42,9 +71,10 @@ export default function Customers() {
     phone: "",
     address: "",
     city: "",
+    tipo_cliente: "Natural",
   });
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
@@ -74,6 +104,66 @@ export default function Customers() {
     setIsDetailOpen(false);
     setSelectedClientId(null);
   };
+  const openEditModal = (client: any) => {
+    setEditingClient(client);
+    setEditFormData({
+      name: client.name,
+      email: client.email,
+      phone: client.phone,
+      address: client.address,
+      city: client.city,
+      tipo_cliente: client.tipo_cliente || "Natural",
+    });
+    setIsEditModalOpen(true);
+  };
+
+  const closeEditModal = () => {
+    setIsEditModalOpen(false);
+    setEditingClient(null);
+    setEditFormData({ name: "", email: "", phone: "", address: "", city: "", tipo_cliente: "Natural" });
+  };
+
+  const handleEditInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setEditFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingClient) return;
+
+    const result = await updateClient(editingClient.id, editFormData);
+
+    if (result.success) {
+      toast.success("¡Cliente actualizado exitosamente!", {
+        description: `El cliente ${editFormData.name} ha sido modificado.`,
+      });
+      closeEditModal();
+      refetch();
+    } else {
+      toast.error("Error al actualizar cliente", {
+        description: result.error || "Revisa los campos del formulario.",
+      });
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingClient) return;
+
+    const result = await deleteClient(deletingClient.id);
+
+    if (result.success) {
+      toast.success("¡Cliente eliminado exitosamente!", {
+        description: `El cliente ${deletingClient.name} ha sido desactivado del sistema.`,
+      });
+      setDeletingClient(null);
+      refetch();
+    } else {
+      toast.error("Error al eliminar cliente", {
+        description: result.error || "No se pudo completar la eliminación.",
+      });
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -83,7 +173,7 @@ export default function Customers() {
       toast.success("¡Cliente registrado exitosamente!", {
         description: `El cliente ${formData.name} ha sido guardado en la base de datos.`,
       });
-      setFormData({ nit: "", name: "", email: "", phone: "", address: "", city: "" });
+      setFormData({ nit: "", name: "", email: "", phone: "", address: "", city: "", tipo_cliente: "Natural" });
       setIsModalOpen(false);
       refetch();
     } else {
@@ -220,9 +310,42 @@ export default function Customers() {
                       </p>
                     </div>
 
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>Módulo Comercial</span>
-                      <span className="font-semibold text-foreground text-[11px]">ID de Sistema</span>
+                    {/* <-- SECCIÓN MODIFICADA: TIPO DE CLIENTE + BOTONES DE ACCIÓN */}
+                    <div className="flex items-center justify-between text-xs text-muted-foreground pt-3 border-t border-border/50">
+                      <div>
+                        <span className="block text-[10px] text-muted-foreground/80">Tipo de Cliente</span>
+                        <span className="font-semibold text-foreground text-[11px]">
+                          {customer.tipo_cliente === "Juridico" ? "Persona Jurídica" : "Persona Natural"}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          title="Editar cliente"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openEditModal(customer);
+                          }}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          title="Eliminar cliente"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeletingClient(customer);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -306,6 +429,13 @@ export default function Customers() {
                   <span className="text-muted-foreground block font-medium">Correo Electrónico</span>
                   <span className="text-foreground font-medium truncate block">{clientDetail.email}</span>
                 </div>
+                {/* <-- NUEVO CAMPO TIPO DE CLIENTE EN EL DETALLE */}
+                <div className="col-span-2">
+                  <span className="text-muted-foreground block font-medium">Tipo de Cliente</span>
+                  <span className="text-foreground font-medium">
+                    {clientDetail.tipo_cliente === "Juridico" ? "Persona Jurídica" : "Persona Natural"}
+                  </span>
+                </div>
                 <div className="col-span-2">
                   <span className="text-muted-foreground block font-medium">Ubicación</span>
                   <span className="text-foreground font-medium">{clientDetail.address}, {clientDetail.city}</span>
@@ -324,7 +454,6 @@ export default function Customers() {
                   </div>
                 ) : (
                   <div className="text-xs text-muted-foreground">
-                    {/* Render dinámico para cuando existan pedidos en el futuro */}
                     Órdenes detectadas.
                   </div>
                 )}
@@ -340,7 +469,7 @@ export default function Customers() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal de Registro */}
+      {/* ── MODAL DE REGISTRO (CREACIÓN) ── */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
         <DialogContent className="sm:max-w-md bg-background p-6">
           <DialogHeader>
@@ -371,6 +500,22 @@ export default function Customers() {
                 value={formData.nit}
                 onChange={handleInputChange}
               />
+            </div>
+
+            {/* <-- NUEVO CAMPO TIPO DE CLIENTE EN REGISTRO */}
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground block mb-1">Tipo de Cliente</label>
+              <select
+                name="tipo_cliente"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                required
+                disabled={isCreating}
+                value={formData.tipo_cliente}
+                onChange={handleInputChange}
+              >
+                <option value="Natural">Persona Natural</option>
+                <option value="Juridico">Persona Jurídica</option>
+              </select>
             </div>
 
             <div>
@@ -459,6 +604,168 @@ export default function Customers() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* ── NUEVO MODAL DE EDICIÓN ── */}
+      <Dialog open={isEditModalOpen} onOpenChange={(open) => !open && closeEditModal()}>
+        <DialogContent className="sm:max-w-md bg-background p-6">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold">Editar Cliente</DialogTitle>
+            <DialogDescription>
+              Modifica la información del cliente. Se aplicarán las validaciones de negocio correspondientes.
+            </DialogDescription>
+          </DialogHeader>
+
+          {updateError && (
+            <div className="bg-destructive/10 text-destructive text-xs p-3 rounded-md flex items-center gap-2 border border-destructive/20 animate-fade-in">
+              <ShieldAlert className="h-4 w-4 flex-shrink-0" />
+              <span>{updateError}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleEditSubmit} className="space-y-4 mt-2">
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground block mb-1">NIT (No editable)</label>
+              <Input
+                name="nit"
+                type="text"
+                disabled
+                value={editingClient?.nit || ""}
+              />
+            </div>
+
+            {/* <-- NUEVO CAMPO TIPO DE CLIENTE EN EDICIÓN */}
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground block mb-1">Tipo de Cliente</label>
+              <select
+                name="tipo_cliente"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                required
+                disabled={isUpdating}
+                value={editFormData.tipo_cliente}
+                onChange={handleEditInputChange}
+              >
+                <option value="Natural">Persona Natural</option>
+                <option value="Juridico">Persona Jurídica</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground block mb-1">Nombre / Razón Social</label>
+              <Input
+                name="name"
+                type="text"
+                placeholder="Ej: Distribuidora Activa S.A.S."
+                required
+                disabled={isUpdating}
+                value={editFormData.name}
+                onChange={handleEditInputChange}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground block mb-1">Correo Electrónico</label>
+              <Input
+                name="email"
+                type="text"
+                placeholder="Ej: contacto@empresa.com"
+                required
+                disabled={isUpdating}
+                value={editFormData.email}
+                onChange={handleEditInputChange}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground block mb-1">Teléfono</label>
+              <Input
+                name="phone"
+                type="text"
+                placeholder="Ej: 3151234567"
+                required
+                disabled={isUpdating}
+                value={editFormData.phone}
+                onChange={handleEditInputChange}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground block mb-1">Dirección</label>
+                <Input
+                  name="address"
+                  type="text"
+                  placeholder="Ej: Calle 10 #4-20"
+                  required
+                  disabled={isUpdating}
+                  value={editFormData.address}
+                  onChange={handleEditInputChange}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground block mb-1">Ciudad</label>
+                <Input
+                  name="city"
+                  type="text"
+                  placeholder="Ej: Cúcuta"
+                  required
+                  disabled={isUpdating}
+                  value={editFormData.city}
+                  onChange={handleEditInputChange}
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 justify-end pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={closeEditModal}
+                disabled={isUpdating}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                className="bg-primary text-primary-foreground hover:bg-primary/90"
+                disabled={isUpdating}
+              >
+                {isUpdating ? "Guardando..." : "Guardar Cambios"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── NUEVO ALERT DIALOG PARA CONFIRMAR ELIMINACIÓN ── */}
+      <AlertDialog open={!!deletingClient} onOpenChange={(open) => !open && setDeletingClient(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar cliente?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletingClient && (
+                <>
+                  Esta acción desactivará (eliminación lógica) al cliente{" "}
+                  <strong>{deletingClient.name}</strong> (NIT {deletingClient.nit}) del sistema.
+                  El cliente ya no aparecerá en el listado activo.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                handleDeleteConfirm();
+              }}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? "Eliminando..." : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppLayout>
   );
 }
