@@ -211,21 +211,12 @@ export function AddOrderProductDialog({
         loadSummary();
     }, [open, selectedVariantId]);
 
-    const colorOptions = useMemo(() => {
-        const fromVariants = variants
-            .map((v) => v.attributes?.color?.trim())
-            .filter((c): c is string => Boolean(c));
-        const unique = [...new Set(fromVariants)];
-        if (unique.length) return unique;
-        return ["Blanco", "Negro", "Azul marino", "Gris", "Beige"];
-    }, [variants]);
-
     useEffect(() => {
-        if (selectedVariantId && colorOptions.length && !selectedColor) {
-            const variant = variants.find((v) => v.id === selectedVariantId);
-            setSelectedColor(variant?.attributes?.color || colorOptions[0]);
-        }
-    }, [selectedVariantId, colorOptions, selectedColor, variants]);
+        if (!selectedVariantId || selectedColor) return;
+        const variant = variants.find((v) => v.id === selectedVariantId);
+        const fromVariant = variant?.attributes?.color?.trim();
+        if (fromVariant) setSelectedColor(fromVariant);
+    }, [selectedVariantId, selectedColor, variants]);
 
     const selectedLine = lines.find((l) => l.id === selectedLineId);
     const selectedProduct = products.find((p) => p.id === selectedProductId);
@@ -396,22 +387,13 @@ export function AddOrderProductDialog({
                                 </div>
                                 <div className="space-y-1.5">
                                     <Label className="text-xs font-medium">Color</Label>
-                                    <Select
+                                    <Input
                                         value={selectedColor}
-                                        onValueChange={setSelectedColor}
+                                        onChange={(e) => setSelectedColor(e.target.value)}
+                                        placeholder="Ej. Blanco, Azul marino..."
                                         disabled={!selectedVariantId}
-                                    >
-                                        <SelectTrigger className="h-10">
-                                            <SelectValue placeholder="Selecciona color..." />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {colorOptions.map((color) => (
-                                                <SelectItem key={color} value={color}>
-                                                    {color}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
+                                        className="h-10"
+                                    />
                                 </div>
                                 <div className="space-y-1.5">
                                     <Label className="text-xs font-medium">Estampado</Label>
@@ -433,14 +415,16 @@ export function AddOrderProductDialog({
                             <div className="space-y-1.5">
                                 <Label className="text-xs font-medium">Costo unitario (referencia)</Label>
                                 <Input
-                                    type="number"
-                                    min="0"
-                                    step="1"
+                                    readOnly
+                                    tabIndex={-1}
                                     placeholder="Se calcula al elegir variante"
-                                    value={unitCostRaw}
-                                    onChange={(e) => setUnitCostRaw(e.target.value)}
+                                    value={
+                                        unitCostRaw && Number(unitCostRaw) > 0
+                                            ? `$${formatMoney(Number(unitCostRaw))}`
+                                            : ""
+                                    }
                                     disabled={!selectedVariantId}
-                                    className="h-10 font-semibold tabular-nums"
+                                    className="h-10 font-semibold tabular-nums bg-muted/40 cursor-default"
                                 />
                                 {loadingSummary && (
                                     <p className="text-[11px] text-muted-foreground flex items-center gap-1.5">

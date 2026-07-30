@@ -8,7 +8,7 @@ export interface Quote {
     customerId: string;
     items: string;
     totalAmount: number;
-    status: "draft" | "sent" | "approved" | "rejected" | "inactive" | "in_review";
+    status: "draft" | "sent" | "approved" | "rejected" | "inactive" | "in_review" | "ordered";
     createdAt: string;
     validUntil: string;
     takenBy?: string;
@@ -22,7 +22,7 @@ interface ApiQuote {
     client_id: string;
     articulos: string[];
     monto: string | number;
-    estado: "draft" | "sent" | "approved" | "rejected" | "inactive" | "in_review";
+    estado: "draft" | "sent" | "approved" | "rejected" | "inactive" | "in_review" | "ordered";
     creacion: string;
     validez: string;
     tomado_por?: string;
@@ -160,7 +160,6 @@ export function useQuotes() {
 
     const createQuote = useCallback(async (data: Omit<Quote, "id" | "createdAt">) => {
         setLoading(true);
-        setError(null);
         try {
             const payload = mapFormToCreatePayload(data);
             await http<ApiQuote>(endpoints.quotes.list(), {
@@ -171,7 +170,7 @@ export function useQuotes() {
             return { success: true, errorMessage: null };
         } catch (err) {
             const message = resolveHttpErrorMessage(err, "Error al crear la cotización");
-            setError(message);
+            // No setError: evita reemplazar toda la página por el toast del formulario
             return { success: false, errorMessage: message };
         } finally {
             setLoading(false);
@@ -180,7 +179,6 @@ export function useQuotes() {
 
     const updateQuote = useCallback(async (id: string, data: Partial<Omit<Quote, "id" | "createdAt">>) => {
         setLoading(true);
-        setError(null);
         try {
             const payload = mapFormToUpdatePayload(data);
             await http<ApiQuote>(endpoints.quotes.detail(id), {
@@ -191,7 +189,6 @@ export function useQuotes() {
             return { success: true, errorMessage: null };
         } catch (err) {
             const message = resolveHttpErrorMessage(err, "Error al actualizar la cotización");
-            setError(message);
             return { success: false, errorMessage: message };
         } finally {
             setLoading(false);
@@ -239,6 +236,36 @@ export function useQuotes() {
         }
     }, [fetchQuotes]);
 
+    /** Marca cotización aprobada → ordenado (endpoint dedicado, sin RBAC estricto). */
+    const markQuoteAsOrdered = useCallback(async (id: string) => {
+        setLoading(true);
+        try {
+            const result = await http<ApiQuote>(endpoints.quotes.markOrdered(id), {
+                method: "POST",
+            });
+            await fetchQuotes();
+            return { success: true, data: result, errorMessage: null };
+        } catch (err) {
+            // Fallback: PATCH parcial del detalle
+            try {
+                const result = await http<ApiQuote>(endpoints.quotes.detail(id), {
+                    method: "PATCH",
+                    body: JSON.stringify({ estado: "ordered" }),
+                });
+                await fetchQuotes();
+                return { success: true, data: result, errorMessage: null };
+            } catch (fallbackErr) {
+                const message = resolveHttpErrorMessage(
+                    fallbackErr,
+                    resolveHttpErrorMessage(err, "No se pudo marcar la cotización como Ordenado")
+                );
+                return { success: false, data: null, errorMessage: message };
+            }
+        } finally {
+            setLoading(false);
+        }
+    }, [fetchQuotes]);
+
     const convertQuoteToOrder = useCallback(async (id: string) => {
         setLoading(true);
         setError(null);
@@ -266,7 +293,8 @@ export function useQuotes() {
         createQuote,
         updateQuote,
         deleteQuote,
-        updateQuoteStatus,    // ✅ Nuevo
-        convertQuoteToOrder,  // ✅ Nuevo
+        updateQuoteStatus,
+        markQuoteAsOrdered,
+        convertQuoteToOrder,
     };
 }

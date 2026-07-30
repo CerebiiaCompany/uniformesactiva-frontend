@@ -62,9 +62,15 @@ export function useSizeConsumption() {
         setLoading(true);
         setError(null);
         try {
-            const body: Record<string, string> = {};
+            const body: Record<string, string | null> = {};
             if (payload.talla_id != null) body.talla_id = payload.talla_id;
             if (payload.consumption != null) body.consumption = String(payload.consumption);
+            if (payload.precio_venta !== undefined) {
+                body.precio_venta =
+                    payload.precio_venta === null || payload.precio_venta === ""
+                        ? null
+                        : String(payload.precio_venta);
+            }
 
             if (Object.keys(body).length === 0) return true;
 

@@ -1,20 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
+import { normalizeTallaCatalog } from "@/lib/talla-catalog";
 import type { CatalogOption, SizeFabric } from "@/types/variant";
-
-const normalizeCatalog = (items: any[]): CatalogOption[] =>
-    items.map((item) => {
-        if (typeof item === "string") {
-            return { id: item, name: item, code: item };
-        }
-        return {
-            id: item.id ?? item.code ?? item.value,
-            code: item.code ?? item.value,
-            name: item.name ?? item.label ?? item.code ?? item.value,
-            label: item.label ?? item.name ?? item.code,
-        };
-    });
 
 const resolveCatalogSizeId = (item: any, catalog: CatalogOption[]): string => {
     const candidates = [
@@ -57,7 +45,7 @@ export const useGetSizeConsumption = (variantId: string) => {
                 http<any[]>(endpoints.costos.tallasConsumoByVariant(variantId)),
                 http<any[]>(endpoints.costos.tallas()),
             ]);
-            const catalog = normalizeCatalog(tallas);
+            const catalog = normalizeTallaCatalog(tallas);
             return data.map((item) => mapSizeConsumption(item, catalog));
         },
         enabled: !!variantId,

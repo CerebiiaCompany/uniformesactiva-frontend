@@ -7,6 +7,10 @@ import { cn } from "@/lib/utils";
 import { useGetMaterials } from "@/hooks/useGetMaterials";
 import { useAddMaterialStock } from "@/hooks/useAddMaterialStock";
 import { useCreateMaterial } from "@/hooks/useCreateMaterial";
+import { useGetCostCatalogs } from "@/hooks/useGetCostCatalogs";
+import { useCreateProveedor } from "@/hooks/useCreateProveedor";
+import { ProveedorCombobox } from "@/components/ProveedorCombobox";
+import { toast } from "sonner";
 
 interface Material {
   id: string;
@@ -24,7 +28,6 @@ interface Material {
 export default function Inventory() {
   const [categoryFilter, setCategoryFilter] = useState("");
 
-  // Estado para modal de crear material
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newMaterial, setNewMaterial] = useState({
     name: "",
@@ -37,25 +40,26 @@ export default function Inventory() {
   });
   const [createError, setCreateError] = useState("");
 
-  // Estado para modal de añadir stock
+  const [isProveedorModalOpen, setIsProveedorModalOpen] = useState(false);
+  const [proveedorName, setProveedorName] = useState("");
+  const [proveedorError, setProveedorError] = useState("");
+
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
   const [newQuantity, setNewQuantity] = useState("");
   const [reference, setReference] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
 
-  // Obtener TODOS los materiales (sin filtro) para las categorías
   const { materials: allMaterials, isLoading: isLoadingAll } = useGetMaterials({});
-
-  // Obtener materiales filtrados por categoría
   const { materials: filteredMaterials, isLoading: isLoadingFiltered, refetch } = useGetMaterials({
     category: categoryFilter,
   });
+  const { proveedores, refetchProveedores } = useGetCostCatalogs();
+  const { createProveedor, isLoading: isCreatingProveedor } = useCreateProveedor();
 
   const { addStock, isPending: isSubmitting } = useAddMaterialStock();
   const { createMaterial, isPending: isCreating } = useCreateMaterial();
 
-  // Calcular conteo por categoría usando TODOS los materiales
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     allMaterials.forEach((m) => {
@@ -64,12 +68,15 @@ export default function Inventory() {
     return counts;
   }, [allMaterials]);
 
-  // Obtener categorías únicas de TODOS los materiales
   const uniqueCategories = useMemo(() => {
     return Array.from(new Set(allMaterials.map((m) => m.category)));
   }, [allMaterials]);
 
-  // Manejadores para crear material
+  const sortedProveedores = useMemo(
+    () => [...proveedores].sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" })),
+    [proveedores]
+  );
+
   const handleOpenCreateModal = () => {
     setNewMaterial({
       name: "",
@@ -84,9 +91,45 @@ export default function Inventory() {
     setIsCreateModalOpen(true);
   };
 
+  const handleOpenProveedorModal = () => {
+    setProveedorName("");
+    setProveedorError("");
+    setIsProveedorModalOpen(true);
+  };
+
+  const handleCreateProveedorSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProveedorError("");
+
+    const name = proveedorName.trim();
+    if (!name) {
+      setProveedorError("Ingresa el nombre del proveedor.");
+      return;
+    }
+
+    const result = await createProveedor(name);
+    if (!result.success) {
+      setProveedorError(result.error || "No se pudo crear el proveedor.");
+      return;
+    }
+
+    await refetchProveedores();
+    toast.success("Proveedor creado");
+    setIsProveedorModalOpen(false);
+
+    if (result.data?.name) {
+      setNewMaterial((prev) => ({ ...prev, supplier: result.data!.name }));
+    }
+  };
+
   const handleCreateMaterialSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreateError("");
+
+    if (!newMaterial.supplier.trim()) {
+      setCreateError("Selecciona un proveedor.");
+      return;
+    }
 
     try {
       await createMaterial({
@@ -105,7 +148,6 @@ export default function Inventory() {
     }
   };
 
-  // Manejadores para añadir stock
   const handleOpenAddStock = (material: Material) => {
     setSelectedMaterial(material);
     setNewQuantity("");
@@ -132,41 +174,47 @@ export default function Inventory() {
     }
   };
 
-  // Formatear números de forma segura
   const formatStock = (value: any) => {
-    const num = typeof value === 'string' ? parseFloat(value) : value;
-    if (isNaN(num)) return '0.00';
+    const num = typeof value === "string" ? parseFloat(value) : value;
+    if (isNaN(num)) return "0.00";
     return num.toFixed(2);
   };
 
   const formatCurrency = (value: any) => {
-    const num = typeof value === 'string' ? parseFloat(value) : value;
-    if (isNaN(num)) return '0';
-    return num.toLocaleString('es-CO', {
+    const num = typeof value === "string" ? parseFloat(value) : value;
+    if (isNaN(num)) return "0";
+    return num.toLocaleString("es-CO", {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     });
   };
 
-  // Usar filteredMaterials para la tabla, y allMaterials para los filtros
   const displayMaterials = filteredMaterials;
   const isLoading = isLoadingAll || isLoadingFiltered;
 
   return (
     <AppLayout title="Inventario" subtitle="Control de materias primas">
       <Card>
-        <CardHeader className="pb-3 flex flex-row items-center justify-between">
+        <CardHeader className="pb-3 flex flex-row items-center justify-between gap-3">
           <CardTitle className="text-sm font-semibold">Materiales en stock</CardTitle>
-          {/* Botón "Añadir material" en ROJO */}
-          <button
-            onClick={handleOpenCreateModal}
-            className="inline-flex items-center gap-1 px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-md transition-colors shadow-sm"
-          >
-            <Plus className="h-4 w-4" /> Añadir material
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleOpenProveedorModal}
+              className="inline-flex items-center gap-1 px-4 py-1.5 border border-border bg-background hover:bg-muted text-foreground text-sm font-medium rounded-md transition-colors shadow-sm"
+            >
+              <Plus className="h-4 w-4" /> Proveedor
+            </button>
+            <button
+              type="button"
+              onClick={handleOpenCreateModal}
+              className="inline-flex items-center gap-1 px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-md transition-colors shadow-sm"
+            >
+              <Plus className="h-4 w-4" /> Añadir material
+            </button>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
-          {/* Filtros de categoría - Pills - SIEMPRE VISIBLES */}
           <div className="flex flex-wrap items-center gap-2 px-6 py-3 border-b">
             <button
               onClick={() => setCategoryFilter("")}
@@ -195,7 +243,6 @@ export default function Inventory() {
             ))}
           </div>
 
-          {/* Tabla de Materiales */}
           {isLoading ? (
             <div className="p-8 text-center text-muted-foreground">Cargando materiales...</div>
           ) : displayMaterials.length === 0 ? (
@@ -204,7 +251,6 @@ export default function Inventory() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[80px]">ID</TableHead>
                   <TableHead>Material</TableHead>
                   <TableHead>Categoría</TableHead>
                   <TableHead>Proveedor</TableHead>
@@ -217,36 +263,24 @@ export default function Inventory() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {displayMaterials.map((m, index) => {
-                  const displayId = `M-${String(index + 1).padStart(3, '0')}`;
-
+                {displayMaterials.map((m) => {
+                  const isLow = Boolean(m.is_low_stock);
                   return (
-                    <TableRow key={m.id} className={cn(m.is_low_stock && "bg-destructive/5")}>
-                      <TableCell className="font-mono text-xs font-semibold text-muted-foreground">
-                        {displayId}
-                      </TableCell>
-                      <TableCell className="font-semibold text-foreground">{m.name}</TableCell>
-                      <TableCell className="text-muted-foreground">{m.category}</TableCell>
-                      <TableCell className="text-muted-foreground">{m.supplier}</TableCell>
-                      <TableCell className="text-muted-foreground">{m.unit}</TableCell>
-                      <TableCell className="text-right font-medium text-foreground">
-                        {formatStock(m.stock)}
-                      </TableCell>
-                      <TableCell className="text-right text-muted-foreground">
-                        {formatStock(m.min_stock)}
-                      </TableCell>
-                      <TableCell className="text-right text-muted-foreground">
-                        ${formatCurrency(m.unit_cost)}
-                      </TableCell>
+                    <TableRow key={m.id}>
+                      <TableCell className="font-medium">{m.name}</TableCell>
+                      <TableCell>{m.category}</TableCell>
+                      <TableCell>{m.supplier}</TableCell>
+                      <TableCell>{m.unit}</TableCell>
+                      <TableCell className="text-right">{formatStock(m.stock)}</TableCell>
+                      <TableCell className="text-right">{formatStock(m.min_stock)}</TableCell>
+                      <TableCell className="text-right">${formatCurrency(m.unit_cost)}</TableCell>
                       <TableCell>
-                        {m.is_low_stock ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-destructive bg-destructive/10 rounded-full px-2.5 py-0.5">
-                            <AlertTriangle className="h-3 w-3" /> Stock bajo
+                        {isLow ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700">
+                            <AlertTriangle className="h-3.5 w-3.5" /> Bajo stock
                           </span>
                         ) : (
-                          <span className="text-[11px] font-semibold text-green-700 bg-green-100 rounded-full px-2.5 py-0.5">
-                            Óptimo
-                          </span>
+                          <span className="text-xs text-muted-foreground">OK</span>
                         )}
                       </TableCell>
                       <TableCell className="text-right">
@@ -266,7 +300,6 @@ export default function Inventory() {
         </CardContent>
       </Card>
 
-      {/* Modal para Crear Material */}
       {isCreateModalOpen && (
         <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-card text-card-foreground border rounded-lg shadow-lg w-full max-w-lg p-6 relative max-h-[90vh] overflow-y-auto">
@@ -318,15 +351,17 @@ export default function Inventory() {
                 <label className="block text-xs font-semibold text-muted-foreground mb-1">
                   PROVEEDOR *
                 </label>
-                <input
-                  type="text"
-                  required
-                  maxLength={255}
-                  placeholder="Ej. Textiles del Caribe"
-                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 bg-background text-foreground"
+                <ProveedorCombobox
                   value={newMaterial.supplier}
-                  onChange={(e) => setNewMaterial({ ...newMaterial, supplier: e.target.value })}
+                  proveedores={sortedProveedores}
+                  onChange={(name) => setNewMaterial({ ...newMaterial, supplier: name })}
+                  placeholder="Buscar o seleccionar proveedor..."
                 />
+                {sortedProveedores.length === 0 && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    No hay proveedores. Usa el botón <strong>+ Proveedor</strong> para crear uno.
+                  </p>
+                )}
               </div>
 
               <div>
@@ -408,7 +443,7 @@ export default function Inventory() {
                 </button>
                 <button
                   type="submit"
-                  disabled={isCreating}
+                  disabled={isCreating || sortedProveedores.length === 0}
                   className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded text-sm transition-colors disabled:opacity-55"
                 >
                   {isCreating ? "Creando..." : "Crear Material"}
@@ -419,7 +454,63 @@ export default function Inventory() {
         </div>
       )}
 
-      {/* Modal para Añadir Stock */}
+      {isProveedorModalOpen && (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-card text-card-foreground border rounded-lg shadow-lg w-full max-w-md p-6 relative">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Nuevo proveedor</h3>
+              <button
+                onClick={() => setIsProveedorModalOpen(false)}
+                className="p-1 hover:bg-muted rounded-md transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateProveedorSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground mb-1">
+                  NOMBRE DEL PROVEEDOR *
+                </label>
+                <input
+                  type="text"
+                  required
+                  maxLength={255}
+                  placeholder="Ej. Textiles del Caribe"
+                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 bg-background text-foreground"
+                  value={proveedorName}
+                  onChange={(e) => setProveedorName(e.target.value)}
+                />
+              </div>
+
+              {proveedorError && (
+                <div className="text-xs text-destructive bg-destructive/10 p-2.5 rounded">
+                  {proveedorError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsProveedorModalOpen(false)}
+                  disabled={isCreatingProveedor}
+                  className="px-4 py-2 border rounded text-sm hover:bg-accent transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingProveedor}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded text-sm transition-colors disabled:opacity-55"
+                >
+                  {isCreatingProveedor ? "Creando..." : "Crear proveedor"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {isStockModalOpen && selectedMaterial && (
         <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-card text-card-foreground border rounded-lg shadow-lg w-full max-w-md p-6 relative">

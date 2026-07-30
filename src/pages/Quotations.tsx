@@ -3,8 +3,9 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Bell, X } from "lucide-react";
+import { Plus, Bell, X, ShoppingCart } from "lucide-react";
 import { useEffect, useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Dialog,
   DialogContent,
@@ -13,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { useQuotes, type Quote } from "@/hooks/useQuotes";
 import QuoteForm, { type QuoteFormValues } from "@/components/quotes/QuoteForm";
+import { NewOrderDialog } from "@/components/NewOrderDialog";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,6 +29,7 @@ import { useGetClients } from "@/hooks/useGetClients";
 
 export default function Quotations() {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const {
     quotes,
     loading,
@@ -36,14 +39,18 @@ export default function Quotations() {
     updateQuote,
     deleteQuote,
     updateQuoteStatus,
-    convertQuoteToOrder,
+    markQuoteAsOrdered,
   } = useQuotes();
 
   // Estado del modal
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingQuote, setEditingQuote] = useState<Quote | null>(null);
 
-  // Estado para el modal de cambio de estado
+  // Orden desde cotización aprobada
+  const [orderDialogOpen, setOrderDialogOpen] = useState(false);
+  const [quoteForOrder, setQuoteForOrder] = useState<Quote | null>(null);
+
+  // Estado para el modal de cambio de estado (solo roles no-admin con permiso update)
   const [statusModalOpen, setStatusModalOpen] = useState(false);
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
   const [newStatus, setNewStatus] = useState<string>("");
@@ -88,10 +95,21 @@ export default function Quotations() {
     (perm: any) => perm.module === "quotations" && perm.actions?.includes("create")
   );
 
-  // Permiso para cambiar estado de cotizaciones (update)
-  const canUpdateQuotes = isAdmin || userPermissions.some(
-    (perm: any) => perm.module === "quotations" && perm.actions?.includes("update")
-  );
+  // Admin solo visualiza el avance; no cambia estado con el botón dedicado.
+  // Otros roles con update sí pueden (sin auto-crear orden).
+  const canChangeQuoteStatus =
+    !isAdmin &&
+    userPermissions.some(
+      (perm: any) => perm.module === "quotations" && perm.actions?.includes("update")
+    );
+
+  const canCreateOrderFromQuote =
+    isAdmin ||
+    userPermissions.some(
+      (perm: any) =>
+        (perm.module === "orders" && perm.actions?.includes("create")) ||
+        (perm.module === "quotations" && perm.actions?.includes("update"))
+    );
 
   // Función para generar ID con formato Q-### (tres dígitos)
   const getFormattedId = (id: string) => {
@@ -384,6 +402,7 @@ export default function Quotations() {
                   <SelectItem value="approved">Aprobada</SelectItem>
                   <SelectItem value="rejected">Rechazada</SelectItem>
                   <SelectItem value="in_review">En Revisión</SelectItem>
+                  <SelectItem value="ordered">Ordenado</SelectItem>
                   <SelectItem value="inactive">Inactiva</SelectItem>
                 </SelectContent>
               </Select>
@@ -466,12 +485,13 @@ export default function Quotations() {
                 <TableHead className="w-[85px] text-center text-[10px]">Envío</TableHead>
                 <TableHead className="w-[85px] text-[10px]">Validez</TableHead>
                 <TableHead className="w-[60px] text-center text-[10px]">Novedades</TableHead>
+                <TableHead className="w-[110px] text-center text-[10px]">Acciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredQuotes.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="text-center py-8 text-muted-foreground text-sm">
+                  <TableCell colSpan={11} className="text-center py-8 text-muted-foreground text-sm">
                     {quotes.length === 0 ? "No hay cotizaciones disponibles" : "No hay resultados para los filtros aplicados"}
                   </TableCell>
                 </TableRow>
@@ -493,7 +513,9 @@ export default function Quotations() {
                     <TableCell>
                       <div className="flex flex-col items-start gap-1">
                         <StatusBadge status={q.status} />
-                        {canUpdateQuotes && q.status !== "inactive" && (
+                        {canChangeQuoteStatus &&
+                          q.status !== "inactive" &&
+                          q.status !== "ordered" && (
                           <Button
                             size="sm"
                             variant="secondary"
@@ -526,6 +548,49 @@ export default function Quotations() {
                       <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-100 text-red-600">
                         <Bell className="h-3 w-3" />
                       </span>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {canCreateOrderFromQuote && q.status === "approved" && (
+                        <div className="flex flex-col items-center gap-1">
+                          <Button
+                            size="sm"
+                            variant="default"
+                            className="h-7 px-2 text-[10px] gap-1"
+                            onClick={() => {
+                              setQuoteForOrder(q);
+                              setOrderDialogOpen(true);
+                            }}
+                          >
+                            <ShoppingCart className="h-3 w-3" />
+                            Crear orden
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-5 px-1.5 text-[9px] text-muted-foreground"
+                            onClick={async () => {
+                              const result = await markQuoteAsOrdered(q.id);
+                              if (result.success) {
+                                toast({
+                                  title: "Cotización actualizada",
+                                  description: "Estado cambiado a Ordenado.",
+                                });
+                              } else {
+                                toast({
+                                  variant: "destructive",
+                                  title: "No se pudo marcar como Ordenado",
+                                  description: result.errorMessage || "Intenta de nuevo.",
+                                });
+                              }
+                            }}
+                          >
+                            Ya creé la orden → Ordenado
+                          </Button>
+                        </div>
+                      )}
+                      {q.status === "ordered" && (
+                        <span className="text-[10px] text-muted-foreground">Ya ordenada</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))
@@ -576,7 +641,6 @@ export default function Quotations() {
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
               Selecciona el nuevo estado para esta cotización.
-              {newStatus === "approved" && " Al aprobar, se creará automáticamente una orden."}
             </p>
 
             <Select
@@ -613,35 +677,23 @@ export default function Quotations() {
                     if (!statusResult.success) {
                       throw new Error(statusResult.errorMessage || "Error al actualizar el estado");
                     }
-                    if (newStatus === "approved") {
-                      const convertResult = await convertQuoteToOrder(selectedQuoteId);
 
-                      if (!convertResult.success) {
-                        throw new Error(convertResult.errorMessage || "Error al crear la orden");
-                      }
-
-                      toast({
-                        title: "✅ Orden creada",
-                        description: `Orden #${convertResult.data?.id.slice(-6)} generada correctamente`,
-                      });
-                    } else {
-                      const statusLabels: Record<string, string> = {
-                        rejected: "Descartado",
-                        in_review: "En Revisión",
-                        approved: "Aprobado",
-                      };
-                      toast({
-                        title: "✅ Estado actualizado",
-                        description: `Nuevo estado: ${statusLabels[newStatus] || newStatus}`,
-                      });
-                    }
+                    const statusLabels: Record<string, string> = {
+                      rejected: "Descartado",
+                      in_review: "En Revisión",
+                      approved: "Aprobado",
+                    };
+                    toast({
+                      title: "Estado actualizado",
+                      description: `Nuevo estado: ${statusLabels[newStatus] || newStatus}`,
+                    });
                     await fetchQuotes();
                     closeStatusModal();
                   } catch (err: any) {
                     const errorMessage = err?.message || "Error al actualizar el estado";
                     toast({
                       variant: "destructive",
-                      title: "❌ Error",
+                      title: "Error",
                       description: errorMessage,
                     });
                   } finally {
@@ -655,6 +707,31 @@ export default function Quotations() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <NewOrderDialog
+        open={orderDialogOpen}
+        onOpenChange={(open) => {
+          setOrderDialogOpen(open);
+          if (!open) setQuoteForOrder(null);
+        }}
+        initialClientId={quoteForOrder?.customerId}
+        initialIncome={quoteForOrder?.totalAmount}
+        initialDeliveryDate={quoteForOrder?.shippingDate}
+        quoteId={quoteForOrder?.id}
+        onOrderCreatedFromQuote={async (quoteId) => {
+          const result = await markQuoteAsOrdered(quoteId);
+          if (!result.success) {
+            throw new Error(result.errorMessage || "No se pudo marcar la cotización como Ordenado");
+          }
+        }}
+        onSuccess={(opts) => {
+          fetchQuotes();
+          // Solo ir a Órdenes si la cotización quedó marcada
+          if (!opts || opts.quoteMarked !== false) {
+            navigate("/orders");
+          }
+        }}
+      />
     </AppLayout>
   );
 }

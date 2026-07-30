@@ -54,7 +54,14 @@ interface UserOption {
 interface NewOrderDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
-    onSuccess: () => void;
+    onSuccess: (opts?: { quoteMarked?: boolean }) => void;
+    /** Prefill desde una cotización aprobada */
+    initialClientId?: string;
+    initialIncome?: number;
+    initialDeliveryDate?: string;
+    quoteId?: string;
+    /** Se llama tras crear la orden (antes de onSuccess) si venía de cotización */
+    onOrderCreatedFromQuote?: (quoteId: string) => Promise<void> | void;
 }
 
 const LOGO_POSITIONS = LOGO_POSITION_OPTIONS;
@@ -123,7 +130,16 @@ function StatCard({
     );
 }
 
-export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialogProps) {
+export function NewOrderDialog({
+    open,
+    onOpenChange,
+    onSuccess,
+    initialClientId,
+    initialIncome,
+    initialDeliveryDate,
+    quoteId,
+    onOrderCreatedFromQuote,
+}: NewOrderDialogProps) {
     const { createOrder, loading } = useOrders();
     const { lines, isLoading: loadingLines } = useGetProductLines();
 
@@ -143,14 +159,15 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
     const [logoPositions, setLogoPositions] = useState<LogoPositionKey[]>([]);
 
     const lockedProductId = productEntries[0]?.producto_id;
+    const fromQuote = Boolean(quoteId);
 
     const resetForm = () => {
-        setSelectedClient("");
+        setSelectedClient(initialClientId || "");
         setTakenBy("");
         setIsRepair(false);
         setProductEntries([]);
-        setIncomeRaw("");
-        setDeliveryDate("");
+        setIncomeRaw(initialIncome && initialIncome > 0 ? String(Math.round(initialIncome)) : "");
+        setDeliveryDate(initialDeliveryDate || "");
         setPaymentStatus("no_pagado");
         setOrderComments("");
         setLogoPositions([]);
@@ -194,6 +211,12 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
                         /* ignore */
                     }
                 }
+
+                if (initialClientId) setSelectedClient(initialClientId);
+                if (initialIncome && initialIncome > 0) {
+                    setIncomeRaw(String(Math.round(initialIncome)));
+                }
+                if (initialDeliveryDate) setDeliveryDate(initialDeliveryDate);
             } catch {
                 toast.error("No se pudieron cargar clientes.");
             } finally {
@@ -202,7 +225,7 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
         };
 
         loadCatalogs();
-    }, [open]);
+    }, [open, initialClientId, initialIncome, initialDeliveryDate]);
 
     const { totalQuantity, totalCost } = useMemo(() => {
         let qty = 0;
@@ -306,9 +329,31 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
 
         const { success, errorMessage } = await createOrder(payload);
         if (success) {
-            toast.success("Orden creada correctamente.");
-            onSuccess();
+            let quoteMarked = !fromQuote;
+            if (quoteId && onOrderCreatedFromQuote) {
+                try {
+                    await onOrderCreatedFromQuote(quoteId);
+                    quoteMarked = true;
+                } catch (err) {
+                    const msg =
+                        err instanceof Error
+                            ? err.message
+                            : "La orden se creó, pero no se pudo marcar la cotización como Ordenado.";
+                    toast.error(msg);
+                    quoteMarked = false;
+                }
+            }
+            if (fromQuote) {
+                toast.success(
+                    quoteMarked
+                        ? "Orden creada. Cotización marcada como Ordenado."
+                        : "Orden creada, pero la cotización sigue en Aprobada. Usa «Ya creé la orden → Ordenado»."
+                );
+            } else {
+                toast.success("Orden creada correctamente.");
+            }
             onOpenChange(false);
+            onSuccess(fromQuote ? { quoteMarked } : undefined);
         } else {
             toast.error(errorMessage || "No se pudo crear la orden. Verifica los datos ingresados.");
         }
@@ -325,9 +370,13 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
                                 <ClipboardList className="h-5 w-5" />
                             </div>
                             <div>
-                                <h2 className="text-lg font-bold tracking-tight">Nueva orden</h2>
+                                <h2 className="text-lg font-bold tracking-tight">
+                                    {fromQuote ? "Crear orden desde cotización" : "Nueva orden"}
+                                </h2>
                                 <p className="text-sm text-muted-foreground mt-0.5">
-                                    Selecciona productos del catálogo, define tallas, atributos y comentarios.
+                                    {fromQuote
+                                        ? "Completa productos, tallas y datos de la orden. Al guardar, la cotización pasará a Ordenado."
+                                        : "Selecciona productos del catálogo, define tallas, atributos y comentarios."}
                                 </p>
                             </div>
                         </div>
@@ -351,7 +400,11 @@ export function NewOrderDialog({ open, onOpenChange, onSuccess }: NewOrderDialog
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                         <div className="space-y-1.5">
                                             <Label className="text-xs font-medium">Cliente</Label>
-                                            <Select value={selectedClient} onValueChange={setSelectedClient}>
+                                            <Select
+                                                value={selectedClient}
+                                                onValueChange={setSelectedClient}
+                                                disabled={fromQuote && Boolean(initialClientId)}
+                                            >
                                                 <SelectTrigger className="h-10 bg-background">
                                                     <SelectValue placeholder="Selecciona cliente..." />
                                                 </SelectTrigger>
