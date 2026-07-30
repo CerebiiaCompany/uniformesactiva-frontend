@@ -41,10 +41,21 @@ export const endpoints = {
     },
     orders: {
         list: () => `${base()}/api/v1/orders/`,
+        detail: (orderId: string) => `${base()}/api/v1/orders/${orderId}/`,
         estado: (orderId: string) => `${base()}/api/v1/orders/${orderId}/estado/`,
         valorVenta: (orderId: string) => `${base()}/api/v1/orders/${orderId}/valor-venta/`,
         comentarios: (orderId: string) => `${base()}/api/v1/orders/${orderId}/comentarios/`,
+        pago: (orderId: string) => `${base()}/api/v1/orders/${orderId}/pago/`,
+        uploadLogo: () => `${base()}/api/v1/orders/upload-logo/`,
         logs: (orderId: string) => `${base()}/api/v1/orders/${orderId}/logs/`,
+        etapa: (orderId: string) => `${base()}/api/v1/orders/${orderId}/etapa/`,
+        etapas: (orderId: string) => `${base()}/api/v1/orders/${orderId}/etapas/`,
+        kanbanEtapas: () => `${base()}/api/v1/orders/kanban-etapas/`,
+        kanbanEtapa: (etapaId: string) => `${base()}/api/v1/orders/kanban-etapas/${etapaId}/`,
+        kanbanEtapasReorder: () => `${base()}/api/v1/orders/kanban-etapas/reorder/`,
+    },
+    dashboard: {
+        stats: () => `${base()}/api/v1/dashboard/`,
     },
     productos: {
         list: () => `${base()}/api/v1/products/productos/`,
@@ -57,6 +68,9 @@ export const endpoints = {
         status: (id: string) => `${base()}/api/v1/quotes/quotes/${id}/status/`,
         convert: (id: string) => `${base()}/api/v1/quotes/quotes/${id}/convert/`,
         markOrdered: (id: string) => `${base()}/api/v1/quotes/quotes/${id}/mark-ordered/`,
+        placeOrder: (id: string) => `${base()}/api/v1/quotes/quotes/${id}/place-order/`,
+        novedades: (id: string) => `${base()}/api/v1/quotes/quotes/${id}/novedades/`,
+        pago: (id: string) => `${base()}/api/v1/quotes/quotes/${id}/pago/`,
     },
     users: {
         list: () => `${base()}/api/v1/users/`,

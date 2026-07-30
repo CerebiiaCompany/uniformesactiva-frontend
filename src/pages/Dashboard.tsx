@@ -1,9 +1,10 @@
 import { AppLayout } from "@/components/AppLayout";
 import { StatCard } from "@/components/StatCard";
 import { StatusBadge } from "@/components/StatusBadge";
-import { dashboardStats, orders, productionOrders } from "@/data/mockData";
+import { useDashboard } from "@/hooks/useDashboard";
+import type { StatusType } from "@/components/StatusBadge";
 import {
-  ShoppingCart,
+  Scissors,
   AlertTriangle,
   Clock,
   DollarSign,
@@ -11,43 +12,87 @@ import {
   Percent,
   FileText,
   Users,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatCurrency } from "@/lib/format-number";
+
+function asStatus(value: string): StatusType {
+  return value as StatusType;
+}
 
 export default function Dashboard() {
-  const recentOrders = orders.slice(0, 5);
-  const delayedProduction = productionOrders.filter((po) => po.isDelayed);
+  const { loading, error, stats, trends, recentOrders, alerts } = useDashboard();
+
+  if (loading && !stats) {
+    return (
+      <AppLayout title="Dashboard" subtitle="Resumen general de operaciones">
+        <div className="flex flex-col items-center justify-center py-20 gap-2">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Cargando indicadores...</p>
+        </div>
+      </AppLayout>
+    );
+  }
+
+  if (error && !stats) {
+    return (
+      <AppLayout title="Dashboard" subtitle="Resumen general de operaciones">
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6 text-center">
+          <p className="text-sm font-medium text-destructive">{error}</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Verifica que el backend esté activo y el endpoint /api/v1/dashboard/.
+          </p>
+        </div>
+      </AppLayout>
+    );
+  }
+
+  const s = stats!;
 
   return (
     <AppLayout title="Dashboard" subtitle="Resumen general de operaciones">
       <div className="space-y-6">
-        {/* KPI Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
-            title="Órdenes en progreso"
-            value={dashboardStats.ordersInProgress}
-            icon={ShoppingCart}
-            trend={{ value: 12, positive: true }}
+            title="Órdenes en proceso"
+            value={s.ordersInProgress}
+            subtitle="En producción"
+            icon={Scissors}
+            trend={
+              trends?.ordersInProgressPct != null
+                ? {
+                    value: Math.abs(trends.ordersInProgressPct),
+                    positive: trends.ordersInProgressPct >= 0,
+                  }
+                : undefined
+            }
             variant="default"
           />
           <StatCard
             title="Órdenes retrasadas"
-            value={dashboardStats.delayedOrders}
+            value={s.delayedOrders}
             icon={AlertTriangle}
             variant="destructive"
           />
           <StatCard
             title="Tiempo prom. entrega"
-            value={`${dashboardStats.avgDeliveryDays} días`}
+            value={s.avgDeliveryDays}
+            suffix=" días"
+            subtitle="Según fecha estimada"
             icon={Clock}
-            trend={{ value: 5, positive: true }}
             variant="default"
           />
           <StatCard
             title="Margen promedio"
-            value={`${dashboardStats.avgMargin}%`}
+            value={s.avgMargin}
+            formatValue={(n) =>
+              Number.isInteger(n) || Math.abs(n - Math.round(n)) < 0.05
+                ? String(Math.round(n))
+                : n.toFixed(1)
+            }
+            suffix="%"
             icon={Percent}
-            trend={{ value: 2.1, positive: true }}
             variant="success"
           />
         </div>
@@ -55,59 +100,81 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             title="Ingresos del mes"
-            value={`$${(dashboardStats.monthlyRevenue / 1000).toFixed(0)}K`}
-            subtitle="MXN"
+            value={s.monthlyRevenue}
+            formatValue={(n) => `$${formatCurrency(Math.round(n))}`}
+            subtitle="Pagado + abonos parciales"
             icon={DollarSign}
-            trend={{ value: 18, positive: true }}
+            trend={
+              trends?.monthlyRevenuePct != null
+                ? {
+                    value: Math.abs(trends.monthlyRevenuePct),
+                    positive: trends.monthlyRevenuePct >= 0,
+                  }
+                : undefined
+            }
             variant="accent"
           />
           <StatCard
             title="Ganancia del mes"
-            value={`$${(dashboardStats.monthlyProfit / 1000).toFixed(0)}K`}
-            subtitle="MXN"
+            value={s.monthlyProfit}
+            formatValue={(n) => `$${formatCurrency(Math.round(n))}`}
+            subtitle="Órdenes creadas este mes"
             icon={TrendingUp}
             variant="success"
           />
           <StatCard
             title="Cotizaciones pendientes"
-            value={dashboardStats.quotationsPending}
+            value={s.quotationsPending}
             icon={FileText}
             variant="warning"
           />
           <StatCard
             title="Clientes activos"
-            value={dashboardStats.customersActive}
+            value={s.customersActive}
             icon={Users}
             variant="default"
           />
         </div>
 
-        {/* Bottom row */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Recent Orders */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-semibold">Órdenes recientes</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
-              <div className="divide-y divide-border">
-                {recentOrders.map((order) => (
-                  <div key={order.id} className="flex items-center justify-between px-6 py-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">{order.id}</p>
-                      <p className="text-xs text-muted-foreground truncate">{order.customerName} · {order.items}</p>
+              {recentOrders.length === 0 ? (
+                <p className="px-6 py-8 text-sm text-muted-foreground">
+                  No hay órdenes registradas.
+                </p>
+              ) : (
+                <div className="divide-y divide-border">
+                  {recentOrders.map((order) => (
+                    <div
+                      key={order.id}
+                      className="flex items-center justify-between px-6 py-3 gap-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">
+                          {order.shortId}
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {order.clienteNombre}
+                          {order.productoNombre ? ` · ${order.productoNombre}` : ""}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-sm font-semibold text-foreground tabular-nums">
+                          ${formatCurrency(order.valorVenta)}
+                        </span>
+                        <StatusBadge status={asStatus(order.estado)} />
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className="text-sm font-semibold text-foreground">${order.revenue.toLocaleString()}</span>
-                      <StatusBadge status={order.status} />
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 
-          {/* Delayed Alerts */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -116,21 +183,31 @@ export default function Dashboard() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {delayedProduction.length === 0 ? (
+              {alerts.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No hay alertas activas</p>
               ) : (
                 <div className="space-y-3">
-                  {delayedProduction.map((po) => (
-                    <div key={po.id} className="flex items-start gap-3 p-3 rounded-lg bg-destructive/5 border border-destructive/10">
+                  {alerts.map((alert) => (
+                    <div
+                      key={alert.id}
+                      className="flex items-start gap-3 p-3 rounded-lg bg-destructive/5 border border-destructive/10"
+                    >
                       <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-foreground">{po.orderId} — {po.customerName}</p>
-                        <p className="text-xs text-muted-foreground">{po.items}</p>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-foreground">
+                          {alert.shortId} — {alert.clienteNombre}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {alert.productoNombre || "Sin producto"}
+                        </p>
                         <p className="text-xs text-destructive mt-1">
-                          {po.daysInStage} días en etapa "{po.stage}" · Vence: {po.dueDate}
+                          {alert.daysLate} día{alert.daysLate === 1 ? "" : "s"} de atraso
+                          {alert.fechaEstimadaEntrega
+                            ? ` · Vence: ${alert.fechaEstimadaEntrega}`
+                            : ""}
                         </p>
                       </div>
-                      <StatusBadge status={po.stage} />
+                      <StatusBadge status={asStatus(alert.estado)} />
                     </div>
                   ))}
                 </div>

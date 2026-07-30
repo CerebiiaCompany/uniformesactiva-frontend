@@ -12,6 +12,7 @@ export interface CreateInsumoTipoPayload {
     proveedor_marca?: string;
     color?: string;
     stock_minimo?: number | null;
+    stock_inicial?: number | null;
 }
 
 export interface InsumoTipoResponse {
@@ -24,6 +25,7 @@ export interface InsumoTipoResponse {
     proveedor_marca?: string;
     color?: string;
     stock_minimo?: number | string | null;
+    stock_inicial?: number | string | null;
 }
 
 export function useCreateInsumoTipo() {
@@ -57,12 +59,19 @@ export function useCreateInsumoTipo() {
                 body.stock_minimo = null;
             }
 
+            if (payload.stock_inicial != null && !Number.isNaN(payload.stock_inicial)) {
+                body.stock_inicial = Number(payload.stock_inicial).toFixed(2);
+            } else {
+                body.stock_inicial = null;
+            }
+
             const data = await http<InsumoTipoResponse>(endpoints.costos.tiposInsumo(), {
                 method: "POST",
                 body: JSON.stringify(body),
             });
 
             await queryClient.invalidateQueries({ queryKey: ["cost-catalog", "tipos-insumo"] });
+            await queryClient.invalidateQueries({ queryKey: ["materials"] });
             return { success: true as const, data };
         } catch (err: any) {
             const message = err.message || "Error al crear el tipo de insumo.";
