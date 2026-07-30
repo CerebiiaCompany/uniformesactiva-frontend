@@ -1,6 +1,9 @@
+import { clearAuthSession } from "@/lib/auth-session";
+
 type UnauthorizedHandler = () => void;
 
 let unauthorizedHandler: UnauthorizedHandler | null = null;
+let redirectInProgress = false;
 
 export function registerUnauthorizedHandler(handler: UnauthorizedHandler): () => void {
     unauthorizedHandler = handler;
@@ -11,15 +14,26 @@ export function registerUnauthorizedHandler(handler: UnauthorizedHandler): () =>
     };
 }
 
+/** Limpia la sesión y redirige al login una sola vez (evita carreras por varios 401). */
 export function clearSessionAndRedirectToLogin(): void {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
+    if (redirectInProgress) return;
+    redirectInProgress = true;
 
-    if (unauthorizedHandler) {
-        unauthorizedHandler();
-        return;
+    clearAuthSession();
+
+    try {
+        if (unauthorizedHandler) {
+            unauthorizedHandler();
+            return;
+        }
+    } catch (error) {
+        console.error("Error al redirigir al login:", error);
     }
 
-    // Fallback: "/" siempre existe en Vercel; evita 404 si /login no tiene rewrite aún.
-    window.location.replace("/");
+    // Fallback hard navigation si el binder de React Router no está montado.
+    window.location.replace("/login");
+}
+
+export function resetAuthRedirectGuard(): void {
+    redirectInProgress = false;
 }

@@ -1,4 +1,5 @@
 import { clearSessionAndRedirectToLogin } from "@/lib/auth-redirect";
+import { getStoredAccessToken, isAccessTokenExpired } from "@/lib/auth-session";
 
 export class HttpError extends Error {
     status: number;
@@ -7,6 +8,14 @@ export class HttpError extends Error {
         super(message);
         this.name = "HttpError";
         this.status = status;
+    }
+}
+
+/** Error de sesión inválida/expirada; las UIs deben ignorarlo (ya se redirige al login). */
+export class UnauthorizedError extends Error {
+    constructor(message = "Unauthorized") {
+        super(message);
+        this.name = "UnauthorizedError";
     }
 }
 
@@ -40,10 +49,17 @@ function parseErrorMessage(errorData: Record<string, unknown>, status: number, s
 }
 
 export async function http<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
-    const token = localStorage.getItem("token");
+    const token = getStoredAccessToken();
+
+    if (token && isAccessTokenExpired(token)) {
+        clearSessionAndRedirectToLogin();
+        throw new UnauthorizedError("Sesión expirada");
+    }
 
     const headers = new Headers(init?.headers || {});
-    headers.set("Content-Type", "application/json");
+    if (!headers.has("Content-Type") && !(init?.body instanceof FormData)) {
+        headers.set("Content-Type", "application/json");
+    }
 
     if (token) {
         headers.set("Authorization", `Bearer ${token}`);
@@ -53,13 +69,14 @@ export async function http<T>(input: RequestInfo, init?: RequestInit): Promise<T
 
     if (response.status === 401) {
         clearSessionAndRedirectToLogin();
-        throw new Error("Unauthorized");
+        throw new UnauthorizedError();
     }
+
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new HttpError(
             parseErrorMessage(errorData as Record<string, unknown>, response.status, response.statusText),
-            response.status
+            response.status,
         );
     }
 

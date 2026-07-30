@@ -4,6 +4,8 @@ import { toast } from "sonner";
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ChevronLeft, Plus, Loader2 } from "lucide-react";
 
 import { useGetProductDetail } from "@/hooks/useGetProductDetail";
@@ -17,7 +19,9 @@ import { useGetCostSummary } from "@/hooks/useGetCostSummary";
 import { useFabricCosts } from "@/hooks/useFabricCost";
 import { useSupplyCosts } from "@/hooks/useSupplyCosts";
 import { useLaborCosts } from "@/hooks/useLaborCosts";
+import { useSizeConsumption } from "@/hooks/useSizeConsumption";
 import { useCreateProveedor } from "@/hooks/useCreateProveedor";
+import { useCreateInsumoTipo } from "@/hooks/useCreateInsumoTipo";
 import { useCreateVariant } from "@/hooks/useCreateVariant";
 
 import { FabricCostsTable } from "@/components/variant-cost/FabricCostsTable";
@@ -29,6 +33,7 @@ import { ModalForm, FieldDefinition } from "@/components/ui/ModalForm";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { formatCurrency, formatDecimal, formatForInput } from "@/lib/format-number";
 import type { UpdateLaborPayload, UpdateSupplyPayload } from "@/types/variant";
+import { cn } from "@/lib/utils";
 
 const resolveTallaId = (value: string) => (value ? value : null);
 
@@ -40,6 +45,7 @@ type ModalType =
     | "labor"
     | "edit_labor"
     | "new_proveedor"
+    | "new_insumo_tipo"
     | "";
 
 export default function VariantCostPage() {
@@ -50,14 +56,17 @@ export default function VariantCostPage() {
 
     const { product, isLoading: isProductLoading } = useGetProductDetail(productId);
     const { variants, isLoading: isVariantsLoading, refetch: refetchVariants } = useGetVariants(productId);
-    const { sizes, supplyTypes, laborPhases, proveedores, refetchProveedores } = useGetCostCatalogs();
+    const { sizes, supplyTypes, laborPhases, proveedores, refetchProveedores, refetchSupplyTypes } =
+        useGetCostCatalogs();
     const { createProveedor } = useCreateProveedor();
+    const { createInsumoTipo } = useCreateInsumoTipo();
 
     const { createVariant } = useCreateVariant();
     const { addFabric, updateFabric, deleteFabric, setFabricPrincipal, loading: isFabricLoading } =
         useFabricCosts();
     const { addSupply, updateSupply, deleteSupply } = useSupplyCosts();
     const { addLabor, updateLabor, deleteLabor } = useLaborCosts();
+    const { updateSizeConsumption, loading: isSalePriceSaving } = useSizeConsumption();
 
     const activeVariantId = variantId ?? "";
     const hasActiveVariant = !!variantId;
@@ -68,6 +77,7 @@ export default function VariantCostPage() {
     const { data: supplies } = useGetSupplyCosts(activeVariantId);
     const { data: summary, isLoading: isSummaryLoading } = useGetCostSummary(activeVariantId);
     const [selectedCostSizeId, setSelectedCostSizeId] = useState<string>("");
+    const [salePriceInput, setSalePriceInput] = useState("");
 
     useEffect(() => {
         setSelectedCostSizeId("");
@@ -97,6 +107,73 @@ export default function VariantCostPage() {
         selectedSizeCost?.talla_nombre ||
         sizes.find((s) => s.id === selectedCostSizeId)?.label ||
         sizes.find((s) => s.id === selectedCostSizeId)?.name;
+
+    const selectedSizeConsumptionId = useMemo(
+        () => sizeCons?.find((rec) => rec.size_id === selectedCostSizeId)?.id,
+        [sizeCons, selectedCostSizeId]
+    );
+
+    const parsedSalePrice = useMemo(() => {
+        const normalized = salePriceInput.replace(/\./g, "").replace(",", ".").trim();
+        if (!normalized) return null;
+        const value = Number(normalized);
+        return Number.isFinite(value) && value > 0 ? value : null;
+    }, [salePriceInput]);
+
+    const gananciaPreview = useMemo(() => {
+        if (parsedSalePrice == null) return null;
+        return parsedSalePrice - overallTotal;
+    }, [parsedSalePrice, overallTotal]);
+
+    useEffect(() => {
+        const stored = selectedSizeCost?.precio_venta;
+        if (stored == null || stored === "") {
+            setSalePriceInput("");
+            return;
+        }
+        setSalePriceInput(formatForInput(stored));
+    }, [selectedCostSizeId, selectedSizeCost?.precio_venta]);
+
+    const handleSaveSalePrice = async () => {
+        if (!activeVariantId || !selectedSizeConsumptionId) {
+            if (salePriceInput.trim()) {
+                toast.error("Configura el consumo de la talla antes de guardar el precio de venta.");
+            }
+            return;
+        }
+
+        const stored = selectedSizeCost?.precio_venta;
+        const storedNum =
+            stored == null || stored === "" ? null : Number(String(stored).replace(",", "."));
+        const nextValue = parsedSalePrice;
+
+        if (nextValue == null && !salePriceInput.trim()) {
+            if (storedNum == null) return;
+            const ok = await updateSizeConsumption(
+                selectedSizeConsumptionId,
+                { precio_venta: null },
+                activeVariantId
+            );
+            if (ok) toast.success("Precio de venta eliminado");
+            else toast.error("No se pudo actualizar el precio de venta");
+            return;
+        }
+
+        if (nextValue == null) {
+            toast.error("Ingresa un precio de venta válido.");
+            return;
+        }
+
+        if (storedNum != null && Math.abs(storedNum - nextValue) < 0.001) return;
+
+        const ok = await updateSizeConsumption(
+            selectedSizeConsumptionId,
+            { precio_venta: nextValue },
+            activeVariantId
+        );
+        if (ok) toast.success("Precio de venta guardado");
+        else toast.error("No se pudo guardar el precio de venta");
+    };
 
     const [modalConfig, setModalConfig] = useState<{
         isOpen: boolean;
@@ -244,6 +321,25 @@ export default function VariantCostPage() {
                 } else {
                     toast.error(result.error || "No se pudo crear el proveedor");
                 }
+            } else if (modalConfig.type === "new_insumo_tipo") {
+                const result = await createInsumoTipo({
+                    name: data.name,
+                    categoria: data.categoria,
+                    unidad_medida: data.unidad_medida,
+                    precio_unitario_default: data.precio_unitario_default
+                        ? Number(data.precio_unitario_default)
+                        : null,
+                    codigo_sku: data.codigo_sku,
+                    proveedor_marca: data.proveedor_marca,
+                    color: data.color,
+                    stock_minimo: data.stock_minimo ? Number(data.stock_minimo) : null,
+                });
+                if (result.success) {
+                    toast.success("Tipo de insumo creado");
+                    await refetchSupplyTypes();
+                } else {
+                    toast.error(result.error || "No se pudo crear el tipo de insumo");
+                }
             }
         } finally {
             setModalConfig((prev) => ({ ...prev, isOpen: false }));
@@ -253,7 +349,84 @@ export default function VariantCostPage() {
     const supplyTypeOptions = supplyTypes.map((t) => ({
         value: t.id,
         label: t.label || t.name,
+        defaultUnitPrice: t.precio_unitario_default ?? null,
     }));
+
+    const insumoCategoriaOptions = [
+        { value: "Botonería", label: "Botonería" },
+        { value: "Cierres/Cremalleras", label: "Cierres/Cremalleras" },
+        { value: "Hilos", label: "Hilos" },
+        { value: "Marroquinería/Herrajes", label: "Marroquinería/Herrajes" },
+        { value: "Etiquetas/Empaque", label: "Etiquetas/Empaque" },
+        { value: "Interlon/Entretelas", label: "Interlon/Entretelas" },
+        { value: "Otros", label: "Otros" },
+    ];
+
+    const unidadMedidaOptions = [
+        { value: "Unidad", label: "Unidad (piezas/botones)" },
+        { value: "Metros", label: "Metros" },
+        { value: "Conos", label: "Conos" },
+        { value: "Yardas", label: "Yardas" },
+        { value: "Centímetros cuadrados", label: "Centímetros cuadrados" },
+        { value: "Pliegos", label: "Pliegos" },
+        { value: "Gramos", label: "Gramos" },
+        { value: "Kilos", label: "Kilos" },
+    ];
+
+    const newInsumoTipoFields: FieldDefinition[] = [
+        {
+            name: "name",
+            label: "Nombre del insumo *",
+            type: "text",
+            placeholder: "Ej. Botón de pasta",
+        },
+        {
+            name: "categoria",
+            label: "Categoría / Clasificación *",
+            type: "select",
+            options: insumoCategoriaOptions,
+        },
+        {
+            name: "unidad_medida",
+            label: "Unidad de medida *",
+            type: "select",
+            options: unidadMedidaOptions,
+        },
+        {
+            name: "precio_unitario_default",
+            label: "Precio unitario predeterminado *",
+            type: "number",
+            placeholder: "Ej. 3500 o 12,50",
+        },
+        {
+            name: "codigo_sku",
+            label: "Código SKU / Referencia",
+            type: "text",
+            placeholder: "Ej. INS-BOT-001",
+            required: false,
+        },
+        {
+            name: "proveedor_marca",
+            label: "Proveedor / Marca habitual",
+            type: "text",
+            placeholder: "Ej. YKK, Coats Cadena",
+            required: false,
+        },
+        {
+            name: "color",
+            label: "Color / Tono",
+            type: "text",
+            placeholder: "Ej. Negro, Níquel",
+            required: false,
+        },
+        {
+            name: "stock_minimo",
+            label: "Stock mínimo / Punto de reorden",
+            type: "number",
+            placeholder: "100",
+            required: false,
+        },
+    ];
 
     const laborPhaseOptions = laborPhases.map((f) => ({
         value: f.id,
@@ -413,14 +586,49 @@ export default function VariantCostPage() {
                             </div>
                             <div className="lg:col-span-1">
                                 <Card className="h-full">
-                                    <CardHeader>
-                                        <CardTitle className="text-sm font-bold">Resumen de costos</CardTitle>
-                                        {selectedSizeName && (
-                                            <p className="text-xs text-muted-foreground mt-1">
-                                                Talla {selectedSizeName}
-                                                {!selectedSizeCost && " — sin consumo configurado"}
-                                            </p>
-                                        )}
+                                    <CardHeader className="space-y-3">
+                                        <div className="space-y-1.5">
+                                            <Label htmlFor="costo-venta" className="text-xs text-muted-foreground">
+                                                Precio de venta (opcional)
+                                            </Label>
+                                            <div className="relative">
+                                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                                                    $
+                                                </span>
+                                                <Input
+                                                    id="costo-venta"
+                                                    type="text"
+                                                    inputMode="decimal"
+                                                    placeholder="Ej. 65000"
+                                                    value={salePriceInput}
+                                                    onChange={(e) => {
+                                                        const raw = e.target.value.replace(/[^\d.,]/g, "");
+                                                        setSalePriceInput(raw);
+                                                    }}
+                                                    onBlur={handleSaveSalePrice}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === "Enter") {
+                                                            e.currentTarget.blur();
+                                                        }
+                                                    }}
+                                                    disabled={
+                                                        isSalePriceSaving ||
+                                                        !selectedSizeCost ||
+                                                        !selectedSizeConsumptionId
+                                                    }
+                                                    className="pl-7"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <CardTitle className="text-sm font-bold">Resumen de costos</CardTitle>
+                                            {selectedSizeName && (
+                                                <p className="text-xs text-muted-foreground mt-1">
+                                                    Talla {selectedSizeName}
+                                                    {!selectedSizeCost && " — sin consumo configurado"}
+                                                </p>
+                                            )}
+                                        </div>
                                     </CardHeader>
                                     <CardContent className="space-y-4 text-sm">
                                         {isSummaryLoading && !summary ? (
@@ -455,6 +663,28 @@ export default function VariantCostPage() {
                                                     <span>Mano de obra</span>
                                                     <span>${formatCurrency(laborTotal)}</span>
                                                 </div>
+                                                {selectedSizeCost &&
+                                                    (supplies?.length || labor?.length) &&
+                                                    suppliesTotal === 0 &&
+                                                    laborTotal === 0 && (
+                                                        <p className="text-[11px] text-muted-foreground leading-snug">
+                                                            Hay líneas de insumos/mano de obra, pero ninguna aplica a
+                                                            esta talla. Usa &quot;Todas las tallas&quot; o la misma
+                                                            talla del resumen.
+                                                        </p>
+                                                    )}
+                                                {gananciaPreview != null && (
+                                                    <div className="flex justify-between font-medium text-green-600">
+                                                        <span>Ganancias</span>
+                                                        <span
+                                                            className={cn(
+                                                                gananciaPreview < 0 && "text-red-600"
+                                                            )}
+                                                        >
+                                                            ${formatCurrency(gananciaPreview)}
+                                                        </span>
+                                                    </div>
+                                                )}
                                                 <div className="border-t pt-2 font-bold flex justify-between text-base">
                                                     <span>
                                                         {selectedSizeCost ? "Costo talla" : "Costo base (promedio)"}
@@ -499,27 +729,42 @@ export default function VariantCostPage() {
                                 if (ok) toast.success("Costo de tela eliminado");
                                 else toast.error("No se pudo eliminar el costo de tela");
                             }}
-                            onCreateProveedor={() =>
-                                handleOpenModal("new_proveedor", "Nuevo proveedor", [
-                                    { name: "name", label: "Nombre del proveedor", type: "text", placeholder: "Textil del Norte" },
-                                ])
-                            }
                         />
 
                         <SuppliesTable
                             data={supplies || []}
+                            onCreateTipo={() =>
+                                handleOpenModal(
+                                    "new_insumo_tipo",
+                                    "Crear tipo de insumo",
+                                    newInsumoTipoFields
+                                )
+                            }
                             onAdd={() =>
-                                handleOpenModal("supply", "Nuevo insumo", [
+                                handleOpenModal(
+                                    "supply",
+                                    "Nuevo insumo",
+                                    [
+                                        {
+                                            name: "tipo_id",
+                                            label: "Tipo de insumo",
+                                            type: "select",
+                                            options: supplyTypeOptions,
+                                        },
+                                        supplyTallaField,
+                                        { name: "quantity", label: "Cantidad", type: "number", placeholder: "8" },
+                                        {
+                                            name: "unit_price",
+                                            label: "Precio unitario",
+                                            type: "number",
+                                            placeholder: "Ej. 3500 o 12,50",
+                                        },
+                                    ],
                                     {
-                                        name: "tipo_id",
-                                        label: "Tipo de insumo",
-                                        type: "select",
-                                        options: supplyTypeOptions,
-                                    },
-                                    supplyTallaField,
-                                    { name: "quantity", label: "Cantidad", type: "number", placeholder: "8" },
-                                    { name: "unit_price", label: "Precio unitario", type: "number", placeholder: "3500" },
-                                ])
+                                        // Por defecto: talla del resumen activo, o compartido.
+                                        talla_id: selectedCostSizeId || "",
+                                    }
+                                )
                             }
                             onEdit={(item) =>
                                 handleOpenModal(
@@ -551,17 +796,29 @@ export default function VariantCostPage() {
                         <LaborCostsTable
                             data={labor || []}
                             onAdd={() =>
-                                handleOpenModal("labor", "Nueva fase de mano de obra", [
+                                handleOpenModal(
+                                    "labor",
+                                    "Nueva fase de mano de obra",
+                                    [
+                                        {
+                                            name: "fase_id",
+                                            label: "Fase",
+                                            type: "select",
+                                            options: laborPhaseOptions,
+                                        },
+                                        laborTallaField,
+                                        { name: "cantidad", label: "Cantidad", type: "number", placeholder: "1" },
+                                        {
+                                            name: "unit_price",
+                                            label: "Precio unitario",
+                                            type: "number",
+                                            placeholder: "25000",
+                                        },
+                                    ],
                                     {
-                                        name: "fase_id",
-                                        label: "Fase",
-                                        type: "select",
-                                        options: laborPhaseOptions,
-                                    },
-                                    laborTallaField,
-                                    { name: "cantidad", label: "Cantidad", type: "number", placeholder: "1" },
-                                    { name: "unit_price", label: "Precio unitario", type: "number", placeholder: "25000" },
-                                ])
+                                        talla_id: selectedCostSizeId || "",
+                                    }
+                                )
                             }
                             onEdit={(item) =>
                                 handleOpenModal(

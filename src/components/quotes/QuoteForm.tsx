@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
@@ -18,7 +19,7 @@ export interface QuoteFormValues {
     customerName: string;  // Nombre del cliente (para mostrar en la tabla)
     items: string;
     totalAmount: number;
-    status: "draft" | "sent" | "approved" | "rejected";
+    status: "draft" | "sent" | "approved" | "rejected" | "in_review" | "ordered" | "inactive";
     validUntil: string;
     // Nuevos campos
     takenBy?: string;
@@ -32,6 +33,18 @@ interface Props {
     onCancel: () => void;
 }
 
+function getLoggedInUserDisplayName(): string {
+    try {
+        const raw = localStorage.getItem("user");
+        if (!raw) return "";
+        const user = JSON.parse(raw);
+        const fullName = `${user.first_name || ""} ${user.last_name || ""}`.trim();
+        return fullName || user.username || "";
+    } catch {
+        return "";
+    }
+}
+
 export default function QuoteForm({ initialData, onSubmit, onCancel }: Props) {
     const { clients, isLoading: loadingClients } = useGetClients(1, 100);
 
@@ -42,11 +55,10 @@ export default function QuoteForm({ initialData, onSubmit, onCancel }: Props) {
         totalAmount: 0,
         status: "draft",
         validUntil: new Date().toISOString().split("T")[0],
-        // Nuevos campos
-        takenBy: "",
         probability: 0,
         shippingDate: "",
         ...initialData,
+        takenBy: initialData?.takenBy?.trim() || getLoggedInUserDisplayName(),
     });
 
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -78,6 +90,13 @@ export default function QuoteForm({ initialData, onSubmit, onCancel }: Props) {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!values.clientId) {
+            return;
+        }
+        if (!values.totalAmount || Number(values.totalAmount) <= 0) {
+            toast.error("El monto total debe ser mayor a 0.");
+            return;
+        }
         setIsSubmitting(true);
         try {
             await onSubmit(values);
@@ -147,10 +166,13 @@ export default function QuoteForm({ initialData, onSubmit, onCancel }: Props) {
                 <Label htmlFor="takenBy">Tomada por</Label>
                 <Input
                     id="takenBy"
-                    placeholder="Nombre de quien tomó la cotización"
+                    readOnly
+                    tabIndex={-1}
+                    placeholder="Usuario logueado"
                     value={values.takenBy || ""}
-                    onChange={handleChange("takenBy")}
+                    className="bg-muted/40 cursor-default"
                 />
+                <p className="text-xs text-muted-foreground">Se asigna automáticamente al usuario en sesión</p>
             </div>
 
             {/* Probabilidad */}
@@ -181,20 +203,35 @@ export default function QuoteForm({ initialData, onSubmit, onCancel }: Props) {
             {/* Estado */}
             <div className="space-y-2">
                 <Label htmlFor="status">Estado</Label>
-                <Select
-                    value={values.status}
-                    onValueChange={handleStatusChange}
-                >
-                    <SelectTrigger id="status">
-                        <SelectValue placeholder="Seleccionar estado" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="draft">Borrador</SelectItem>
-                        <SelectItem value="sent">Enviada</SelectItem>
-                        <SelectItem value="approved">Aprobada</SelectItem>
-                        <SelectItem value="rejected">Rechazada</SelectItem>
-                    </SelectContent>
-                </Select>
+                {values.status === "ordered" ? (
+                    <>
+                        <Input
+                            id="status"
+                            readOnly
+                            value="Ordenado"
+                            className="bg-muted/40 cursor-default"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                            Este estado se asigna automáticamente al crear la orden desde cotizaciones.
+                        </p>
+                    </>
+                ) : (
+                    <Select
+                        value={values.status}
+                        onValueChange={handleStatusChange}
+                    >
+                        <SelectTrigger id="status">
+                            <SelectValue placeholder="Seleccionar estado" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="draft">Borrador</SelectItem>
+                            <SelectItem value="sent">Enviada</SelectItem>
+                            <SelectItem value="in_review">En revisión</SelectItem>
+                            <SelectItem value="approved">Aprobada</SelectItem>
+                            <SelectItem value="rejected">Rechazada</SelectItem>
+                        </SelectContent>
+                    </Select>
+                )}
             </div>
 
             {/* Válida hasta */}

@@ -7,6 +7,7 @@ import { formatCurrency, formatQuantity } from "@/lib/format-number";
 interface SuppliesTableProps {
     data: SupplyRecord[];
     onAdd: () => void;
+    onCreateTipo?: () => void;
     onEdit: (supply: SupplyRecord) => void;
     onDelete: (id: string) => void;
 }
@@ -17,14 +18,21 @@ const formatTalla = (item: Pick<SupplyRecord, "talla_nombre" | "talla_id">) => {
     return "Todas las tallas (compartido)";
 };
 
-export function SuppliesTable({ data, onAdd, onEdit, onDelete }: SuppliesTableProps) {
+export function SuppliesTable({ data, onAdd, onCreateTipo, onEdit, onDelete }: SuppliesTableProps) {
     return (
         <Card className="w-full">
-            <CardHeader className="flex flex-row items-center justify-between py-4">
+            <CardHeader className="flex flex-row items-center justify-between py-4 gap-3">
                 <CardTitle className="text-sm font-bold">Insumos</CardTitle>
-                <Button variant="outline" size="sm" onClick={onAdd}>
-                    <Plus className="h-3 w-3 mr-1" /> Añadir
-                </Button>
+                <div className="flex items-center gap-2 shrink-0">
+                    {onCreateTipo && (
+                        <Button variant="ghost" size="sm" onClick={onCreateTipo}>
+                            <Plus className="h-3 w-3 mr-1" /> Tipo de insumo
+                        </Button>
+                    )}
+                    <Button variant="outline" size="sm" onClick={onAdd}>
+                        <Plus className="h-3 w-3 mr-1" /> Añadir
+                    </Button>
+                </div>
             </CardHeader>
             <CardContent>
                 {data.length > 0 ? (

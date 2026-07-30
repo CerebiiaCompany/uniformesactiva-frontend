@@ -213,9 +213,9 @@ export function AppSidebar() {
     localStorage.removeItem("user");
     toast({
       title: "Sesión Finalizada",
-      description: "Has salido de FlowTextil correctamente.",
+      description: "Has salido de Uniformes Activa correctamente.",
     });
-    navigate("/", { replace: true });
+    navigate("/login", { replace: true });
   };
 
   return (

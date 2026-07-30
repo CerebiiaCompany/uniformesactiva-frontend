@@ -8,7 +8,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatCurrency } from "@/lib/format-number";
+import { formatForInput } from "@/lib/format-number";
+import { normalizeDecimalInput } from "@/lib/decimal-input";
 
 export interface FieldDefinition {
     name: string;
@@ -18,7 +19,7 @@ export interface FieldDefinition {
     defaultValue?: string | number;
     step?: string;
     inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
-    options?: { value: string; label: string }[];
+    options?: { value: string; label: string; defaultUnitPrice?: string | number | null }[];
     required?: boolean;
 }
 
@@ -32,33 +33,82 @@ interface ModalFormProps {
     initialData?: Record<string, any>;
 }
 
+const DECIMAL_PRICE_FIELDS = new Set([
+    "unit_price",
+    "precio_unitario_default",
+    "stock_minimo",
+    "quantity",
+    "cantidad",
+    "price_per_meter",
+    "meters",
+]);
+
+const sanitizeDecimalTyping = (value: string) => {
+    // Permite dígitos y un solo separador decimal (, o .)
+    let cleaned = value.replace(/[^\d.,]/g, "");
+    const sepIndex = Math.max(cleaned.lastIndexOf(","), cleaned.lastIndexOf("."));
+    if (sepIndex >= 0) {
+        const intPart = cleaned.slice(0, sepIndex).replace(/[.,]/g, "");
+        const decPart = cleaned.slice(sepIndex + 1).replace(/[.,]/g, "");
+        const sep = cleaned[sepIndex];
+        cleaned = decPart.length > 0 || cleaned.endsWith(",") || cleaned.endsWith(".")
+            ? `${intPart}${sep}${decPart}`
+            : intPart + sep;
+    }
+    return cleaned;
+};
+
+const toInputDecimal = (value: string | number | null | undefined) => {
+    if (value == null || value === "") return "";
+    return formatForInput(value);
+};
+
 export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading, initialData }: ModalFormProps) {
     const [formData, setFormData] = useState<Record<string, string>>({});
 
-    // Inicializar el estado cuando el modal se abre
     useEffect(() => {
         if (isOpen) {
             const initial: Record<string, string> = {};
             fields.forEach((f) => {
-                initial[f.name] = initialData?.[f.name]?.toString() ?? f.defaultValue?.toString() ?? "";
+                const raw = initialData?.[f.name] ?? f.defaultValue ?? "";
+                initial[f.name] = DECIMAL_PRICE_FIELDS.has(f.name)
+                    ? toInputDecimal(raw)
+                    : String(raw ?? "");
             });
             setFormData(initial);
         }
     }, [isOpen, initialData, fields]);
 
     const handleChange = (name: string, value: string) => {
-        // Si es unit_price, limpiamos todo lo que no sea dígito para mantener el valor crudo
-        if (name === "unit_price") {
-            const rawValue = value.replace(/[^0-9]/g, "");
-            setFormData((prev) => ({ ...prev, [name]: rawValue }));
-        } else {
-            setFormData((prev) => ({ ...prev, [name]: value }));
+        if (DECIMAL_PRICE_FIELDS.has(name)) {
+            setFormData((prev) => ({ ...prev, [name]: sanitizeDecimalTyping(value) }));
+            return;
         }
+
+        if (name === "tipo_id") {
+            const field = fields.find((f) => f.name === "tipo_id");
+            const selected = field?.options?.find((opt) => opt.value === value);
+            const defaultPrice = selected?.defaultUnitPrice;
+            setFormData((prev) => ({
+                ...prev,
+                tipo_id: value,
+                ...(defaultPrice != null && String(defaultPrice) !== ""
+                    ? { unit_price: toInputDecimal(defaultPrice) }
+                    : {}),
+            }));
+            return;
+        }
+
+        setFormData((prev) => ({ ...prev, [name]: value }));
     };
 
     const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
-        onSubmit(formData);
+        const normalized: Record<string, string> = {};
+        Object.entries(formData).forEach(([key, value]) => {
+            normalized[key] = DECIMAL_PRICE_FIELDS.has(key) ? normalizeDecimalInput(value) : value;
+        });
+        onSubmit(normalized);
     };
 
     return (
@@ -67,7 +117,7 @@ export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading,
                 <DialogHeader>
                     <DialogTitle>{title}</DialogTitle>
                 </DialogHeader>
-                <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+                <form onSubmit={handleSubmit} className="space-y-4 max-h-[70vh] overflow-y-auto pr-1" noValidate>
                     {fields.map((field) => (
                         <div key={field.name} className="space-y-2">
                             <Label htmlFor={field.name}>{field.label}</Label>
@@ -95,20 +145,21 @@ export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading,
                                 <Input
                                     id={field.name}
                                     name={field.name}
-                                    type={field.name === "unit_price" ? "text" : field.type === "decimal" ? "text" : field.type}
-                                    placeholder={field.placeholder}
-                                    value={
-                                        field.name === "unit_price" && formData[field.name]
-                                            ? formatCurrency(Number(formData[field.name]))
-                                            : formData[field.name] || ""
+                                    type="text"
+                                    inputMode={
+                                        DECIMAL_PRICE_FIELDS.has(field.name)
+                                            ? "decimal"
+                                            : field.inputMode
                                     }
+                                    placeholder={field.placeholder}
+                                    value={formData[field.name] || ""}
                                     onChange={(e) => handleChange(field.name, e.target.value)}
                                     required={field.required !== false}
                                 />
                             )}
                         </div>
                     ))}
-                    <div className="flex justify-end gap-2 pt-4">
+                    <div className="flex justify-end gap-2 pt-4 sticky bottom-0 bg-background pb-1">
                         <Button type="button" variant="outline" onClick={onClose}>
                             Cancelar
                         </Button>

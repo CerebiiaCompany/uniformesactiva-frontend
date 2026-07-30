@@ -22,8 +22,21 @@ import AdministrationSubmodule from "./pages/AdministrationSubmodule";
 import CompanyProfile from "./pages/CompanyProfile";
 import Lines from "./pages/Lines";
 import NotFound from "./pages/NotFound";
+import { UnauthorizedError } from "./lib/http";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: (failureCount, error) => {
+        if (error instanceof UnauthorizedError) return false;
+        return failureCount < 3;
+      },
+    },
+    mutations: {
+      retry: false,
+    },
+  },
+});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>

@@ -1,8 +1,18 @@
+export type TallaGenero = "hombre" | "mujer";
+
 export interface CatalogOption {
     id: string;
     code?: string;
     name: string;
     label?: string;
+    genero?: TallaGenero;
+    categoria?: string;
+    unidad_medida?: string;
+    precio_unitario_default?: number | string | null;
+    codigo_sku?: string;
+    proveedor_marca?: string;
+    color?: string;
+    stock_minimo?: number | string | null;
 }
 
 export interface Proveedor {
@@ -73,6 +83,8 @@ export interface VariantSizeCostSummary {
     supplies_total: string | number;
     labor_total: string | number;
     overall_total: string | number;
+    precio_venta?: string | number | null;
+    ganancia?: string | number | null;
 }
 
 export interface VariantCostSummary {
@@ -139,11 +151,13 @@ export interface CreateSizeConsumptionPayload {
     variant_id: string;
     talla_id: string;
     consumption: string | number;
+    precio_venta?: string | number | null;
 }
 
 export interface UpdateSizeConsumptionPayload {
     talla_id?: string;
     consumption?: string | number;
+    precio_venta?: string | number | null;
 }
 
 export interface CreateVariantPayload {

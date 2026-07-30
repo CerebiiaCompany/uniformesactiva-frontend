@@ -12,8 +12,11 @@ import {
     User,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { getApiBaseUrl } from "@/lib/api-base";
+import { resetAuthRedirectGuard } from "@/lib/auth-redirect";
+import { clearAuthSession, getStoredAccessToken, isAccessTokenExpired } from "@/lib/auth-session";
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL;
+const BASE_URL = getApiBaseUrl();
 
 const highlights = [
     {
@@ -43,10 +46,16 @@ export default function Login() {
     const isSubmitDisabled = loading || !isFormValid;
 
     useEffect(() => {
-        const token = localStorage.getItem("token");
-        if (token) {
-            navigate("/dashboard", { replace: true });
+        resetAuthRedirectGuard();
+        const token = getStoredAccessToken();
+        if (!token) return;
+
+        if (isAccessTokenExpired(token)) {
+            clearAuthSession();
+            return;
         }
+
+        navigate("/dashboard", { replace: true });
     }, [navigate]);
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -68,15 +77,29 @@ export default function Login() {
                 }),
             });
 
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data.detail || "Usuario o contraseña incorrectos.");
+            const raw = await response.text();
+            let data: Record<string, unknown> = {};
+            if (raw) {
+                try {
+                    data = JSON.parse(raw);
+                } catch {
+                    throw new Error(
+                        response.ok
+                            ? "Respuesta inválida del servidor de autenticación."
+                            : "Usuario o contraseña incorrectos.",
+                    );
+                }
             }
 
-            const token = data.access || data.token;
+            if (!response.ok) {
+                const detail = typeof data.detail === "string" ? data.detail : null;
+                throw new Error(detail || "Usuario o contraseña incorrectos.");
+            }
+
+            const token = (data.access || data.token) as string | undefined;
 
             if (token) {
+                resetAuthRedirectGuard();
                 localStorage.setItem("token", token);
 
                 const userResponse = await fetch(`${BASE_URL}/api/v1/users/me/`, {

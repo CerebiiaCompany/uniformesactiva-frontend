@@ -24,8 +24,8 @@ const mapSupply = (item: any, catalogById: Map<string, string>): SupplyRecord =>
     const tipoLabel = resolveTipoLabel(item, catalogById);
     const quantity = Number(item.quantity ?? 0);
     const unitPrice = Number(item.unit_price ?? 0);
-    const fromApi = Number(item.total ?? 0);
-    const total = fromApi > 0 ? fromApi : quantity * unitPrice;
+    // Siempre qty × precio: el total persistido puede quedar desfasado.
+    const total = Math.round(quantity * unitPrice * 100) / 100;
 
     return {
         id: item.id,
