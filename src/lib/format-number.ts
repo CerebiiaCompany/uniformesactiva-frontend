@@ -19,10 +19,19 @@ export function formatQuantity(value: string | number): string {
     return num.toLocaleString("es-CO", { minimumFractionDigits: 0, maximumFractionDigits: 3 });
 }
 
-/** Montos en pesos: separador de miles, sin centavos forzados. */
+/** Montos en pesos: miles con punto; hasta 2 decimales si aplica. */
 export function formatCurrency(value: string | number): string {
     const num = parseApiNumber(value);
-    return num.toLocaleString("es-CO", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    if (isWholeNumber(num)) {
+        return Math.round(num).toLocaleString("es-CO", {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0,
+        });
+    }
+    return num.toLocaleString("es-CO", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+    });
 }
 
 /** Medidas decimales (metros, consumo): coma decimal, sin ceros de más. */

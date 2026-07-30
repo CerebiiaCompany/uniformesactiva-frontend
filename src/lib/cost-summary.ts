@@ -10,6 +10,8 @@ export function normalizeVariantCostSummary(raw: Record<string, unknown>): Varia
               supplies_total: size.supplies_total ?? 0,
               labor_total: size.labor_total ?? 0,
               overall_total: size.overall_total ?? 0,
+              precio_venta: size.precio_venta ?? null,
+              ganancia: size.ganancia ?? null,
           }))
         : [];
 

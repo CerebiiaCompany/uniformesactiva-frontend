@@ -40,6 +40,9 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { getApiBaseUrl } from "@/lib/api-base";
+import { clearSessionAndRedirectToLogin } from "@/lib/auth-redirect";
+import { UnauthorizedError } from "@/lib/http";
 
 // Interfaz corregida con los datos reales que usamos de la API
 interface User {
@@ -86,7 +89,16 @@ const buildDefaultMatrix = (moduleCodes: string[]): PermissionMatrix => {
 const VALID = ["users", "areas", "roles"] as const;
 type SubTab = (typeof VALID)[number];
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL;
+const BASE_URL = getApiBaseUrl();
+
+async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+  const response = await apiFetch(input, init);
+  if (response.status === 401) {
+    clearSessionAndRedirectToLogin();
+    throw new UnauthorizedError();
+  }
+  return response;
+}
 
 export default function AdministrationSubmodule() {
   const { tab } = useParams<{ tab: string }>();
@@ -136,7 +148,7 @@ export default function AdministrationSubmodule() {
     const fetchUsersData = async () => {
       try {
         const token = localStorage.getItem("token");
-        const response = await fetch(`${BASE_URL}/api/v1/users/`, {
+        const response = await apiFetch(`${BASE_URL}/api/v1/users/`, {
           method: "GET",
           headers: {
             "Content-Type": "application/json",
@@ -173,7 +185,7 @@ export default function AdministrationSubmodule() {
   useEffect(() => {
     const fetchModules = async () => {
       try {
-        const response = await fetch(`${BASE_URL}/api/v1/users/permisos/modules/`, {
+        const response = await apiFetch(`${BASE_URL}/api/v1/users/permisos/modules/`, {
           method: "GET",
           headers: {
             "Authorization": `Bearer ${localStorage.getItem("token")}`
@@ -199,7 +211,7 @@ export default function AdministrationSubmodule() {
   useEffect(() => {
     const fetchInitialRoles = async () => {
       try {
-        const response = await fetch(`${BASE_URL}/api/v1/users/permisos/roles/`, {
+        const response = await apiFetch(`${BASE_URL}/api/v1/users/permisos/roles/`, {
           method: "GET",
           headers: {
             "Authorization": `Bearer ${localStorage.getItem("token")}`
@@ -236,7 +248,7 @@ export default function AdministrationSubmodule() {
     const GET_PERMISSIONS_URL = `${BASE_URL}/api/v1/users/permisos/roles/${selectedRole}/permissions/`;
 
     try {
-      const response = await fetch(GET_PERMISSIONS_URL, {
+      const response = await apiFetch(GET_PERMISSIONS_URL, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
@@ -268,6 +280,7 @@ export default function AdministrationSubmodule() {
 
       setMatrix(newMatrix);
     } catch (error: any) {
+      if (error instanceof UnauthorizedError) return;
       console.error("Error cargando permisos:", error);
       toast({
         variant: "destructive",
@@ -311,7 +324,7 @@ export default function AdministrationSubmodule() {
     };
 
     try {
-      const response = await fetch(UPDATE_PERMISSIONS_URL, {
+      const response = await apiFetch(UPDATE_PERMISSIONS_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -329,6 +342,7 @@ export default function AdministrationSubmodule() {
         description: `La matriz de permisos para el rol ${currentRoleObj?.name || ""} se sincronizó con éxito.`,
       });
     } catch (error: any) {
+      if (error instanceof UnauthorizedError) return;
       console.error("Error en la conexión RBAC:", error);
       toast({
         variant: "destructive",
@@ -345,7 +359,7 @@ export default function AdministrationSubmodule() {
 
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${BASE_URL}/api/v1/users/`, {
+      const response = await apiFetch(`${BASE_URL}/api/v1/users/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -397,6 +411,7 @@ export default function AdministrationSubmodule() {
         throw new Error();
       }
     } catch (err) {
+      if (err instanceof UnauthorizedError) return;
       toast({
         variant: "destructive",
         title: "Error de red",
@@ -413,7 +428,7 @@ export default function AdministrationSubmodule() {
       const token = localStorage.getItem("token");
 
       // Cambiamos el método de GET a PATCH para alinearnos con lo que descubriste en Postman
-      const response = await fetch(`${BASE_URL}/api/v1/users/${userId}/`, {
+      const response = await apiFetch(`${BASE_URL}/api/v1/users/${userId}/`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -442,6 +457,7 @@ export default function AdministrationSubmodule() {
 
       setIsEditModalOpen(true);
     } catch (error) {
+      if (error instanceof UnauthorizedError) return;
       console.error("Error cargando usuario para edición:", error);
       toast({
         variant: "destructive",
@@ -473,7 +489,7 @@ export default function AdministrationSubmodule() {
         status: backendStatus
       };
 
-      const response = await fetch(`${BASE_URL}/api/v1/users/${selectedUserId}/`, {
+      const response = await apiFetch(`${BASE_URL}/api/v1/users/${selectedUserId}/`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -516,6 +532,7 @@ export default function AdministrationSubmodule() {
         throw new Error();
       }
     } catch (err) {
+      if (err instanceof UnauthorizedError) return;
       toast({
         variant: "destructive",
         title: "Error de red",
@@ -531,7 +548,7 @@ export default function AdministrationSubmodule() {
 
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${BASE_URL}/api/v1/users/${userToDeleteId}/`, {
+      const response = await apiFetch(`${BASE_URL}/api/v1/users/${userToDeleteId}/`, {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
@@ -551,6 +568,7 @@ export default function AdministrationSubmodule() {
       setUserToDeleteId(null);
 
     } catch (error) {
+      if (error instanceof UnauthorizedError) return;
       console.error("Error al intentar eliminar el usuario:", error);
       alert("Hubo un error al intentar eliminar el usuario.");
     }

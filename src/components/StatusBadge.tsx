@@ -5,7 +5,8 @@ export type StatusType =
   | "pending" | "in_production" | "delivered"
   | "design" | "cutting" | "sewing" | "embroidery" | "quality" | "printing" | "dispatch"
   | "inactive"
-  | "in_review";
+  | "in_review"
+  | "ordered";
 
 const statusConfig: Record<StatusType, { label: string; className: string }> = {
   draft: { label: "Borrador", className: "bg-muted text-muted-foreground" },
@@ -24,6 +25,7 @@ const statusConfig: Record<StatusType, { label: string; className: string }> = {
   dispatch: { label: "Despacho", className: "bg-muted text-muted-foreground" },
   inactive: { label: "Inactiva", className: "bg-gray-100 text-gray-500 border border-gray-200" },
   in_review: { label: "En revisión", className: "bg-yellow-100 text-yellow-800 border border-yellow-200" },
+  ordered: { label: "Ordenado", className: "bg-blue-100 text-blue-800 border border-blue-200" },
 };
 
 export function StatusBadge({ status }: { status: StatusType }) {
