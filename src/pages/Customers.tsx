@@ -57,12 +57,7 @@ export default function Customers() {
   const { updateClient, isLoading: isUpdating, error: updateError } = useUpdateClient();
   const { deleteClient, isLoading: isDeleting } = useDeleteClient();
 
-  const [searchInputs, setSearchInputs] = useState({
-    name: "",
-    nit: "",
-    email: "",
-    phone: "",
-  });
+  const [searchTerm, setSearchTerm] = useState("");
 
   const [formData, setFormData] = useState({
     nit: "",
@@ -79,20 +74,14 @@ export default function Customers() {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setSearchInputs((prev) => ({ ...prev, [name]: value }));
-  };
-
   const handleApplyFilters = (e: React.FormEvent) => {
     e.preventDefault();
-    filters.update(searchInputs);
+    filters.update({ search: searchTerm.trim() });
   };
 
   const handleClearFilters = () => {
-    const emptyFilters = { name: "", nit: "", email: "", phone: "" };
-    setSearchInputs(emptyFilters);
-    filters.update(emptyFilters);
+    setSearchTerm("");
+    filters.update({ search: "" });
   };
 
   const handleCardClick = (id: string) => {
@@ -183,7 +172,7 @@ export default function Customers() {
     }
   };
 
-  const hasActiveFilters = Object.values(filters.current).some(value => value !== "");
+  const hasActiveFilters = Boolean((filters.current.search || "").trim());
 
   return (
     <AppLayout title="Clientes" subtitle="CRM y gestión de clientes">
@@ -199,59 +188,39 @@ export default function Customers() {
           </Button>
         </div>
 
-        {/* SECCIÓN DE FILTROS COMERCIALES DINÁMICOS */}
-        <form onSubmit={handleApplyFilters} className="bg-card border rounded-xl p-4 shadow-sm grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 items-end">
-          <div>
-            <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Buscar por Nombre</label>
+        {/* Filtro único: nombre, NIT, correo o teléfono */}
+        <form
+          onSubmit={handleApplyFilters}
+          className="bg-card border rounded-xl p-4 shadow-sm flex flex-col sm:flex-row gap-3 items-stretch sm:items-end"
+        >
+          <div className="flex-1 min-w-0">
+            <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
+              Buscar cliente
+            </label>
             <Input
-              name="name"
               type="text"
               className="h-9 text-xs"
-              value={searchInputs.name}
-              onChange={handleSearchChange}
+              placeholder="Nombre, NIT, correo o teléfono..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
-          <div>
-            <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Buscar por NIT</label>
-            <Input
-              name="nit"
-              type="text"
-              className="h-9 text-xs"
-              value={searchInputs.nit}
-              onChange={handleSearchChange}
-            />
-          </div>
-          <div>
-            <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Buscar por Correo</label>
-            <Input
-              name="email"
-              type="text"
-              className="h-9 text-xs"
-              value={searchInputs.email}
-              onChange={handleSearchChange}
-            />
-          </div>
-          <div className="flex gap-2">
-            <div className="flex-1">
-              <label className="text-[11px] font-semibold text-muted-foreground block mb-1">Buscar por Teléfono</label>
-              <Input
-                name="phone"
-                type="text"
-                className="h-9 text-xs"
-                value={searchInputs.phone}
-                onChange={handleSearchChange}
-              />
-            </div>
-            <div className="flex gap-1.5 pb-0.5">
-              <Button type="submit" size="sm" className="h-9 px-3" title="Buscar">
-                <Search className="h-3.5 w-3.5" />
+          <div className="flex gap-1.5 shrink-0">
+            <Button type="submit" size="sm" className="h-9 px-3" title="Buscar">
+              <Search className="h-3.5 w-3.5" />
+            </Button>
+            {hasActiveFilters && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9 px-3 border-dashed"
+                onClick={handleClearFilters}
+                title="Limpiar filtros"
+              >
+                <X className="h-3.5 w-3.5 text-destructive" />
               </Button>
-              {hasActiveFilters && (
-                <Button type="button" variant="outline" size="sm" className="h-9 px-3 border-dashed" onClick={handleClearFilters} title="Limpiar filtros">
-                  <X className="h-3.5 w-3.5 text-destructive" />
-                </Button>
-              )}
-            </div>
+            )}
           </div>
         </form>
 

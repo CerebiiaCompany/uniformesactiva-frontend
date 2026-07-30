@@ -18,6 +18,11 @@ export interface SizeConsumptionResponse extends CostMutationResponse {
     consumption: number | string;
 }
 
+export type SizeConsumptionMutationOptions = {
+    /** Evita invalidar caché en cada request (útil al guardar varias tallas seguidas). */
+    skipCacheUpdate?: boolean;
+};
+
 export function useSizeConsumption() {
     const queryClient = useQueryClient();
     const [loading, setLoading] = useState(false);
@@ -29,8 +34,18 @@ export function useSizeConsumption() {
         queryClient.invalidateQueries({ queryKey: ["cost-summary", variantId] });
     };
 
+    const refreshCosts = (variantId: string, lastResponse?: CostMutationResponse) => {
+        if (lastResponse) {
+            handleCostMutationResponse(queryClient, variantId, lastResponse);
+        }
+        invalidateVariantCostLists(queryClient, variantId);
+        queryClient.invalidateQueries({ queryKey: ["cost-summary", variantId] });
+        queryClient.invalidateQueries({ queryKey: ["product-variants"] });
+    };
+
     const addSizeConsumption = async (
-        payload: CreateSizeConsumptionPayload
+        payload: CreateSizeConsumptionPayload,
+        options?: SizeConsumptionMutationOptions
     ): Promise<SizeConsumptionResponse | null> => {
         setLoading(true);
         setError(null);
@@ -43,7 +58,9 @@ export function useSizeConsumption() {
                     consumption: String(payload.consumption),
                 }),
             });
-            afterMutation(payload.variant_id, data);
+            if (!options?.skipCacheUpdate) {
+                afterMutation(payload.variant_id, data);
+            }
             return data;
         } catch (err: any) {
             const message = err.message || "Error al asignar el consumo de talla";
@@ -57,8 +74,9 @@ export function useSizeConsumption() {
     const updateSizeConsumption = async (
         id: string,
         payload: UpdateSizeConsumptionPayload,
-        variantId: string
-    ) => {
+        variantId: string,
+        options?: SizeConsumptionMutationOptions
+    ): Promise<false | CostMutationResponse> => {
         setLoading(true);
         setError(null);
         try {
@@ -72,14 +90,16 @@ export function useSizeConsumption() {
                         : String(payload.precio_venta);
             }
 
-            if (Object.keys(body).length === 0) return true;
+            if (Object.keys(body).length === 0) return {};
 
             const response = await http<CostMutationResponse>(endpoints.costos.tallasConsumoDetalle(id), {
                 method: "PATCH",
                 body: JSON.stringify(body),
             });
-            afterMutation(variantId, response);
-            return true;
+            if (!options?.skipCacheUpdate) {
+                afterMutation(variantId, response);
+            }
+            return response ?? {};
         } catch (err: any) {
             const message = err.message || "Error al actualizar el consumo de talla";
             setError(message);
@@ -111,5 +131,6 @@ export function useSizeConsumption() {
         addSizeConsumption,
         updateSizeConsumption,
         deleteSizeConsumption,
+        refreshCosts,
     };
 }

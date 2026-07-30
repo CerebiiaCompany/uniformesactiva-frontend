@@ -14,6 +14,7 @@ export interface Client {
 }
 
 export interface ClientFilters {
+    search?: string;
     name?: string;
     nit?: string;
     email?: string;

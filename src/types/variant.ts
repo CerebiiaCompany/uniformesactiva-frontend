@@ -13,6 +13,7 @@ export interface CatalogOption {
     proveedor_marca?: string;
     color?: string;
     stock_minimo?: number | string | null;
+    stock_inicial?: number | string | null;
 }
 
 export interface Proveedor {

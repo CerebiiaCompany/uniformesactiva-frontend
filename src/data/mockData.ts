@@ -58,7 +58,7 @@ export interface Order {
 }
 
 export interface StageHistoryEntry {
-  stage: "design" | "cutting" | "sewing" | "embroidery" | "quality" | "printing" | "dispatch";
+  stage: string;
   enteredAt: string;
 }
 
@@ -68,12 +68,25 @@ export interface ProductionOrder {
   customerName: string;
   items: string;
   quantity: number;
-  stage: "design" | "cutting" | "sewing" | "embroidery" | "quality" | "printing" | "dispatch";
+  stage: string;
   assignee: string;
   dueDate: string;
   daysInStage: number;
   isDelayed: boolean;
   stageHistory: StageHistoryEntry[];
+  color?: string;
+  hasBordado?: boolean;
+  bordadoLabel?: string;
+  tipoBordado?: string;
+  variants?: {
+    variantId: string;
+    linea: string;
+    producto: string;
+    variante: string;
+    color: string;
+    cantidad: number;
+    tallas: { nombre: string; cantidad: number }[];
+  }[];
 }
 
 export const customers: Customer[] = [

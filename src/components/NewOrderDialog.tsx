@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -32,19 +32,22 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { useOrders } from "@/hooks/useOrders";
+import { useOrders, type Order } from "@/hooks/useOrders";
+import { useQuotes, type CreateQuoteFromOrderFormInput, type Quote } from "@/hooks/useQuotes";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
 import { useGetProductLines } from "@/hooks/useGetProductLines";
 import { AddOrderProductDialog, type OrderProductEntry } from "@/components/AddOrderProductDialog";
 import type { Client } from "@/hooks/useGetClients";
 import { formatCurrency } from "@/lib/format-number";
+import { getApiBaseUrl } from "@/lib/api-base";
 import {
     LOGO_POSITION_OPTIONS,
     buildLogoFields,
     toIsoDeliveryDate,
     type LogoPositionKey,
 } from "@/lib/order-fields";
+import { seedFromOrder, seedFromQuote } from "@/lib/order-form-hydrate";
 
 interface UserOption {
     id: string;
@@ -55,6 +58,8 @@ interface NewOrderDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     onSuccess: (opts?: { quoteMarked?: boolean }) => void;
+    /** "order" (default) o "quote" para Nueva cotización */
+    mode?: "order" | "quote";
     /** Prefill desde una cotización aprobada */
     initialClientId?: string;
     initialIncome?: number;
@@ -62,6 +67,10 @@ interface NewOrderDialogProps {
     quoteId?: string;
     /** Se llama tras crear la orden (antes de onSuccess) si venía de cotización */
     onOrderCreatedFromQuote?: (quoteId: string) => Promise<void> | void;
+    /** Editar orden existente (solo pending) */
+    editOrder?: Order | null;
+    /** Editar cotización existente */
+    editQuote?: Quote | null;
 }
 
 const LOGO_POSITIONS = LOGO_POSITION_OPTIONS;
@@ -70,6 +79,13 @@ const PAYMENT_STATUS_OPTIONS = [
     { value: "no_pagado", label: "No pagado" },
     { value: "parcial", label: "Pagado parcial" },
     { value: "pagado", label: "Pagado" },
+];
+
+const MEDIO_PAGO_OPTIONS = [
+    { value: "transferencia", label: "Transferencia bancaria" },
+    { value: "efectivo", label: "Efectivo" },
+    { value: "tarjeta", label: "Tarjeta de crédito/débito" },
+    { value: "cheque", label: "Cheque" },
 ];
 
 const formatMoney = (value: number) => formatCurrency(value);
@@ -134,13 +150,23 @@ export function NewOrderDialog({
     open,
     onOpenChange,
     onSuccess,
+    mode = "order",
     initialClientId,
     initialIncome,
     initialDeliveryDate,
     quoteId,
     onOrderCreatedFromQuote,
+    editOrder = null,
+    editQuote = null,
 }: NewOrderDialogProps) {
-    const { createOrder, loading } = useOrders();
+    const isQuoteMode = mode === "quote";
+    const isEditMode = Boolean(editOrder || editQuote);
+    const { createOrder, updateOrder, loading } = useOrders();
+    const {
+        createQuoteFromOrderForm,
+        updateQuoteFromOrderForm,
+        loading: quoteLoading,
+    } = useQuotes();
     const { lines, isLoading: loadingLines } = useGetProductLines();
 
     const [clients, setClients] = useState<Client[]>([]);
@@ -152,25 +178,66 @@ export function NewOrderDialog({
     const [isRepair, setIsRepair] = useState(false);
     const [productEntries, setProductEntries] = useState<OrderProductEntry[]>([]);
     const [addProductOpen, setAddProductOpen] = useState(false);
-    const [incomeRaw, setIncomeRaw] = useState("");
+    const [editingProduct, setEditingProduct] = useState<OrderProductEntry | null>(null);
+    const [abonoAmountRaw, setAbonoAmountRaw] = useState("");
+    const [medioPago, setMedioPago] = useState("");
+    const [conceptoAbono, setConceptoAbono] = useState("");
+    const [fechaLimiteSaldo, setFechaLimiteSaldo] = useState("");
     const [deliveryDate, setDeliveryDate] = useState("");
     const [paymentStatus, setPaymentStatus] = useState("no_pagado");
     const [orderComments, setOrderComments] = useState("");
     const [logoPositions, setLogoPositions] = useState<LogoPositionKey[]>([]);
+    const [logoPath, setLogoPath] = useState<string | null>(null);
+    const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(null);
+    const [logoUploading, setLogoUploading] = useState(false);
+    const logoInputRef = useRef<HTMLInputElement>(null);
+    const [quoteStatus, setQuoteStatus] = useState<"draft" | "sent" | "in_review" | "approved" | "rejected">("draft");
+    const [validUntil, setValidUntil] = useState(new Date().toISOString().split("T")[0]);
+    const [purchaseIntention, setPurchaseIntention] = useState<string>("50");
+    const [isSaving, setIsSaving] = useState(false);
 
-    const lockedProductId = productEntries[0]?.producto_id;
     const fromQuote = Boolean(quoteId);
+    const busy = loading || quoteLoading || isSaving;
 
     const resetForm = () => {
         setSelectedClient(initialClientId || "");
         setTakenBy("");
         setIsRepair(false);
         setProductEntries([]);
-        setIncomeRaw(initialIncome && initialIncome > 0 ? String(Math.round(initialIncome)) : "");
         setDeliveryDate(initialDeliveryDate || "");
         setPaymentStatus("no_pagado");
+        setAbonoAmountRaw("");
+        setMedioPago("");
+        setConceptoAbono("");
+        setFechaLimiteSaldo("");
         setOrderComments("");
         setLogoPositions([]);
+        setLogoPath(null);
+        setLogoPreviewUrl(null);
+        setLogoUploading(false);
+        setQuoteStatus("draft");
+        setValidUntil(new Date().toISOString().split("T")[0]);
+        setPurchaseIntention("50");
+    };
+
+    const applySeed = (seed: ReturnType<typeof seedFromOrder>) => {
+        setSelectedClient(seed.selectedClient);
+        setTakenBy(seed.takenBy);
+        setIsRepair(seed.isRepair);
+        setProductEntries(seed.productEntries);
+        setDeliveryDate(seed.deliveryDate);
+        setPaymentStatus(seed.paymentStatus);
+        setAbonoAmountRaw(seed.abonoAmountRaw);
+        setMedioPago(seed.medioPago);
+        setConceptoAbono(seed.conceptoAbono);
+        setFechaLimiteSaldo(seed.fechaLimiteSaldo);
+        setOrderComments(seed.orderComments);
+        setLogoPositions(seed.logoPositions);
+        setLogoPath(seed.logoPath);
+        setLogoPreviewUrl(seed.logoPreviewUrl);
+        setQuoteStatus(seed.quoteStatus);
+        setValidUntil(seed.validUntil);
+        setPurchaseIntention(seed.purchaseIntention);
     };
 
     useEffect(() => {
@@ -197,26 +264,41 @@ export function NewOrderDialog({
                     : [];
                 setUsers(mappedUsers);
 
-                const storedUser = localStorage.getItem("user");
-                if (storedUser) {
-                    try {
-                        const parsed = JSON.parse(storedUser);
-                        const me = mappedUsers.find(
+                if (editOrder) {
+                    applySeed(seedFromOrder(editOrder));
+                } else if (editQuote) {
+                    const seed = seedFromQuote(editQuote);
+                    applySeed(seed);
+                    if (!seed.takenBy && editQuote.takenBy) {
+                        const byName = mappedUsers.find(
                             (u) =>
-                                u.label.toLowerCase().includes((parsed.first_name || "").toLowerCase()) ||
-                                u.label.toLowerCase().includes((parsed.username || "").toLowerCase())
+                                u.label.toLowerCase() === editQuote.takenBy!.toLowerCase() ||
+                                u.label.toLowerCase().includes(editQuote.takenBy!.toLowerCase())
                         );
-                        if (me) setTakenBy(me.id);
-                    } catch {
-                        /* ignore */
+                        if (byName) setTakenBy(byName.id);
                     }
-                }
+                    if (!seed.selectedClient && editQuote.customerId) {
+                        setSelectedClient(editQuote.customerId);
+                    }
+                } else {
+                    const storedUser = localStorage.getItem("user");
+                    if (storedUser) {
+                        try {
+                            const parsed = JSON.parse(storedUser);
+                            const me = mappedUsers.find(
+                                (u) =>
+                                    u.label.toLowerCase().includes((parsed.first_name || "").toLowerCase()) ||
+                                    u.label.toLowerCase().includes((parsed.username || "").toLowerCase())
+                            );
+                            if (me) setTakenBy(me.id);
+                        } catch {
+                            /* ignore */
+                        }
+                    }
 
-                if (initialClientId) setSelectedClient(initialClientId);
-                if (initialIncome && initialIncome > 0) {
-                    setIncomeRaw(String(Math.round(initialIncome)));
+                    if (initialClientId) setSelectedClient(initialClientId);
+                    if (initialDeliveryDate) setDeliveryDate(initialDeliveryDate);
                 }
-                if (initialDeliveryDate) setDeliveryDate(initialDeliveryDate);
             } catch {
                 toast.error("No se pudieron cargar clientes.");
             } finally {
@@ -225,38 +307,110 @@ export function NewOrderDialog({
         };
 
         loadCatalogs();
-    }, [open, initialClientId, initialIncome, initialDeliveryDate]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- rehydrate solo al abrir / cambiar entidad
+    }, [open, editOrder?.id, editQuote?.id, initialClientId, initialDeliveryDate]);
 
-    const { totalQuantity, totalCost } = useMemo(() => {
+    const { totalQuantity, totalCost, income } = useMemo(() => {
         let qty = 0;
         let cost = 0;
+        let projectedIncome = 0;
         for (const entry of productEntries) {
+            let entryQty = 0;
             for (const line of entry.size_lines) {
-                qty += line.cantidad;
+                entryQty += line.cantidad;
                 cost += line.costo_unitario * line.cantidad;
             }
+            qty += entryQty;
+            projectedIncome += (entry.ingreso_proyectado_unitario || 0) * entryQty;
         }
-        return { totalQuantity: qty, totalCost: cost };
+        return {
+            totalQuantity: qty,
+            totalCost: cost,
+            income: Math.round(projectedIncome * 100) / 100,
+        };
     }, [productEntries]);
 
-    const income = Number(incomeRaw) || 0;
+    const abonoAmount = Number(abonoAmountRaw) || 0;
+    const saldoPendiente = Math.max(0, Math.round((income - abonoAmount) * 100) / 100);
     const estimatedProfit = income > 0 ? income - totalCost : 0;
     const estimatedMargin = income > 0 ? (estimatedProfit / income) * 100 : 0;
 
     const handleAddProduct = (entry: OrderProductEntry) => {
-        if (lockedProductId && entry.producto_id !== lockedProductId) {
-            toast.error("Esta orden admite un solo producto del catálogo. Agrega otra variante del mismo artículo.");
-            return;
-        }
-        setProductEntries((prev) => [...prev, entry]);
+        setProductEntries((prev) => {
+            if (editingProduct) {
+                return prev.map((p) => (p.key === editingProduct.key ? entry : p));
+            }
+            return [...prev, entry];
+        });
+        setEditingProduct(null);
     };
 
     const handleRemoveProduct = (key: string) => {
         setProductEntries((prev) => prev.filter((p) => p.key !== key));
     };
 
+    const openAddProduct = () => {
+        setEditingProduct(null);
+        setAddProductOpen(true);
+    };
+
+    const openEditProduct = (entry: OrderProductEntry) => {
+        setEditingProduct(entry);
+        setAddProductOpen(true);
+    };
+
     const toggleLogoPosition = (id: LogoPositionKey) => {
         setLogoPositions((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]));
+    };
+
+    const resolveMediaUrl = (pathOrUrl: string) => {
+        if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) return pathOrUrl;
+        const base = getApiBaseUrl().replace(/\/$/, "");
+        return pathOrUrl.startsWith("/") ? `${base}${pathOrUrl}` : `${base}/media/${pathOrUrl}`;
+    };
+
+    const handleLogoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        e.target.value = "";
+        if (!file) return;
+
+        const allowed = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/svg+xml"];
+        if (!allowed.includes(file.type) && !/\.(png|jpe?g|webp|svg)$/i.test(file.name)) {
+            toast.error("Formato no permitido. Usa PNG, JPG, WEBP o SVG.");
+            return;
+        }
+        if (file.size > 5 * 1024 * 1024) {
+            toast.error("El archivo supera el máximo de 5 MB.");
+            return;
+        }
+
+        const localPreview = URL.createObjectURL(file);
+        setLogoPreviewUrl(localPreview);
+        setLogoUploading(true);
+        try {
+            const formData = new FormData();
+            formData.append("file", file);
+            const result = await http<{ logo: string; logo_url: string }>(
+                endpoints.orders.uploadLogo(),
+                { method: "POST", body: formData }
+            );
+            setLogoPath(result.logo);
+            setLogoPreviewUrl(resolveMediaUrl(result.logo_url || result.logo));
+            toast.success("Logo cargado correctamente.");
+        } catch (err) {
+            setLogoPath(null);
+            setLogoPreviewUrl(null);
+            URL.revokeObjectURL(localPreview);
+            toast.error(err instanceof Error ? err.message : "No se pudo subir el logo.");
+        } finally {
+            setLogoUploading(false);
+        }
+    };
+
+    const clearLogo = () => {
+        setLogoPath(null);
+        setLogoPreviewUrl(null);
+        if (logoInputRef.current) logoInputRef.current.value = "";
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -268,7 +422,7 @@ export function NewOrderDialog({
         }
 
         if (!takenBy) {
-            toast.error("Selecciona quién tomó la orden.");
+            toast.error(isQuoteMode ? "Selecciona quién tomó la cotización." : "Selecciona quién tomó la orden.");
             return;
         }
 
@@ -278,8 +432,82 @@ export function NewOrderDialog({
         }
 
         if (!income || income <= 0) {
-            toast.error("Ingresa un ingreso válido.");
+            toast.error(
+                "Agrega productos con ingreso proyectado por unidad para calcular el ingreso de la orden."
+            );
             return;
+        }
+
+        if (isQuoteMode && !validUntil) {
+            toast.error("Indica la fecha de validez de la cotización.");
+            return;
+        }
+
+        const intentionNum = Number(purchaseIntention);
+        if (
+            isQuoteMode &&
+            (purchaseIntention === "" ||
+                Number.isNaN(intentionNum) ||
+                intentionNum < 0 ||
+                intentionNum > 100)
+        ) {
+            toast.error("La intención de compra debe ser un porcentaje entre 0 y 100.");
+            return;
+        }
+
+        let detalleAbono:
+            | {
+                  monto_total: number;
+                  monto_abono: number;
+                  saldo_pendiente: number;
+                  medio_pago: string;
+                  concepto: string;
+                  fecha_limite_saldo: string;
+              }
+            | { medio_pago: string }
+            | undefined;
+
+        if (paymentStatus === "pagado") {
+            if (!medioPago) {
+                toast.error("Selecciona el medio de pago.");
+                return;
+            }
+            detalleAbono = { medio_pago: medioPago };
+        }
+
+        if (paymentStatus === "parcial") {
+            if (!income || income <= 0) {
+                toast.error("Define el ingreso / monto total antes del abono.");
+                return;
+            }
+            if (!abonoAmount || abonoAmount <= 0) {
+                toast.error("Ingresa el monto del pago parcial (abono).");
+                return;
+            }
+            if (abonoAmount >= income) {
+                toast.error("El abono debe ser menor al monto total. Si pagó todo, usa “Pagado”.");
+                return;
+            }
+            if (!medioPago) {
+                toast.error("Selecciona el medio de pago.");
+                return;
+            }
+            if (!conceptoAbono.trim()) {
+                toast.error("Ingresa el concepto del abono.");
+                return;
+            }
+            if (!fechaLimiteSaldo) {
+                toast.error("Indica la fecha límite para el saldo restante.");
+                return;
+            }
+            detalleAbono = {
+                monto_total: income,
+                monto_abono: abonoAmount,
+                saldo_pendiente: saldoPendiente,
+                medio_pago: medioPago,
+                concepto: conceptoAbono.trim(),
+                fecha_limite_saldo: fechaLimiteSaldo,
+            };
         }
 
         const productoId = productEntries[0].producto_id;
@@ -288,15 +516,20 @@ export function NewOrderDialog({
                 subproducto_id: entry.variant_id,
                 talla_id: line.talla_id,
                 cantidad: line.cantidad,
+                color: entry.color.trim() || undefined,
             }))
         );
 
-        const mergedItemsMap = new Map<string, { subproducto_id: string; talla_id: string; cantidad: number }>();
+        const mergedItemsMap = new Map<
+            string,
+            { subproducto_id: string; talla_id: string; cantidad: number; color?: string }
+        >();
         for (const item of rawItems) {
             const key = `${item.subproducto_id}:${item.talla_id}`;
             const existing = mergedItemsMap.get(key);
             if (existing) {
                 existing.cantidad += item.cantidad;
+                if (!existing.color && item.color) existing.color = item.color;
             } else {
                 mergedItemsMap.set(key, { ...item });
             }
@@ -316,46 +549,130 @@ export function NewOrderDialog({
             .filter(Boolean)
             .join("\n");
 
-        const payload = {
-            cliente_id: selectedClient,
-            producto_id: productoId,
-            tomado_por_id: takenBy,
-            valor_venta_proyectado: income,
-            items,
-            ...logoFields,
-            ...(comentariosFinal ? { comentarios: comentariosFinal } : {}),
-            ...(deliveryDate ? { fecha_estimada_entrega: toIsoDeliveryDate(deliveryDate) } : {}),
-        };
+        const shippingIso = deliveryDate ? toIsoDeliveryDate(deliveryDate) : undefined;
+        const takenByLabel = users.find((u) => u.id === takenBy)?.label || takenBy;
+        const productLabels = productEntries.map(
+            (e) => e.producto_label || e.variant_label || e.producto_id
+        );
+        const colorLabel = [
+            ...new Set(productEntries.map((e) => e.color.trim()).filter(Boolean)),
+        ].join(", ");
+        const estampadoLabel = [
+            ...new Set(productEntries.map((e) => e.estampado.trim()).filter(Boolean)),
+        ].join(", ");
 
-        const { success, errorMessage } = await createOrder(payload);
-        if (success) {
-            let quoteMarked = !fromQuote;
-            if (quoteId && onOrderCreatedFromQuote) {
-                try {
-                    await onOrderCreatedFromQuote(quoteId);
-                    quoteMarked = true;
-                } catch (err) {
-                    const msg =
-                        err instanceof Error
-                            ? err.message
-                            : "La orden se creó, pero no se pudo marcar la cotización como Ordenado.";
-                    toast.error(msg);
-                    quoteMarked = false;
+        setIsSaving(true);
+        try {
+            if (isQuoteMode) {
+                const quoteInput: CreateQuoteFromOrderFormInput = {
+                    customerId: selectedClient,
+                    customerName: clients.find((c) => c.id === selectedClient)?.name,
+                    items: productLabels.join(", "),
+                    totalAmount: income,
+                    status: quoteStatus,
+                    validUntil,
+                    takenBy: takenByLabel,
+                    probability: intentionNum,
+                    shippingDate: deliveryDate || undefined,
+                    orderPayload: {
+                        cliente_id: selectedClient,
+                        producto_id: productoId,
+                        tomado_por_id: takenBy,
+                        valor_venta_proyectado: income,
+                        items,
+                        ...(shippingIso ? { fecha_estimada_entrega: shippingIso } : {}),
+                        ...(comentariosFinal ? { comentarios: comentariosFinal } : {}),
+                        ...logoFields,
+                        product_labels: productLabels,
+                        ...(logoPath ? { logo: logoPath } : {}),
+                        estado_pago: paymentStatus as "no_pagado" | "parcial" | "pagado",
+                        ...(detalleAbono ? { detalle_abono: detalleAbono } : {}),
+                        ...(colorLabel ? { color: colorLabel } : {}),
+                        ...(estampadoLabel ? { estampado: estampadoLabel } : {}),
+                    },
+                };
+                const result = editQuote
+                    ? await updateQuoteFromOrderForm(editQuote.id, quoteInput)
+                    : await createQuoteFromOrderForm(quoteInput);
+                if (result.success) {
+                    toast.success(
+                        editQuote
+                            ? "Cotización actualizada correctamente."
+                            : "Cotización creada correctamente."
+                    );
+                    onOpenChange(false);
+                    onSuccess();
+                } else {
+                    toast.error(
+                        result.errorMessage ||
+                            (editQuote
+                                ? "No se pudo actualizar la cotización."
+                                : "No se pudo crear la cotización.")
+                    );
                 }
+                return;
             }
-            if (fromQuote) {
-                toast.success(
-                    quoteMarked
-                        ? "Orden creada. Cotización marcada como Ordenado."
-                        : "Orden creada, pero la cotización sigue en Aprobada. Usa «Ya creé la orden → Ordenado»."
-                );
+
+            const payload = {
+                cliente_id: selectedClient,
+                producto_id: productoId,
+                tomado_por_id: takenBy,
+                valor_venta_proyectado: income,
+                items,
+                ...logoFields,
+                ...(comentariosFinal ? { comentarios: comentariosFinal } : {}),
+                ...(shippingIso ? { fecha_estimada_entrega: shippingIso } : {}),
+                ...(logoPath ? { logo: logoPath } : {}),
+                estado_pago: paymentStatus as "no_pagado" | "parcial" | "pagado",
+                ...(detalleAbono ? { detalle_abono: detalleAbono } : { detalle_abono: null }),
+                ...(colorLabel ? { color: colorLabel } : {}),
+                ...(estampadoLabel ? { estampado: estampadoLabel } : {}),
+            };
+
+            if (editOrder) {
+                const { success, errorMessage } = await updateOrder(editOrder.id, payload);
+                if (success) {
+                    toast.success("Orden actualizada correctamente.");
+                    onOpenChange(false);
+                    onSuccess();
+                } else {
+                    toast.error(errorMessage || "No se pudo actualizar la orden.");
+                }
+                return;
+            }
+
+            const { success, errorMessage } = await createOrder(payload);
+            if (success) {
+                let quoteMarked = !fromQuote;
+                if (quoteId && onOrderCreatedFromQuote) {
+                    try {
+                        await onOrderCreatedFromQuote(quoteId);
+                        quoteMarked = true;
+                    } catch (err) {
+                        const msg =
+                            err instanceof Error
+                                ? err.message
+                                : "La orden se creó, pero no se pudo marcar la cotización como Ordenado.";
+                        toast.error(msg);
+                        quoteMarked = false;
+                    }
+                }
+                if (fromQuote) {
+                    toast.success(
+                        quoteMarked
+                            ? "Orden creada. Cotización marcada como Ordenado."
+                            : "Orden creada, pero la cotización sigue en Aprobada."
+                    );
+                } else {
+                    toast.success("Orden creada correctamente.");
+                }
+                onOpenChange(false);
+                onSuccess(fromQuote ? { quoteMarked } : undefined);
             } else {
-                toast.success("Orden creada correctamente.");
+                toast.error(errorMessage || "No se pudo crear la orden. Verifica los datos ingresados.");
             }
-            onOpenChange(false);
-            onSuccess(fromQuote ? { quoteMarked } : undefined);
-        } else {
-            toast.error(errorMessage || "No se pudo crear la orden. Verifica los datos ingresados.");
+        } finally {
+            setIsSaving(false);
         }
     };
 
@@ -371,12 +688,26 @@ export function NewOrderDialog({
                             </div>
                             <div>
                                 <h2 className="text-lg font-bold tracking-tight">
-                                    {fromQuote ? "Crear orden desde cotización" : "Nueva orden"}
+                                    {isQuoteMode
+                                        ? isEditMode
+                                            ? "Editar cotización"
+                                            : "Nueva cotización"
+                                        : isEditMode
+                                          ? "Editar orden"
+                                          : fromQuote
+                                            ? "Crear orden desde cotización"
+                                            : "Nueva orden"}
                                 </h2>
                                 <p className="text-sm text-muted-foreground mt-0.5">
-                                    {fromQuote
-                                        ? "Completa productos, tallas y datos de la orden. Al guardar, la cotización pasará a Ordenado."
-                                        : "Selecciona productos del catálogo, define tallas, atributos y comentarios."}
+                                    {isQuoteMode
+                                        ? isEditMode
+                                            ? "Actualiza cliente, productos y vigencia de la cotización."
+                                            : "Completa cliente, productos y vigencia. Al aprobar podrás ordenar con un clic."
+                                        : isEditMode
+                                          ? "Solo órdenes pendientes. Al guardar se actualizan productos, tallas y datos de la orden."
+                                          : fromQuote
+                                            ? "Completa productos, tallas y datos de la orden. Al guardar, la cotización pasará a Ordenado."
+                                            : "Selecciona productos del catálogo, define tallas, atributos y comentarios."}
                                 </p>
                             </div>
                         </div>
@@ -395,9 +726,18 @@ export function NewOrderDialog({
                                     <SectionHeader
                                         icon={User}
                                         title="Datos generales"
-                                        description="Cliente y responsable de la orden"
+                                        description={
+                                            isQuoteMode
+                                                ? "Cliente y responsable de la cotización"
+                                                : "Cliente y responsable de la orden"
+                                        }
                                     />
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div
+                                        className={cn(
+                                            "grid grid-cols-1 gap-4",
+                                            isQuoteMode ? "sm:grid-cols-3" : "sm:grid-cols-2"
+                                        )}
+                                    >
                                         <div className="space-y-1.5">
                                             <Label className="text-xs font-medium">Cliente</Label>
                                             <Select
@@ -438,7 +778,71 @@ export function NewOrderDialog({
                                                 </SelectContent>
                                             </Select>
                                         </div>
+                                        {isQuoteMode && (
+                                            <div className="space-y-1.5">
+                                                <Label className="text-xs font-medium">
+                                                    Intención de compra (%){" "}
+                                                    <span className="text-destructive">*</span>
+                                                </Label>
+                                                <Input
+                                                    type="number"
+                                                    min={0}
+                                                    max={100}
+                                                    step={1}
+                                                    value={purchaseIntention}
+                                                    onChange={(e) => setPurchaseIntention(e.target.value)}
+                                                    placeholder="0 - 100"
+                                                    className="h-10"
+                                                />
+                                            </div>
+                                        )}
                                     </div>
+
+                                    {isQuoteMode && (
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
+                                            <div className="space-y-1.5">
+                                                <Label className="text-xs font-medium">Fecha estimada de envío</Label>
+                                                <Input
+                                                    type="date"
+                                                    value={deliveryDate}
+                                                    onChange={(e) => setDeliveryDate(e.target.value)}
+                                                    className="h-10"
+                                                />
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                <Label className="text-xs font-medium">Estado</Label>
+                                                <Select
+                                                    value={quoteStatus}
+                                                    onValueChange={(v) =>
+                                                        setQuoteStatus(v as typeof quoteStatus)
+                                                    }
+                                                >
+                                                    <SelectTrigger className="h-10 bg-background">
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="draft">Borrador</SelectItem>
+                                                        <SelectItem value="sent">Enviada</SelectItem>
+                                                        <SelectItem value="in_review">En revisión</SelectItem>
+                                                        <SelectItem value="approved">Aprobada</SelectItem>
+                                                        <SelectItem value="rejected">Rechazada</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                <Label className="text-xs font-medium">
+                                                    Válida hasta <span className="text-destructive">*</span>
+                                                </Label>
+                                                <Input
+                                                    type="date"
+                                                    value={validUntil}
+                                                    onChange={(e) => setValidUntil(e.target.value)}
+                                                    className="h-10"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
                                 </section>
 
                                 {/* Arreglo */}
@@ -480,7 +884,7 @@ export function NewOrderDialog({
                                                 variant="outline"
                                                 size="sm"
                                                 className="shrink-0 h-8 text-primary border-primary/30 hover:bg-primary hover:text-primary-foreground transition-colors"
-                                                onClick={() => setAddProductOpen(true)}
+                                                onClick={openAddProduct}
                                             >
                                                 <Plus className="h-3.5 w-3.5 mr-1" /> Agregar
                                             </Button>
@@ -490,7 +894,7 @@ export function NewOrderDialog({
                                     {productEntries.length === 0 ? (
                                         <button
                                             type="button"
-                                            onClick={() => setAddProductOpen(true)}
+                                            onClick={openAddProduct}
                                             className="w-full rounded-xl border-2 border-dashed border-muted-foreground/20 px-4 py-10 text-center transition-colors hover:border-primary/40 hover:bg-primary/[0.03] group"
                                         >
                                             <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted group-hover:bg-primary/10 transition-colors">
@@ -511,11 +915,22 @@ export function NewOrderDialog({
                                                     (a, l) => a + l.costo_unitario * l.cantidad,
                                                     0
                                                 );
+                                                const entryIncome =
+                                                    (entry.ingreso_proyectado_unitario || 0) * entryQty;
 
                                                 return (
                                                     <div
                                                         key={entry.key}
-                                                        className="group relative rounded-xl border bg-card pl-4 pr-3 py-3.5 shadow-sm hover:shadow-md transition-shadow border-l-[3px] border-l-primary"
+                                                        role="button"
+                                                        tabIndex={0}
+                                                        onClick={() => openEditProduct(entry)}
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === "Enter" || e.key === " ") {
+                                                                e.preventDefault();
+                                                                openEditProduct(entry);
+                                                            }
+                                                        }}
+                                                        className="group relative rounded-xl border bg-card pl-4 pr-3 py-3.5 shadow-sm hover:shadow-md hover:border-primary/40 transition-all border-l-[3px] border-l-primary cursor-pointer"
                                                     >
                                                         <div className="flex items-start justify-between gap-3">
                                                             <div className="min-w-0 space-y-2">
@@ -528,12 +943,16 @@ export function NewOrderDialog({
                                                                     </p>
                                                                 </div>
                                                                 <div className="flex flex-wrap gap-1.5">
-                                                                    <Badge variant="secondary" className="text-[10px] font-normal">
-                                                                        {entry.color}
-                                                                    </Badge>
-                                                                    <Badge variant="outline" className="text-[10px] font-normal">
-                                                                        {entry.estampado}
-                                                                    </Badge>
+                                                                    {entry.color?.trim() && (
+                                                                        <Badge variant="secondary" className="text-[10px] font-normal">
+                                                                            {entry.color}
+                                                                        </Badge>
+                                                                    )}
+                                                                    {entry.estampado?.trim() && (
+                                                                        <Badge variant="outline" className="text-[10px] font-normal">
+                                                                            {entry.estampado}
+                                                                        </Badge>
+                                                                    )}
                                                                 </div>
                                                                 <div className="flex flex-wrap gap-1">
                                                                     {entry.size_lines.map((l) => (
@@ -553,16 +972,28 @@ export function NewOrderDialog({
                                                                         {entry.comentario}
                                                                     </p>
                                                                 )}
-                                                                <p className="text-xs font-semibold tabular-nums">
-                                                                    {entryQty} uds · ${formatMoney(entryCost)}
-                                                                </p>
+                                                                <div className="space-y-0.5 text-xs tabular-nums">
+                                                                    <p className="font-semibold">
+                                                                        {entryQty} uds · Costo ${formatMoney(entryCost)}
+                                                                    </p>
+                                                                    <p className="text-muted-foreground">
+                                                                        Ingreso proy. ${formatMoney(entryIncome)}
+                                                                        {" "}
+                                                                        <span className="text-[10px]">
+                                                                            (${formatMoney(entry.ingreso_proyectado_unitario || 0)}/u)
+                                                                        </span>
+                                                                    </p>
+                                                                </div>
                                                             </div>
                                                             <Button
                                                                 type="button"
                                                                 size="icon"
                                                                 variant="ghost"
                                                                 className="shrink-0 h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-60 group-hover:opacity-100 transition-opacity"
-                                                                onClick={() => handleRemoveProduct(entry.key)}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleRemoveProduct(entry.key);
+                                                                }}
                                                             >
                                                                 <Trash2 className="h-4 w-4" />
                                                             </Button>
@@ -594,20 +1025,11 @@ export function NewOrderDialog({
                                             value={totalCost > 0 ? `$${formatMoney(totalCost)}` : "$0"}
                                             accent="cost"
                                         />
-                                        <div className="space-y-1.5">
-                                            <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                                                Ingreso proyectado
-                                            </Label>
-                                            <Input
-                                                type="number"
-                                                min="1"
-                                                required
-                                                placeholder="0"
-                                                value={incomeRaw}
-                                                onChange={(e) => setIncomeRaw(e.target.value)}
-                                                className="h-[52px] text-lg font-bold tabular-nums border-primary/30 focus-visible:ring-primary/30"
-                                            />
-                                        </div>
+                                        <StatCard
+                                            label="Ingreso proyectado"
+                                            value={income > 0 ? `$${formatMoney(income)}` : "$0"}
+                                            accent="income"
+                                        />
                                     </div>
                                     {income > 0 && totalCost > 0 && (
                                         <div
@@ -622,6 +1044,11 @@ export function NewOrderDialog({
                                             Ganancia estimada: ${formatMoney(estimatedProfit)} · Margen:{" "}
                                             {estimatedMargin.toFixed(1)}%
                                         </div>
+                                    )}
+                                    {productEntries.length > 0 && income <= 0 && (
+                                        <p className="text-[11px] text-muted-foreground">
+                                            El ingreso proyectado se calcula con el valor por unidad capturado al agregar cada producto.
+                                        </p>
                                     )}
                                 </section>
 
@@ -645,7 +1072,22 @@ export function NewOrderDialog({
                                         </div>
                                         <div className="space-y-1.5">
                                             <Label className="text-xs font-medium">Estado de pago</Label>
-                                            <Select value={paymentStatus} onValueChange={setPaymentStatus}>
+                                            <Select
+                                                value={paymentStatus}
+                                                onValueChange={(v) => {
+                                                    setPaymentStatus(v);
+                                                    if (v === "no_pagado") {
+                                                        setAbonoAmountRaw("");
+                                                        setMedioPago("");
+                                                        setConceptoAbono("");
+                                                        setFechaLimiteSaldo("");
+                                                    } else if (v === "pagado") {
+                                                        setAbonoAmountRaw("");
+                                                        setConceptoAbono("");
+                                                        setFechaLimiteSaldo("");
+                                                    }
+                                                }}
+                                            >
                                                 <SelectTrigger className="h-10">
                                                     <SelectValue />
                                                 </SelectTrigger>
@@ -659,6 +1101,138 @@ export function NewOrderDialog({
                                             </Select>
                                         </div>
                                     </div>
+
+                                    {paymentStatus === "parcial" && (
+                                        <div className="rounded-xl border border-amber-200/80 bg-amber-50/40 p-4 space-y-4 dark:bg-amber-950/10 dark:border-amber-900/40">
+                                            <div>
+                                                <h4 className="text-sm font-semibold flex items-center gap-2">
+                                                    <DollarSign className="h-4 w-4 text-amber-700" />
+                                                    Detalle financiero del abono
+                                                </h4>
+                                                <p className="text-[11px] text-muted-foreground mt-1">
+                                                    Completa el abono recibido. El saldo se calcula automáticamente.
+                                                </p>
+                                            </div>
+
+                                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                                <div className="space-y-1.5">
+                                                    <Label className="text-xs font-medium">Monto total de la deuda</Label>
+                                                    <Input
+                                                        value={income > 0 ? formatMoney(income) : "—"}
+                                                        readOnly
+                                                        className="h-10 bg-muted/50 font-medium"
+                                                    />
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                    <Label className="text-xs font-medium">
+                                                        Monto del abono <span className="text-destructive">*</span>
+                                                    </Label>
+                                                    <Input
+                                                        type="number"
+                                                        min={0}
+                                                        step="0.01"
+                                                        value={abonoAmountRaw}
+                                                        onChange={(e) => setAbonoAmountRaw(e.target.value)}
+                                                        placeholder="0"
+                                                        className="h-10"
+                                                    />
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                    <Label className="text-xs font-medium">Saldo pendiente</Label>
+                                                    <Input
+                                                        value={
+                                                            income > 0 && abonoAmount > 0
+                                                                ? formatMoney(saldoPendiente)
+                                                                : income > 0
+                                                                  ? formatMoney(income)
+                                                                  : "—"
+                                                        }
+                                                        readOnly
+                                                        className="h-10 bg-muted/50 font-medium text-amber-800 dark:text-amber-200"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                <div className="space-y-1.5 sm:col-span-2">
+                                                    <Label className="text-xs font-medium">
+                                                        Medio de pago <span className="text-destructive">*</span>
+                                                    </Label>
+                                                    <Select value={medioPago} onValueChange={setMedioPago}>
+                                                        <SelectTrigger className="h-10 bg-background">
+                                                            <SelectValue placeholder="Selecciona..." />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            {MEDIO_PAGO_OPTIONS.map((opt) => (
+                                                                <SelectItem key={opt.value} value={opt.value}>
+                                                                    {opt.label}
+                                                                </SelectItem>
+                                                            ))}
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
+                                            </div>
+
+                                            <div className="pt-1 border-t border-amber-200/60 dark:border-amber-900/40">
+                                                <h4 className="text-sm font-semibold mt-3 mb-1">
+                                                    Términos y compromisos futuros
+                                                </h4>
+                                                <p className="text-[11px] text-muted-foreground mb-3">
+                                                    Describe el abono y pacta la fecha del saldo restante.
+                                                </p>
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                    <div className="space-y-1.5 sm:col-span-2">
+                                                        <Label className="text-xs font-medium">
+                                                            Concepto <span className="text-destructive">*</span>
+                                                        </Label>
+                                                        <Input
+                                                            value={conceptoAbono}
+                                                            onChange={(e) => setConceptoAbono(e.target.value)}
+                                                            placeholder='Ej. Abono del 50% para inicio de producción'
+                                                            className="h-10"
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-1.5">
+                                                        <Label className="text-xs font-medium">
+                                                            Fecha límite del saldo{" "}
+                                                            <span className="text-destructive">*</span>
+                                                        </Label>
+                                                        <Input
+                                                            type="date"
+                                                            value={fechaLimiteSaldo}
+                                                            onChange={(e) => setFechaLimiteSaldo(e.target.value)}
+                                                            className="h-10"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {paymentStatus === "pagado" && (
+                                        <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/40 p-4 space-y-3 dark:bg-emerald-950/10 dark:border-emerald-900/40">
+                                            <div className="space-y-1.5">
+                                                <Label className="text-xs font-medium">
+                                                    Medio de pago <span className="text-destructive">*</span>
+                                                </Label>
+                                                <Select value={medioPago} onValueChange={setMedioPago}>
+                                                    <SelectTrigger className="h-10 bg-background">
+                                                        <SelectValue placeholder="Transferencia, efectivo, tarjeta..." />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {MEDIO_PAGO_OPTIONS.map((opt) => (
+                                                            <SelectItem key={opt.value} value={opt.value}>
+                                                                {opt.label}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                            <p className="text-[11px] text-muted-foreground">
+                                                Quién registra el pago y la fecha/hora se guardan automáticamente.
+                                            </p>
+                                        </div>
+                                    )}
                                 </section>
 
                                 <Separator />
@@ -685,14 +1259,63 @@ export function NewOrderDialog({
                                                 <ImageIcon className="h-3.5 w-3.5" />
                                                 Logo del cliente
                                             </Label>
-                                            <button
-                                                type="button"
-                                                className="w-full flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-muted-foreground/20 px-4 py-5 text-sm text-muted-foreground hover:border-primary/40 hover:bg-primary/[0.03] hover:text-foreground transition-colors"
-                                            >
-                                                <Upload className="h-5 w-5" />
-                                                <span className="font-medium">Subir logo</span>
-                                                <span className="text-[11px]">PNG, JPG o SVG</span>
-                                            </button>
+                                            <input
+                                                ref={logoInputRef}
+                                                type="file"
+                                                accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg"
+                                                className="hidden"
+                                                onChange={handleLogoFileChange}
+                                            />
+                                            {logoPreviewUrl ? (
+                                                <div className="rounded-xl border bg-muted/20 p-3 space-y-3">
+                                                    <div className="flex items-center justify-center rounded-lg bg-background border overflow-hidden h-28">
+                                                        <img
+                                                            src={logoPreviewUrl}
+                                                            alt="Vista previa del logo"
+                                                            className="max-h-full max-w-full object-contain"
+                                                        />
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <Button
+                                                            type="button"
+                                                            variant="outline"
+                                                            size="sm"
+                                                            className="flex-1"
+                                                            disabled={logoUploading}
+                                                            onClick={() => logoInputRef.current?.click()}
+                                                        >
+                                                            Cambiar
+                                                        </Button>
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            className="text-destructive hover:text-destructive"
+                                                            disabled={logoUploading}
+                                                            onClick={clearLogo}
+                                                        >
+                                                            Quitar
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    disabled={logoUploading}
+                                                    onClick={() => logoInputRef.current?.click()}
+                                                    className="w-full flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-muted-foreground/20 px-4 py-5 text-sm text-muted-foreground hover:border-primary/40 hover:bg-primary/[0.03] hover:text-foreground transition-colors disabled:opacity-60"
+                                                >
+                                                    {logoUploading ? (
+                                                        <Loader2 className="h-5 w-5 animate-spin" />
+                                                    ) : (
+                                                        <Upload className="h-5 w-5" />
+                                                    )}
+                                                    <span className="font-medium">
+                                                        {logoUploading ? "Subiendo..." : "Subir logo"}
+                                                    </span>
+                                                    <span className="text-[11px]">PNG, JPG, WEBP o SVG (máx. 5 MB)</span>
+                                                </button>
+                                            )}
                                         </div>
                                         <div className="space-y-2">
                                             <Label className="text-xs font-medium">Posiciones del logo</Label>
@@ -742,14 +1365,18 @@ export function NewOrderDialog({
                                 </Button>
                                 <Button
                                     type="submit"
-                                    disabled={loading || productEntries.length === 0 || !takenBy}
-                                    className="min-w-[120px] shadow-sm"
+                                    disabled={busy || productEntries.length === 0 || !takenBy}
+                                    className="min-w-[140px] shadow-sm"
                                 >
-                                    {loading ? (
+                                    {busy ? (
                                         <>
                                             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                            Creando...
+                                            Guardando...
                                         </>
+                                    ) : isEditMode ? (
+                                        "Guardar cambios"
+                                    ) : isQuoteMode ? (
+                                        "Guardar cotización"
                                     ) : (
                                         "Crear orden"
                                     )}
@@ -762,10 +1389,14 @@ export function NewOrderDialog({
 
             <AddOrderProductDialog
                 open={addProductOpen}
-                onOpenChange={setAddProductOpen}
+                onOpenChange={(open) => {
+                    setAddProductOpen(open);
+                    if (!open) setEditingProduct(null);
+                }}
                 lines={lines}
                 loadingLines={loadingLines}
-                lockedProductId={lockedProductId}
+                lockedProductId={undefined}
+                editEntry={editingProduct}
                 onAdd={handleAddProduct}
             />
         </>

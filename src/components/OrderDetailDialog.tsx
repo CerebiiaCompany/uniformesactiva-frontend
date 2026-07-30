@@ -24,8 +24,16 @@ import { cn } from "@/lib/utils";
 import type { Order } from "@/hooks/useOrders";
 import { LOGO_POSITION_OPTIONS } from "@/lib/order-fields";
 import { formatCurrency } from "@/lib/format-number";
+import { getApiBaseUrl } from "@/lib/api-base";
 
 const formatMoney = (value: string | number) => formatCurrency(value);
+
+function resolveMediaUrl(pathOrUrl?: string | null) {
+    if (!pathOrUrl) return null;
+    if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) return pathOrUrl;
+    const base = getApiBaseUrl().replace(/\/$/, "");
+    return pathOrUrl.startsWith("/") ? `${base}${pathOrUrl}` : `${base}/media/${pathOrUrl}`;
+}
 
 interface OrderDetailDialogProps {
     open: boolean;
@@ -231,11 +239,27 @@ export function OrderDetailDialog({
                             </section>
 
                             {/* Logos */}
-                            <section className="space-y-2.5">
+                            <section className="space-y-3">
                                 <div className="flex items-center gap-2">
                                     <ImageIcon className="h-4 w-4 text-primary" />
-                                    <h3 className="text-sm font-semibold">Posiciones del logo</h3>
+                                    <h3 className="text-sm font-semibold">Logo del cliente</h3>
                                 </div>
+                                {resolveMediaUrl(order.logo_url || order.logo) ? (
+                                    <div className="rounded-xl border bg-muted/20 p-3 flex items-center justify-center h-32">
+                                        <img
+                                            src={resolveMediaUrl(order.logo_url || order.logo) || ""}
+                                            alt="Logo del cliente"
+                                            className="max-h-full max-w-full object-contain"
+                                        />
+                                    </div>
+                                ) : (
+                                    <p className="text-xs text-muted-foreground rounded-lg border border-dashed px-3 py-3">
+                                        Sin logo cargado
+                                    </p>
+                                )}
+                                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                                    Posiciones
+                                </h4>
                                 {activeLogos.length > 0 ? (
                                     <div className="flex flex-wrap gap-1.5">
                                         {activeLogos.map((pos) => (

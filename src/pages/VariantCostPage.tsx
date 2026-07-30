@@ -30,6 +30,7 @@ import { LaborCostsTable } from "@/components/variant-cost/LaborCostsTable";
 import { SizeConsumptionTable } from "@/components/variant-cost/SizeConsumptionTable";
 import { VariantSizeCostBreakdownTable } from "@/components/variant-cost/VariantSizeCostBreakdownTable";
 import { ModalForm, FieldDefinition } from "@/components/ui/ModalForm";
+import { getNewInsumoTipoFields } from "@/lib/insumo-tipo-form";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { formatCurrency, formatDecimal, formatForInput } from "@/lib/format-number";
 import type { UpdateLaborPayload, UpdateSupplyPayload } from "@/types/variant";
@@ -333,6 +334,7 @@ export default function VariantCostPage() {
                     proveedor_marca: data.proveedor_marca,
                     color: data.color,
                     stock_minimo: data.stock_minimo ? Number(data.stock_minimo) : null,
+                    stock_inicial: data.stock_inicial ? Number(data.stock_inicial) : null,
                 });
                 if (result.success) {
                     toast.success("Tipo de insumo creado");
@@ -352,81 +354,7 @@ export default function VariantCostPage() {
         defaultUnitPrice: t.precio_unitario_default ?? null,
     }));
 
-    const insumoCategoriaOptions = [
-        { value: "Botonería", label: "Botonería" },
-        { value: "Cierres/Cremalleras", label: "Cierres/Cremalleras" },
-        { value: "Hilos", label: "Hilos" },
-        { value: "Marroquinería/Herrajes", label: "Marroquinería/Herrajes" },
-        { value: "Etiquetas/Empaque", label: "Etiquetas/Empaque" },
-        { value: "Interlon/Entretelas", label: "Interlon/Entretelas" },
-        { value: "Otros", label: "Otros" },
-    ];
-
-    const unidadMedidaOptions = [
-        { value: "Unidad", label: "Unidad (piezas/botones)" },
-        { value: "Metros", label: "Metros" },
-        { value: "Conos", label: "Conos" },
-        { value: "Yardas", label: "Yardas" },
-        { value: "Centímetros cuadrados", label: "Centímetros cuadrados" },
-        { value: "Pliegos", label: "Pliegos" },
-        { value: "Gramos", label: "Gramos" },
-        { value: "Kilos", label: "Kilos" },
-    ];
-
-    const newInsumoTipoFields: FieldDefinition[] = [
-        {
-            name: "name",
-            label: "Nombre del insumo *",
-            type: "text",
-            placeholder: "Ej. Botón de pasta",
-        },
-        {
-            name: "categoria",
-            label: "Categoría / Clasificación *",
-            type: "select",
-            options: insumoCategoriaOptions,
-        },
-        {
-            name: "unidad_medida",
-            label: "Unidad de medida *",
-            type: "select",
-            options: unidadMedidaOptions,
-        },
-        {
-            name: "precio_unitario_default",
-            label: "Precio unitario predeterminado *",
-            type: "number",
-            placeholder: "Ej. 3500 o 12,50",
-        },
-        {
-            name: "codigo_sku",
-            label: "Código SKU / Referencia",
-            type: "text",
-            placeholder: "Ej. INS-BOT-001",
-            required: false,
-        },
-        {
-            name: "proveedor_marca",
-            label: "Proveedor / Marca habitual",
-            type: "text",
-            placeholder: "Ej. YKK, Coats Cadena",
-            required: false,
-        },
-        {
-            name: "color",
-            label: "Color / Tono",
-            type: "text",
-            placeholder: "Ej. Negro, Níquel",
-            required: false,
-        },
-        {
-            name: "stock_minimo",
-            label: "Stock mínimo / Punto de reorden",
-            type: "number",
-            placeholder: "100",
-            required: false,
-        },
-    ];
+    const newInsumoTipoFields: FieldDefinition[] = getNewInsumoTipoFields();
 
     const laborPhaseOptions = laborPhases.map((f) => ({
         value: f.id,
