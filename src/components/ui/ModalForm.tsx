@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
     Dialog,
     DialogContent,
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatForInput } from "@/lib/format-number";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
+import { cn } from "@/lib/utils";
 
 export interface FieldDefinition {
     name: string;
@@ -21,6 +22,8 @@ export interface FieldDefinition {
     inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
     options?: { value: string; label: string; defaultUnitPrice?: string | number | null }[];
     required?: boolean;
+    /** Campos con el mismo `row` se muestran en una sola fila */
+    row?: string;
 }
 
 interface ModalFormProps {
@@ -37,6 +40,7 @@ const DECIMAL_PRICE_FIELDS = new Set([
     "unit_price",
     "precio_unitario_default",
     "stock_minimo",
+    "stock_inicial",
     "quantity",
     "cantidad",
     "price_per_meter",
@@ -44,7 +48,6 @@ const DECIMAL_PRICE_FIELDS = new Set([
 ]);
 
 const sanitizeDecimalTyping = (value: string) => {
-    // Permite dígitos y un solo separador decimal (, o .)
     let cleaned = value.replace(/[^\d.,]/g, "");
     const sepIndex = Math.max(cleaned.lastIndexOf(","), cleaned.lastIndexOf("."));
     if (sepIndex >= 0) {
@@ -63,8 +66,34 @@ const toInputDecimal = (value: string | number | null | undefined) => {
     return formatForInput(value);
 };
 
+type FieldGroup =
+    | { kind: "single"; field: FieldDefinition }
+    | { kind: "row"; rowId: string; fields: FieldDefinition[] };
+
+function groupFields(fields: FieldDefinition[]): FieldGroup[] {
+    const groups: FieldGroup[] = [];
+    let i = 0;
+    while (i < fields.length) {
+        const field = fields[i];
+        if (field.row) {
+            const rowId = field.row;
+            const rowFields: FieldDefinition[] = [];
+            while (i < fields.length && fields[i].row === rowId) {
+                rowFields.push(fields[i]);
+                i += 1;
+            }
+            groups.push({ kind: "row", rowId, fields: rowFields });
+        } else {
+            groups.push({ kind: "single", field });
+            i += 1;
+        }
+    }
+    return groups;
+}
+
 export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading, initialData }: ModalFormProps) {
     const [formData, setFormData] = useState<Record<string, string>>({});
+    const groups = useMemo(() => groupFields(fields), [fields]);
 
     useEffect(() => {
         if (isOpen) {
@@ -111,6 +140,55 @@ export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading,
         onSubmit(normalized);
     };
 
+    const renderField = (field: FieldDefinition, compactLabel = false) => (
+        <div key={field.name} className="space-y-2 min-w-0">
+            <Label
+                htmlFor={field.name}
+                className={cn(
+                    compactLabel && "text-[11px] uppercase tracking-wide text-muted-foreground"
+                )}
+            >
+                {field.label}
+            </Label>
+            {field.type === "select" ? (
+                <select
+                    id={field.name}
+                    name={field.name}
+                    value={formData[field.name] || ""}
+                    onChange={(e) => handleChange(field.name, e.target.value)}
+                    required={field.required !== false}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                    {field.required !== false && (
+                        <option value="" disabled>
+                            Seleccionar...
+                        </option>
+                    )}
+                    {field.options?.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                        </option>
+                    ))}
+                </select>
+            ) : (
+                <Input
+                    id={field.name}
+                    name={field.name}
+                    type="text"
+                    inputMode={
+                        DECIMAL_PRICE_FIELDS.has(field.name)
+                            ? "decimal"
+                            : field.inputMode
+                    }
+                    placeholder={field.placeholder}
+                    value={formData[field.name] || ""}
+                    onChange={(e) => handleChange(field.name, e.target.value)}
+                    required={field.required !== false}
+                />
+            )}
+        </div>
+    );
+
     return (
         <Dialog open={isOpen} onOpenChange={onClose}>
             <DialogContent>
@@ -118,47 +196,22 @@ export function ModalForm({ isOpen, onClose, title, fields, onSubmit, isLoading,
                     <DialogTitle>{title}</DialogTitle>
                 </DialogHeader>
                 <form onSubmit={handleSubmit} className="space-y-4 max-h-[70vh] overflow-y-auto pr-1" noValidate>
-                    {fields.map((field) => (
-                        <div key={field.name} className="space-y-2">
-                            <Label htmlFor={field.name}>{field.label}</Label>
-                            {field.type === "select" ? (
-                                <select
-                                    id={field.name}
-                                    name={field.name}
-                                    value={formData[field.name] || ""}
-                                    onChange={(e) => handleChange(field.name, e.target.value)}
-                                    required={field.required !== false}
-                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                >
-                                    {field.required !== false && (
-                                        <option value="" disabled>
-                                            Seleccionar...
-                                        </option>
-                                    )}
-                                    {field.options?.map((opt) => (
-                                        <option key={opt.value} value={opt.value}>
-                                            {opt.label}
-                                        </option>
-                                    ))}
-                                </select>
-                            ) : (
-                                <Input
-                                    id={field.name}
-                                    name={field.name}
-                                    type="text"
-                                    inputMode={
-                                        DECIMAL_PRICE_FIELDS.has(field.name)
-                                            ? "decimal"
-                                            : field.inputMode
-                                    }
-                                    placeholder={field.placeholder}
-                                    value={formData[field.name] || ""}
-                                    onChange={(e) => handleChange(field.name, e.target.value)}
-                                    required={field.required !== false}
-                                />
-                            )}
-                        </div>
-                    ))}
+                    {groups.map((group) =>
+                        group.kind === "single" ? (
+                            renderField(group.field)
+                        ) : (
+                            <div
+                                key={group.rowId}
+                                className={cn(
+                                    "grid gap-3",
+                                    group.fields.length === 2 && "grid-cols-2",
+                                    group.fields.length >= 3 && "grid-cols-3"
+                                )}
+                            >
+                                {group.fields.map((field) => renderField(field, true))}
+                            </div>
+                        )
+                    )}
                     <div className="flex justify-end gap-2 pt-4 sticky bottom-0 bg-background pb-1">
                         <Button type="button" variant="outline" onClick={onClose}>
                             Cancelar

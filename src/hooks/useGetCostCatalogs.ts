@@ -21,6 +21,7 @@ const normalizeCatalog = (items: any[]): CatalogOption[] =>
             proveedor_marca: item.proveedor_marca,
             color: item.color,
             stock_minimo: item.stock_minimo ?? null,
+            stock_inicial: item.stock_inicial ?? null,
         };
     });
 

@@ -25,13 +25,47 @@ const statusConfig: Record<StatusType, { label: string; className: string }> = {
   dispatch: { label: "Despacho", className: "bg-muted text-muted-foreground" },
   inactive: { label: "Inactiva", className: "bg-gray-100 text-gray-500 border border-gray-200" },
   in_review: { label: "En revisión", className: "bg-yellow-100 text-yellow-800 border border-yellow-200" },
-  ordered: { label: "Ordenado", className: "bg-blue-100 text-blue-800 border border-blue-200" },
+  ordered: { label: "Ordenado", className: "bg-green-100 text-green-800 border border-green-200" },
 };
 
-export function StatusBadge({ status }: { status: StatusType }) {
+/** Estados largos: se parten en 2 líneas para no aplastar la columna */
+const multilineLabels: Partial<Record<StatusType, [string, string]>> = {
+  in_production: ["En", "producción"],
+  in_review: ["En", "revisión"],
+};
+
+interface StatusBadgeProps {
+  status: StatusType;
+  /** Compacta el badge (útil en tablas densas) */
+  compact?: boolean;
+}
+
+export function StatusBadge({ status, compact = false }: StatusBadgeProps) {
   const config = statusConfig[status] ?? { label: status, className: "bg-muted text-muted-foreground" };
+  const lines = multilineLabels[status];
+
+  if (compact && lines) {
+    return (
+      <span
+        className={cn(
+          "inline-flex flex-col items-center justify-center rounded-full px-2.5 py-1 text-xs font-semibold leading-[1.2] text-center min-w-[5.25rem]",
+          config.className
+        )}
+      >
+        <span>{lines[0]}</span>
+        <span>{lines[1]}</span>
+      </span>
+    );
+  }
+
   return (
-    <span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold", config.className)}>
+    <span
+      className={cn(
+        "inline-flex items-center justify-center rounded-full font-semibold whitespace-nowrap",
+        compact ? "text-xs px-2.5 py-1 leading-tight" : "text-xs px-2.5 py-1",
+        config.className
+      )}
+    >
       {config.label}
     </span>
   );

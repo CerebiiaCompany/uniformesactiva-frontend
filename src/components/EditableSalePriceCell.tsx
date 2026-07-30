@@ -108,7 +108,7 @@ export function EditableSalePriceCell({
 
     if (isEditing) {
         return (
-            <div className="flex items-center justify-center gap-1 min-w-[120px]">
+            <div className="flex items-center justify-end gap-1 min-w-0">
                 <Input
                     ref={inputRef}
                     type="text"
@@ -118,7 +118,7 @@ export function EditableSalePriceCell({
                     onBlur={() => void commit()}
                     onKeyDown={(e) => void handleKeyDown(e)}
                     disabled={isSaving}
-                    className="h-8 w-[130px] text-center text-sm font-bold"
+                    className="h-8 w-[110px] text-right text-sm font-semibold"
                 />
                 {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />}
             </div>
@@ -132,15 +132,15 @@ export function EditableSalePriceCell({
             disabled={isSaving}
             title="Clic para editar valor de venta"
             className={cn(
-                "group inline-flex items-center justify-center gap-1.5 font-bold text-slate-800",
-                "hover:text-primary transition-colors disabled:opacity-60"
+                "group inline-flex items-center justify-end gap-1.5 font-semibold text-sm text-foreground tabular-nums",
+                "hover:text-primary transition-colors disabled:opacity-60 w-full"
             )}
         >
             <span>${formatCurrency(value)}</span>
             {isSaving ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
             ) : (
-                <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-60 transition-opacity" />
+                <Pencil className="h-3.5 w-3.5 opacity-0 group-hover:opacity-60 transition-opacity" />
             )}
         </button>
     );

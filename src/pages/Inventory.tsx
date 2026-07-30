@@ -9,7 +9,10 @@ import { useAddMaterialStock } from "@/hooks/useAddMaterialStock";
 import { useCreateMaterial } from "@/hooks/useCreateMaterial";
 import { useGetCostCatalogs } from "@/hooks/useGetCostCatalogs";
 import { useCreateProveedor } from "@/hooks/useCreateProveedor";
+import { useCreateInsumoTipo } from "@/hooks/useCreateInsumoTipo";
 import { ProveedorCombobox } from "@/components/ProveedorCombobox";
+import { ModalForm } from "@/components/ui/ModalForm";
+import { getNewInsumoTipoFields } from "@/lib/insumo-tipo-form";
 import { toast } from "sonner";
 
 interface Material {
@@ -43,6 +46,7 @@ export default function Inventory() {
   const [isProveedorModalOpen, setIsProveedorModalOpen] = useState(false);
   const [proveedorName, setProveedorName] = useState("");
   const [proveedorError, setProveedorError] = useState("");
+  const [isInsumoTipoModalOpen, setIsInsumoTipoModalOpen] = useState(false);
 
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
@@ -56,9 +60,11 @@ export default function Inventory() {
   });
   const { proveedores, refetchProveedores } = useGetCostCatalogs();
   const { createProveedor, isLoading: isCreatingProveedor } = useCreateProveedor();
+  const { createInsumoTipo, isLoading: isCreatingInsumoTipo } = useCreateInsumoTipo();
 
   const { addStock, isPending: isSubmitting } = useAddMaterialStock();
   const { createMaterial, isPending: isCreating } = useCreateMaterial();
+  const newInsumoTipoFields = useMemo(() => getNewInsumoTipoFields(), []);
 
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -95,6 +101,29 @@ export default function Inventory() {
     setProveedorName("");
     setProveedorError("");
     setIsProveedorModalOpen(true);
+  };
+
+  const handleCreateInsumoTipo = async (data: Record<string, string>) => {
+    const result = await createInsumoTipo({
+      name: data.name,
+      categoria: data.categoria,
+      unidad_medida: data.unidad_medida,
+      precio_unitario_default: data.precio_unitario_default
+        ? Number(data.precio_unitario_default)
+        : null,
+      codigo_sku: data.codigo_sku,
+      proveedor_marca: data.proveedor_marca,
+      color: data.color,
+      stock_minimo: data.stock_minimo ? Number(data.stock_minimo) : null,
+      stock_inicial: data.stock_inicial ? Number(data.stock_inicial) : null,
+    });
+    if (result.success) {
+      toast.success("Tipo de insumo creado y registrado en inventario");
+      setIsInsumoTipoModalOpen(false);
+      refetch();
+    } else {
+      toast.error(result.error || "No se pudo crear el tipo de insumo");
+    }
   };
 
   const handleCreateProveedorSubmit = async (e: React.FormEvent) => {
@@ -198,6 +227,13 @@ export default function Inventory() {
         <CardHeader className="pb-3 flex flex-row items-center justify-between gap-3">
           <CardTitle className="text-sm font-semibold">Materiales en stock</CardTitle>
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsInsumoTipoModalOpen(true)}
+              className="inline-flex items-center gap-1 px-4 py-1.5 border border-border bg-background hover:bg-muted text-foreground text-sm font-medium rounded-md transition-colors shadow-sm"
+            >
+              <Plus className="h-4 w-4" /> Tipo de insumo
+            </button>
             <button
               type="button"
               onClick={handleOpenProveedorModal}
@@ -510,6 +546,15 @@ export default function Inventory() {
           </div>
         </div>
       )}
+
+      <ModalForm
+        isOpen={isInsumoTipoModalOpen}
+        onClose={() => setIsInsumoTipoModalOpen(false)}
+        title="Nuevo tipo de insumo"
+        fields={newInsumoTipoFields}
+        onSubmit={handleCreateInsumoTipo}
+        isLoading={isCreatingInsumoTipo}
+      />
 
       {isStockModalOpen && selectedMaterial && (
         <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">

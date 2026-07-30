@@ -10,6 +10,11 @@ export interface OrderItem {
     talla_nombre?: string | null;
     cantidad: number;
     costo_unitario: string | number;
+    producto_id?: string | null;
+    producto_nombre?: string | null;
+    linea_id?: string | null;
+    linea_nombre?: string | null;
+    color?: string | null;
 }
 
 export interface OrderLogoFields {
@@ -30,21 +35,52 @@ export interface Order extends OrderLogoFields {
     tomado_por_id: string | null;
     tomado_por_nombre: string | null;
     comentarios: string | null;
+    logo?: string | null;
+    logo_url?: string | null;
     estado: StatusType;
-    pagado: boolean; // Ahora es booleano
+    pagado: boolean;
+    estado_pago?: "no_pagado" | "parcial" | "pagado";
+    detalle_abono?: {
+        monto_total?: number;
+        monto_abono?: number;
+        saldo_pendiente?: number;
+        medio_pago?: string;
+        concepto?: string;
+        fecha_limite_saldo?: string;
+        registrado_por_id?: string;
+        registrado_por_nombre?: string;
+        fecha_registro?: string;
+        abono_detalle?: {
+            monto_total?: number;
+            monto_abono?: number;
+            saldo_pendiente?: number;
+            medio_pago?: string;
+            concepto?: string;
+            fecha_limite_saldo?: string;
+            registrado_por_id?: string;
+            registrado_por_nombre?: string;
+            fecha_registro?: string;
+        };
+    } | null;
     valor_venta_proyectado: string;
     costo_total: string;
     ganancia: string;
     margen_ganancia: string;
     fecha_creacion: string;
     fecha_estimada_entrega?: string | null;
+    fecha_entrega_real?: string | null;
+    etapa_produccion?: string;
+    etapa_historial?: { etapa: string; entered_at: string }[];
     items: OrderItem[];
+    color?: string;
+    estampado?: string;
 }
 
 export interface CreateOrderItemPayload {
     subproducto_id: string;
     talla_id: string;
     cantidad: number;
+    color?: string;
 }
 
 export interface CreateOrderPayload {
@@ -55,12 +91,28 @@ export interface CreateOrderPayload {
     items: CreateOrderItemPayload[];
     fecha_estimada_entrega?: string;
     comentarios?: string;
+    logo?: string | null;
     logo_manga_derecha?: boolean;
     logo_manga_izquierda?: boolean;
     logo_delantero_derecha?: boolean;
     logo_delantero_izquierda?: boolean;
     logo_espalda?: boolean;
     logo_bolsillo?: boolean;
+    estado_pago?: "no_pagado" | "parcial" | "pagado";
+    detalle_abono?: {
+        monto_total?: number;
+        monto_abono?: number;
+        saldo_pendiente?: number;
+        medio_pago: string;
+        concepto?: string;
+        fecha_limite_saldo?: string;
+        registrado_por_id?: string;
+        registrado_por_nombre?: string;
+        fecha_registro?: string;
+        abono_detalle?: Record<string, unknown>;
+    } | null;
+    color?: string;
+    estampado?: string;
 }
 
 export interface OrderListFilters {
@@ -79,6 +131,16 @@ export interface OrderLog {
     orden_id: string;
     estado_anterior: string;
     estado_nuevo: string;
+    usuario_id: string | null;
+    fecha_hora: string;
+    observacion: string | null;
+}
+
+export interface OrderEtapaLog {
+    id: string;
+    orden_id: string;
+    etapa_anterior: string;
+    etapa_nueva: string;
     usuario_id: string | null;
     fecha_hora: string;
     observacion: string | null;
@@ -183,6 +245,29 @@ export function useOrders() {
         }
     };
 
+    const updateOrder = async (
+        orderId: string,
+        payload: CreateOrderPayload
+    ): Promise<{ success: boolean; errorMessage: string | null }> => {
+        setLoading(true);
+        setError(null);
+        try {
+            const body = { ...payload, logo_manga_derecha: payload.logo_manga_derecha ?? false };
+            const updated = await http<Order>(endpoints.orders.detail(orderId), {
+                method: "PATCH",
+                body: JSON.stringify(body),
+            });
+            mergeOrderInList(updated);
+            return { success: true, errorMessage: null };
+        } catch (err: unknown) {
+            const message = resolveHttpErrorMessage(err, "Error al actualizar la orden");
+            setError(message);
+            return { success: false, errorMessage: message };
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const updateOrderStatus = async (ordenId: string, nuevoEstado: string, observacion: string | null) => {
         setLoading(true);
         setError(null);
@@ -203,6 +288,14 @@ export function useOrders() {
     const fetchOrderLogs = async (ordenId: string): Promise<OrderLog[]> => {
         try {
             return await http<OrderLog[]>(endpoints.orders.logs(ordenId));
+        } catch {
+            return [];
+        }
+    };
+
+    const fetchEtapaLogs = async (ordenId: string): Promise<OrderEtapaLog[]> => {
+        try {
+            return await http<OrderEtapaLog[]>(endpoints.orders.etapas(ordenId));
         } catch {
             return [];
         }
@@ -240,9 +333,51 @@ export function useOrders() {
         }
     };
 
+    const updateOrderPayment = async (
+        orderId: string,
+        payload: {
+            estado_pago: "no_pagado" | "parcial" | "pagado";
+            detalle_abono?: CreateOrderPayload["detalle_abono"];
+        }
+    ) => {
+        try {
+            const updated = await http<Order>(endpoints.orders.pago(orderId), {
+                method: "PATCH",
+                body: JSON.stringify(payload),
+            });
+            mergeOrderInList(updated);
+            return { order: updated, errorMessage: null as string | null };
+        } catch (err) {
+            return {
+                order: null,
+                errorMessage: resolveHttpErrorMessage(err, "Error al actualizar el pago"),
+            };
+        }
+    };
+
+    const updateOrderStage = async (orderId: string, etapa: string, observacion?: string) => {
+        try {
+            const updated = await http<Order>(endpoints.orders.etapa(orderId), {
+                method: "PATCH",
+                body: JSON.stringify({
+                    etapa,
+                    ...(observacion ? { observacion } : {}),
+                }),
+            });
+            mergeOrderInList(updated);
+            return { order: updated, errorMessage: null as string | null };
+        } catch (err) {
+            return {
+                order: null,
+                errorMessage: resolveHttpErrorMessage(err, "Error al actualizar la etapa"),
+            };
+        }
+    };
+
     return {
         orders, totalCount, loading, updatingSalePriceId, updatingCommentsId, error,
-        fetchOrders, fetchOrderById, createOrder, updateOrderStatus,
-        updateOrderSalePrice, updateOrderComments, mergeOrderInList, fetchOrderLogs,
+        fetchOrders, fetchOrderById, createOrder, updateOrder, updateOrderStatus,
+        updateOrderSalePrice, updateOrderComments, updateOrderPayment, updateOrderStage,
+        mergeOrderInList, fetchOrderLogs, fetchEtapaLogs,
     };
 }
