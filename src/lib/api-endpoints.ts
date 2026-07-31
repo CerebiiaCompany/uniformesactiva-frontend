@@ -5,6 +5,7 @@ const base = () => getApiBaseUrl();
 export const endpoints = {
     clients: {
         list: () => `${base()}/api/v1/clients/`,
+        detail: (id: string) => `${base()}/api/v1/clients/${id}/`,
     },
     costos: {
         proveedores: () => `${base()}/api/v1/costos/proveedores/`,

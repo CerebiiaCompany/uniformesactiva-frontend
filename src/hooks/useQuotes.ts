@@ -7,7 +7,19 @@ export interface QuoteOrderPayload {
     producto_id: string;
     tomado_por_id: string;
     valor_venta_proyectado: number;
-    items: { subproducto_id: string; talla_id: string; cantidad: number; color?: string }[];
+    items: {
+        subproducto_id: string;
+        talla_id: string;
+        cantidad: number;
+        color?: string;
+        talla_nombre?: string;
+        costo_unitario?: number;
+        /** Precio de venta unitario (ingreso proyectado) para impresión */
+        precio_venta_unitario?: number;
+        producto_nombre?: string;
+        subproducto_nombre?: string;
+        linea_nombre?: string;
+    }[];
     fecha_estimada_entrega?: string;
     comentarios?: string;
     logo_manga_derecha?: boolean;
@@ -498,6 +510,20 @@ export function useQuotes() {
         setQuotes((prev) => prev.map((q) => (q.id === updated.id ? updated : q)));
     }, []);
 
+    const fetchQuoteById = useCallback(
+        async (id: string): Promise<Quote | null> => {
+            try {
+                const data = await http<ApiQuote>(endpoints.quotes.detail(id));
+                const mapped = mapApiQuoteToQuote(data);
+                mergeQuoteInList(mapped);
+                return mapped;
+            } catch {
+                return null;
+            }
+        },
+        [mergeQuoteInList]
+    );
+
     const updateQuotePayment = useCallback(
         async (
             quoteId: string,
@@ -529,6 +555,7 @@ export function useQuotes() {
         loading,
         error,
         fetchQuotes,
+        fetchQuoteById,
         createQuote,
         createQuoteFromOrderForm,
         updateQuoteFromOrderForm,

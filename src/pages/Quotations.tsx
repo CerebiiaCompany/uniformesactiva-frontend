@@ -3,7 +3,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, X, ShoppingCart, MessageSquare, FileText, Pencil } from "lucide-react";
+import { Plus, X, ShoppingCart, MessageSquare, FileText, Pencil, Package, Printer, Loader2 } from "lucide-react";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -19,6 +19,7 @@ import {
   OrderPaymentDetailDialog,
   type PaymentDetailSubject,
 } from "@/components/OrderPaymentDetailDialog";
+import { ArticlesDetailDialog } from "@/components/ArticlesDetailDialog";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,6 +32,8 @@ import {
 } from "@/components/ui/select";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
+import { quotePayloadToArticleVariants } from "@/lib/order-fields";
+import { printQuoteProductionGuide } from "@/lib/quote-production-guide";
 
 interface FilterUserOption {
   id: string;
@@ -65,6 +68,7 @@ export default function Quotations() {
     loading,
     error,
     fetchQuotes,
+    fetchQuoteById,
     updateQuoteStatus,
     placeOrderFromQuote,
     fetchQuoteNovedades,
@@ -82,6 +86,7 @@ export default function Quotations() {
   const [newStatus, setNewStatus] = useState<string>("");
   const [isStatusUpdating, setIsStatusUpdating] = useState(false);
   const [isPlacingOrderId, setIsPlacingOrderId] = useState<string | null>(null);
+  const [printingQuoteId, setPrintingQuoteId] = useState<string | null>(null);
 
   // Modal de novedades
   const [novedadesOpen, setNovedadesOpen] = useState(false);
@@ -94,6 +99,24 @@ export default function Quotations() {
     () => (paymentDetailQuote ? quoteToPaymentSubject(paymentDetailQuote) : null),
     [paymentDetailQuote]
   );
+
+  const [articlesQuote, setArticlesQuote] = useState<Quote | null>(null);
+  const [articlesOpen, setArticlesOpen] = useState(false);
+  const articlesVariants = useMemo(
+    () =>
+      articlesQuote
+        ? quotePayloadToArticleVariants(articlesQuote.orderPayload as QuoteOrderPayload)
+        : [],
+    [articlesQuote]
+  );
+  const articlesFallback = useMemo(() => {
+    if (!articlesQuote) return [];
+    if (articlesVariants.length > 0) return [];
+    return String(articlesQuote.items || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }, [articlesQuote, articlesVariants.length]);
 
   // Estado para filtros
   const [searchTerm, setSearchTerm] = useState("");
@@ -343,6 +366,26 @@ export default function Quotations() {
     }
   };
 
+  const handlePrintQuote = async (quote: Quote) => {
+    setPrintingQuoteId(quote.id);
+    try {
+      await printQuoteProductionGuide(quote, {
+        refreshQuote: () => fetchQuoteById(quote.id),
+      });
+    } catch (err) {
+      toast({
+        title: "No se pudo generar la cotización",
+        description:
+          err instanceof Error
+            ? err.message
+            : "Intenta de nuevo o permite ventanas emergentes.",
+        variant: "destructive",
+      });
+    } finally {
+      setPrintingQuoteId(null);
+    }
+  };
+
   // Estados de carga y error
   if (loading && quotes.length === 0) {
     return (
@@ -501,7 +544,7 @@ export default function Quotations() {
               <TableRow>
                 <TableHead className="w-[60px] text-xs">ID</TableHead>
                 <TableHead className="min-w-[120px] text-xs">Cliente</TableHead>
-                <TableHead className="min-w-[140px] text-xs">Artículos</TableHead>
+                <TableHead className="w-[88px] text-center text-xs">Artículos</TableHead>
                 <TableHead className="w-[90px] text-right text-xs">Monto</TableHead>
                 <TableHead className="w-[110px] text-xs">Estado</TableHead>
                 <TableHead className="w-[90px] text-center text-xs">Estado pago</TableHead>
@@ -529,8 +572,25 @@ export default function Quotations() {
                     <TableCell className="text-muted-foreground text-sm truncate max-w-[140px]">
                       {q.customerName}
                     </TableCell>
-                    <TableCell className="text-muted-foreground text-sm truncate max-w-[160px]">
-                      {q.items}
+                    <TableCell className="text-center">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        title="Ver artículos de la cotización"
+                        aria-label="Ver artículos de la cotización"
+                        disabled={
+                          !q.items &&
+                          !(q.orderPayload as QuoteOrderPayload | undefined)?.items?.length
+                        }
+                        onClick={() => {
+                          setArticlesQuote(q);
+                          setArticlesOpen(true);
+                        }}
+                        className="h-8 w-8 text-violet-600 hover:text-violet-700 hover:bg-violet-50"
+                      >
+                        <Package className="h-4 w-4" />
+                      </Button>
                     </TableCell>
                     <TableCell className="text-right font-medium text-foreground whitespace-nowrap text-sm">
                       {formatAmount(q.totalAmount)}
@@ -626,6 +686,22 @@ export default function Quotations() {
                     </TableCell>
                     <TableCell className="text-center">
                       <div className="flex flex-col items-center gap-1.5">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          title="Imprimir cotización (PDF)"
+                          aria-label="Imprimir cotización"
+                          disabled={printingQuoteId === q.id}
+                          onClick={() => handlePrintQuote(q)}
+                          className="h-8 w-8 text-slate-600 hover:text-slate-800 hover:bg-slate-100"
+                        >
+                          {printingQuoteId === q.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Printer className="h-4 w-4" />
+                          )}
+                        </Button>
                         {canEditQuotes &&
                           q.status !== "ordered" &&
                           q.status !== "inactive" && (
@@ -733,6 +809,21 @@ export default function Quotations() {
             description: "El estado de pago se reflejó en la tabla de cotizaciones.",
           });
         }}
+      />
+
+      <ArticlesDetailDialog
+        open={articlesOpen}
+        onOpenChange={(open) => {
+          setArticlesOpen(open);
+          if (!open) setArticlesQuote(null);
+        }}
+        title={
+          articlesQuote
+            ? `${getFormattedId(articlesQuote.id)} · ${articlesQuote.customerName}`
+            : ""
+        }
+        variants={articlesVariants}
+        fallbackLines={articlesFallback}
       />
 
       {/* Modal de cambio de estado */}

@@ -90,6 +90,101 @@ export function groupOrderItemsForFactory(
     return [...map.values()];
 }
 
+/** Resumen compacto para la columna Artículos de la tabla de órdenes. */
+export function summarizeOrderArticles(
+    items: Parameters<typeof groupOrderItemsForFactory>[0],
+    options?: { fallbackColor?: string | null; fallbackProduct?: string | null }
+): {
+    lines: { title: string; meta: string; qty: number }[];
+    plainText: string;
+} {
+    const groups = groupOrderItemsForFactory(items, {
+        fallbackColor: options?.fallbackColor,
+    });
+
+    if (!groups.length) {
+        const fallback = (options?.fallbackProduct || "").trim();
+        return {
+            lines: fallback
+                ? [{ title: fallback, meta: "Sin desglose de variantes", qty: 0 }]
+                : [],
+            plainText: fallback || "",
+        };
+    }
+
+    // Con 2+ variantes: solo línea + producto/variante (sin tallas; la tabla se ve saturada)
+    const omitSizes = groups.length >= 2;
+
+    const lines = groups.map((g) => {
+        const linea = g.linea !== "—" ? g.linea : "";
+        const product = g.producto !== "—" ? g.producto : "";
+        const variant = g.variante !== "—" ? g.variante : "";
+
+        const titleParts: string[] = [];
+        if (omitSizes && linea) titleParts.push(linea);
+        if (product) titleParts.push(product);
+        if (variant && variant !== product) titleParts.push(variant);
+        // Evitar "X · X" si producto y línea coinciden
+        const title =
+            titleParts.filter((p, i, arr) => i === 0 || p !== arr[i - 1]).join(" · ") ||
+            "Artículo";
+
+        const parts: string[] = [];
+        if (g.color && g.color !== "—") parts.push(g.color);
+        if (!omitSizes) {
+            const sizes = g.tallas
+                .filter((t) => t.nombre && t.nombre !== "—")
+                .map((t) => `${t.nombre}×${t.cantidad}`)
+                .join(", ");
+            if (sizes) parts.push(sizes);
+        }
+        parts.push(`${g.cantidad} uds`);
+
+        return { title, meta: parts.join(" · "), qty: g.cantidad };
+    });
+
+    const plainText = lines.map((l) => `${l.title} (${l.meta})`).join(" | ");
+    return { lines, plainText };
+}
+
+/** Convierte ítems de cotización (order_payload) a filas de detalle de artículos. */
+export function quotePayloadToArticleVariants(
+    payload?: {
+        items?: Array<{
+            subproducto_id: string;
+            talla_id?: string;
+            cantidad: number;
+            color?: string;
+            subproducto_nombre?: string;
+            producto_nombre?: string;
+            linea_nombre?: string;
+            talla_nombre?: string;
+        }>;
+        product_labels?: string[];
+        color?: string | null;
+    } | null
+): FactoryVariantRow[] {
+    if (!payload?.items?.length) return [];
+
+    const labels = payload.product_labels || [];
+    return groupOrderItemsForFactory(
+        payload.items.map((item, idx) => ({
+            subproducto_id: item.subproducto_id,
+            subproducto_nombre:
+                item.subproducto_nombre ||
+                labels[idx] ||
+                labels.find(Boolean) ||
+                "Variante",
+            producto_nombre: item.producto_nombre || labels[0] || undefined,
+            linea_nombre: item.linea_nombre,
+            talla_nombre: item.talla_nombre || undefined,
+            cantidad: item.cantidad,
+            color: item.color,
+        })),
+        { fallbackColor: payload.color }
+    );
+}
+
 /** Info de planta para tarjetas de fábrica / operativo. */
 export function resolveFactoryCardInfo(order: {
     color?: string | null;

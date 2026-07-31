@@ -511,25 +511,50 @@ export function NewOrderDialog({
         }
 
         const productoId = productEntries[0].producto_id;
-        const rawItems = productEntries.flatMap((entry) =>
+        type PayloadLineItem = {
+            subproducto_id: string;
+            talla_id: string;
+            cantidad: number;
+            color?: string;
+            talla_nombre?: string;
+            costo_unitario?: number;
+            precio_venta_unitario?: number;
+            producto_nombre?: string;
+            subproducto_nombre?: string;
+        };
+        const rawItems: PayloadLineItem[] = productEntries.flatMap((entry) =>
             entry.size_lines.map((line) => ({
                 subproducto_id: entry.variant_id,
                 talla_id: line.talla_id,
                 cantidad: line.cantidad,
                 color: entry.color.trim() || undefined,
+                talla_nombre: (line.talla_nombre || "").trim() || undefined,
+                costo_unitario: Number(line.costo_unitario) || 0,
+                precio_venta_unitario:
+                    Number(entry.ingreso_proyectado_unitario) > 0
+                        ? Number(entry.ingreso_proyectado_unitario)
+                        : undefined,
+                producto_nombre: entry.producto_label || undefined,
+                subproducto_nombre: entry.variant_label || undefined,
             }))
         );
 
-        const mergedItemsMap = new Map<
-            string,
-            { subproducto_id: string; talla_id: string; cantidad: number; color?: string }
-        >();
+        const mergedItemsMap = new Map<string, PayloadLineItem>();
         for (const item of rawItems) {
             const key = `${item.subproducto_id}:${item.talla_id}`;
             const existing = mergedItemsMap.get(key);
             if (existing) {
                 existing.cantidad += item.cantidad;
                 if (!existing.color && item.color) existing.color = item.color;
+                if (!existing.talla_nombre && item.talla_nombre) {
+                    existing.talla_nombre = item.talla_nombre;
+                }
+                if (!existing.costo_unitario && item.costo_unitario) {
+                    existing.costo_unitario = item.costo_unitario;
+                }
+                if (!existing.precio_venta_unitario && item.precio_venta_unitario) {
+                    existing.precio_venta_unitario = item.precio_venta_unitario;
+                }
             } else {
                 mergedItemsMap.set(key, { ...item });
             }
@@ -618,7 +643,23 @@ export function NewOrderDialog({
                 producto_id: productoId,
                 tomado_por_id: takenBy,
                 valor_venta_proyectado: income,
-                items,
+                items: items.map(
+                    ({
+                        subproducto_id,
+                        talla_id,
+                        cantidad,
+                        color,
+                        precio_venta_unitario,
+                    }) => ({
+                        subproducto_id,
+                        talla_id,
+                        cantidad,
+                        ...(color ? { color } : {}),
+                        ...(precio_venta_unitario && precio_venta_unitario > 0
+                            ? { precio_venta_unitario }
+                            : {}),
+                    })
+                ),
                 ...logoFields,
                 ...(comentariosFinal ? { comentarios: comentariosFinal } : {}),
                 ...(shippingIso ? { fecha_estimada_entrega: shippingIso } : {}),

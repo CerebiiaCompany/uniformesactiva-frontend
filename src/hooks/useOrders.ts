@@ -10,6 +10,8 @@ export interface OrderItem {
     talla_nombre?: string | null;
     cantidad: number;
     costo_unitario: string | number;
+    /** Precio de venta / ingreso proyectado unitario (factura cliente) */
+    precio_venta_unitario?: string | number | null;
     producto_id?: string | null;
     producto_nombre?: string | null;
     linea_id?: string | null;
@@ -81,6 +83,7 @@ export interface CreateOrderItemPayload {
     talla_id: string;
     cantidad: number;
     color?: string;
+    precio_venta_unitario?: number;
 }
 
 export interface CreateOrderPayload {
