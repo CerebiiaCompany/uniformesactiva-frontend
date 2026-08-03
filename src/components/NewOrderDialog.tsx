@@ -66,7 +66,7 @@ interface NewOrderDialogProps {
     initialDeliveryDate?: string;
     quoteId?: string;
     /** Se llama tras crear la orden (antes de onSuccess) si venía de cotización */
-    onOrderCreatedFromQuote?: (quoteId: string) => Promise<void> | void;
+    onOrderCreatedFromQuote?: (quoteId: string, ordenId: string) => Promise<void> | void;
     /** Editar orden existente (solo pending) */
     editOrder?: Order | null;
     /** Editar cotización existente */
@@ -668,6 +668,7 @@ export function NewOrderDialog({
                 ...(detalleAbono ? { detalle_abono: detalleAbono } : { detalle_abono: null }),
                 ...(colorLabel ? { color: colorLabel } : {}),
                 ...(estampadoLabel ? { estampado: estampadoLabel } : {}),
+                ...(quoteId ? { quote_id: quoteId } : {}),
             };
 
             if (editOrder) {
@@ -682,12 +683,12 @@ export function NewOrderDialog({
                 return;
             }
 
-            const { success, errorMessage } = await createOrder(payload);
+            const { success, order, errorMessage } = await createOrder(payload);
             if (success) {
                 let quoteMarked = !fromQuote;
-                if (quoteId && onOrderCreatedFromQuote) {
+                if (quoteId && onOrderCreatedFromQuote && order?.id) {
                     try {
-                        await onOrderCreatedFromQuote(quoteId);
+                        await onOrderCreatedFromQuote(quoteId, order.id);
                         quoteMarked = true;
                     } catch (err) {
                         const msg =

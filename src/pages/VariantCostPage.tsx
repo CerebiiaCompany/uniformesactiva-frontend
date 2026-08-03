@@ -109,11 +109,6 @@ export default function VariantCostPage() {
         sizes.find((s) => s.id === selectedCostSizeId)?.label ||
         sizes.find((s) => s.id === selectedCostSizeId)?.name;
 
-    const selectedSizeConsumptionId = useMemo(
-        () => sizeCons?.find((rec) => rec.size_id === selectedCostSizeId)?.id,
-        [sizeCons, selectedCostSizeId]
-    );
-
     const parsedSalePrice = useMemo(() => {
         const normalized = salePriceInput.replace(/\./g, "").replace(",", ".").trim();
         if (!normalized) return null;
@@ -127,53 +122,90 @@ export default function VariantCostPage() {
     }, [parsedSalePrice, overallTotal]);
 
     useEffect(() => {
-        const stored = selectedSizeCost?.precio_venta;
-        if (stored == null || stored === "") {
-            setSalePriceInput("");
+        const fromSelected = selectedSizeCost?.precio_venta;
+        if (fromSelected != null && fromSelected !== "") {
+            setSalePriceInput(formatForInput(fromSelected));
             return;
         }
-        setSalePriceInput(formatForInput(stored));
-    }, [selectedCostSizeId, selectedSizeCost?.precio_venta]);
+        // Si la talla actual no tiene valor, usar el de otra talla de la misma variante
+        const fromVariant = summary?.sizes?.find(
+            (s) => s.precio_venta != null && s.precio_venta !== "" && Number(s.precio_venta) > 0
+        )?.precio_venta;
+        if (fromVariant != null && fromVariant !== "") {
+            setSalePriceInput(formatForInput(fromVariant));
+            return;
+        }
+        setSalePriceInput("");
+    }, [selectedCostSizeId, selectedSizeCost?.precio_venta, summary?.sizes]);
 
     const handleSaveSalePrice = async () => {
-        if (!activeVariantId || !selectedSizeConsumptionId) {
+        if (!activeVariantId) return;
+
+        const configured = sizeCons || [];
+        if (configured.length === 0) {
             if (salePriceInput.trim()) {
-                toast.error("Configura el consumo de la talla antes de guardar el precio de venta.");
+                toast.error(
+                    "Configura el consumo de al menos una talla antes de guardar el ingreso proyectado."
+                );
             }
             return;
         }
 
-        const stored = selectedSizeCost?.precio_venta;
-        const storedNum =
-            stored == null || stored === "" ? null : Number(String(stored).replace(",", "."));
         const nextValue = parsedSalePrice;
+        const currentValues = (summary?.sizes || [])
+            .map((s) =>
+                s.precio_venta == null || s.precio_venta === ""
+                    ? null
+                    : Number(String(s.precio_venta).replace(",", "."))
+            )
+            .filter((n): n is number => n != null && Number.isFinite(n) && n > 0);
+        const allSame =
+            currentValues.length > 0 &&
+            currentValues.every((v) => Math.abs(v - (currentValues[0] || 0)) < 0.001);
+        const currentCommon = allSame ? currentValues[0] : null;
 
         if (nextValue == null && !salePriceInput.trim()) {
-            if (storedNum == null) return;
-            const ok = await updateSizeConsumption(
-                selectedSizeConsumptionId,
-                { precio_venta: null },
-                activeVariantId
-            );
-            if (ok) toast.success("Precio de venta eliminado");
-            else toast.error("No se pudo actualizar el precio de venta");
+            if (currentValues.length === 0) return;
+            for (let i = 0; i < configured.length; i++) {
+                const rec = configured[i];
+                const isLast = i === configured.length - 1;
+                const result = await updateSizeConsumption(
+                    rec.id,
+                    { precio_venta: null },
+                    activeVariantId,
+                    { skipCacheUpdate: !isLast }
+                );
+                if (result === false) {
+                    toast.error("No se pudo actualizar el ingreso proyectado");
+                    return;
+                }
+            }
+            toast.success("Ingreso proyectado eliminado de la variante");
             return;
         }
 
         if (nextValue == null) {
-            toast.error("Ingresa un precio de venta válido.");
+            toast.error("Ingresa un ingreso proyectado válido.");
             return;
         }
 
-        if (storedNum != null && Math.abs(storedNum - nextValue) < 0.001) return;
+        if (currentCommon != null && Math.abs(currentCommon - nextValue) < 0.001) return;
 
-        const ok = await updateSizeConsumption(
-            selectedSizeConsumptionId,
-            { precio_venta: nextValue },
-            activeVariantId
-        );
-        if (ok) toast.success("Precio de venta guardado");
-        else toast.error("No se pudo guardar el precio de venta");
+        for (let i = 0; i < configured.length; i++) {
+            const rec = configured[i];
+            const isLast = i === configured.length - 1;
+            const result = await updateSizeConsumption(
+                rec.id,
+                { precio_venta: nextValue },
+                activeVariantId,
+                { skipCacheUpdate: !isLast }
+            );
+            if (result === false) {
+                toast.error("No se pudo guardar el ingreso proyectado");
+                return;
+            }
+        }
+        toast.success("Ingreso proyectado guardado en la variante");
     };
 
     const [modalConfig, setModalConfig] = useState<{
@@ -517,7 +549,7 @@ export default function VariantCostPage() {
                                     <CardHeader className="space-y-3">
                                         <div className="space-y-1.5">
                                             <Label htmlFor="costo-venta" className="text-xs text-muted-foreground">
-                                                Precio de venta (opcional)
+                                                Ingreso proyectado (opcional)
                                             </Label>
                                             <div className="relative">
                                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
@@ -541,12 +573,15 @@ export default function VariantCostPage() {
                                                     }}
                                                     disabled={
                                                         isSalePriceSaving ||
-                                                        !selectedSizeCost ||
-                                                        !selectedSizeConsumptionId
+                                                        !(sizeCons && sizeCons.length > 0)
                                                     }
                                                     className="pl-7"
                                                 />
                                             </div>
+                                            <p className="text-[11px] text-muted-foreground">
+                                                Se aplica a todas las tallas de esta variante y se usa al
+                                                añadir el producto en órdenes o cotizaciones.
+                                            </p>
                                         </div>
                                         <div>
                                             <CardTitle className="text-sm font-bold">Resumen de costos</CardTitle>

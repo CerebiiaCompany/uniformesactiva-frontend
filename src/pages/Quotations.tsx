@@ -806,7 +806,7 @@ export default function Quotations() {
           );
           toast({
             title: "Pago actualizado",
-            description: "El estado de pago se reflejó en la tabla de cotizaciones.",
+            description: "El estado de pago se sincronizó en cotizaciones y órdenes.",
           });
         }}
       />

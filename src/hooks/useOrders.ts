@@ -76,6 +76,7 @@ export interface Order extends OrderLogoFields {
     items: OrderItem[];
     color?: string;
     estampado?: string;
+    quote_id?: string | null;
 }
 
 export interface CreateOrderItemPayload {
@@ -116,6 +117,8 @@ export interface CreateOrderPayload {
     } | null;
     color?: string;
     estampado?: string;
+    /** Cotización de origen (sincroniza estado de pago) */
+    quote_id?: string;
 }
 
 export interface OrderListFilters {
@@ -229,20 +232,22 @@ export function useOrders() {
         }
     }, []);
 
-    const createOrder = async (payload: CreateOrderPayload): Promise<{ success: boolean; errorMessage: string | null }> => {
+    const createOrder = async (
+        payload: CreateOrderPayload
+    ): Promise<{ success: boolean; order: Order | null; errorMessage: string | null }> => {
         setLoading(true);
         setError(null);
         try {
             const body = { ...payload, logo_manga_derecha: payload.logo_manga_derecha ?? false };
-            await http<Order>(endpoints.orders.list(), {
+            const created = await http<Order>(endpoints.orders.list(), {
                 method: "POST",
                 body: JSON.stringify(body),
             });
-            return { success: true, errorMessage: null };
+            return { success: true, order: created, errorMessage: null };
         } catch (err: unknown) {
             const message = resolveHttpErrorMessage(err, "Error al crear la orden");
             setError(message);
-            return { success: false, errorMessage: message };
+            return { success: false, order: null, errorMessage: message };
         } finally {
             setLoading(false);
         }

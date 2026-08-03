@@ -12,7 +12,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Package, Ruler } from "lucide-react";
+import { Loader2, Package, Ruler, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { http } from "@/lib/http";
@@ -107,6 +107,22 @@ function formatSizeRangeLabel(labels: string[]): string {
     return parsed.map((p) => p.raw).join(", ");
 }
 
+/** Ingreso proyectado configurado en la variante (precio_venta en costos por talla). */
+function resolveIngresoProyectadoFromSizes(
+    sizes: VariantSizeCostSummary[]
+): number | null {
+    const values = sizes
+        .map((s) => Number(s.precio_venta))
+        .filter((n) => Number.isFinite(n) && n > 0);
+    if (!values.length) return null;
+
+    const counts = new Map<number, number>();
+    for (const v of values) {
+        counts.set(v, (counts.get(v) || 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+}
+
 function sortSizeSummaries(sizes: VariantSizeCostSummary[]): VariantSizeCostSummary[] {
     const hombreOrder: Record<string, number> = { XS: 1, S: 2, M: 3, L: 4, XL: 5, XXL: 6 };
     return [...sizes].sort((a, b) => {
@@ -170,6 +186,9 @@ export function AddOrderProductDialog({
     const [selectedEstampado, setSelectedEstampado] = useState("Sin estampado");
     const [unitCostRaw, setUnitCostRaw] = useState("");
     const [ingresoProyectadoRaw, setIngresoProyectadoRaw] = useState("");
+    /** Si false, el ingreso viene de la variante y solo se edita con el lápiz */
+    const [ingresoEditable, setIngresoEditable] = useState(true);
+    const [ingresoFromVariant, setIngresoFromVariant] = useState(false);
     const [comentario, setComentario] = useState("");
     const [sizeQuantities, setSizeQuantities] = useState<Record<string, string>>({});
     const [availableSizes, setAvailableSizes] = useState<VariantSizeCostSummary[]>([]);
@@ -194,6 +213,8 @@ export function AddOrderProductDialog({
         setSelectedEstampado("Sin estampado");
         setUnitCostRaw("");
         setIngresoProyectadoRaw("");
+        setIngresoEditable(true);
+        setIngresoFromVariant(false);
         setComentario("");
         setSizeQuantities({});
         setAvailableSizes([]);
@@ -234,6 +255,8 @@ export function AddOrderProductDialog({
                     ? String(editEntry.ingreso_proyectado_unitario)
                     : ""
             );
+            setIngresoEditable(false);
+            setIngresoFromVariant(editEntry.ingreso_proyectado_unitario > 0);
             setUnitCostRaw(
                 editEntry.unit_cost > 0 ? String(Math.round(editEntry.unit_cost)) : ""
             );
@@ -362,6 +385,8 @@ export function AddOrderProductDialog({
                 setSizeQuantities({});
                 setUnitCostRaw("");
                 setIngresoProyectadoRaw("");
+                setIngresoEditable(true);
+                setIngresoFromVariant(false);
             }
             return;
         }
@@ -384,6 +409,19 @@ export function AddOrderProductDialog({
                     setSizeQuantities(qtyMap);
                     if (hydrate.ingreso_proyectado_unitario > 0) {
                         setIngresoProyectadoRaw(String(hydrate.ingreso_proyectado_unitario));
+                        setIngresoEditable(false);
+                        setIngresoFromVariant(true);
+                    } else {
+                        const fromVariant = resolveIngresoProyectadoFromSizes(sizes);
+                        if (fromVariant != null) {
+                            setIngresoProyectadoRaw(String(fromVariant));
+                            setIngresoEditable(false);
+                            setIngresoFromVariant(true);
+                        } else {
+                            setIngresoProyectadoRaw("");
+                            setIngresoEditable(true);
+                            setIngresoFromVariant(false);
+                        }
                     }
                     // unit_cost se recalcula desde las tallas reales (ver useMemo)
                     setUnitCostRaw("");
@@ -393,7 +431,16 @@ export function AddOrderProductDialog({
                     setSizeQuantities(qtyMap);
                     setUnitCostRaw("");
                     if (!skipSizeResetRef.current) {
-                        setIngresoProyectadoRaw("");
+                        const fromVariant = resolveIngresoProyectadoFromSizes(sizes);
+                        if (fromVariant != null) {
+                            setIngresoProyectadoRaw(String(fromVariant));
+                            setIngresoEditable(false);
+                            setIngresoFromVariant(true);
+                        } else {
+                            setIngresoProyectadoRaw("");
+                            setIngresoEditable(true);
+                            setIngresoFromVariant(false);
+                        }
                     }
                     skipSizeResetRef.current = false;
                 }
@@ -913,10 +960,25 @@ export function AddOrderProductDialog({
                                         Suma del costo real de cada talla × su cantidad
                                     </p>
                                     <div className="space-y-1.5 pt-1 border-t">
-                                        <Label className="text-xs font-medium">
-                                            Ingreso proyectado (por unidad){" "}
-                                            <span className="text-destructive">*</span>
-                                        </Label>
+                                        <div className="flex items-center justify-between gap-2">
+                                            <Label className="text-xs font-medium">
+                                                Ingreso proyectado (por unidad){" "}
+                                                <span className="text-destructive">*</span>
+                                            </Label>
+                                            {!ingresoEditable && (
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-7 w-7 text-slate-600 hover:text-slate-900"
+                                                    title="Editar ingreso proyectado"
+                                                    aria-label="Editar ingreso proyectado"
+                                                    onClick={() => setIngresoEditable(true)}
+                                                >
+                                                    <Pencil className="h-3.5 w-3.5" />
+                                                </Button>
+                                            )}
+                                        </div>
                                         <Input
                                             type="number"
                                             min="0"
@@ -924,8 +986,24 @@ export function AddOrderProductDialog({
                                             value={ingresoProyectadoRaw}
                                             onChange={(e) => setIngresoProyectadoRaw(e.target.value)}
                                             placeholder="Lo que proyectas recibir por prenda"
-                                            className="h-10 font-semibold tabular-nums"
+                                            readOnly={!ingresoEditable}
+                                            className={cn(
+                                                "h-10 font-semibold tabular-nums",
+                                                !ingresoEditable && "bg-muted/40 cursor-default"
+                                            )}
                                         />
+                                        {ingresoFromVariant && !ingresoEditable && (
+                                            <p className="text-[10px] text-muted-foreground">
+                                                Cargado desde la variante. Usa el lápiz para ajustarlo en esta
+                                                orden/cotización.
+                                            </p>
+                                        )}
+                                        {!ingresoFromVariant && !ingresoProyectadoRaw && (
+                                            <p className="text-[10px] text-muted-foreground">
+                                                Esta variante no tiene ingreso proyectado. Defínelo aquí o en
+                                                costos de la variante.
+                                            </p>
+                                        )}
                                         {totalUnits > 0 && ingresoProyectadoUnitario > 0 && (
                                             <p className="text-[11px] text-muted-foreground">
                                                 Ingreso proyectado de este producto:{" "}

@@ -686,7 +686,7 @@ export default function Orders() {
           );
           toast({
             title: "Pago actualizado",
-            description: "El estado de pago se reflejó en la tabla de órdenes.",
+            description: "El estado de pago se sincronizó en órdenes y cotizaciones.",
           });
         }}
       />

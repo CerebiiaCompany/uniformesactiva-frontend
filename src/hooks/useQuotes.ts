@@ -414,11 +414,12 @@ export function useQuotes() {
     }, [fetchQuotes]);
 
     /** Marca cotización aprobada → ordenado (endpoint dedicado, sin RBAC estricto). */
-    const markQuoteAsOrdered = useCallback(async (id: string) => {
+    const markQuoteAsOrdered = useCallback(async (id: string, ordenId?: string) => {
         setLoading(true);
         try {
             const result = await http<ApiQuote>(endpoints.quotes.markOrdered(id), {
                 method: "POST",
+                body: JSON.stringify(ordenId ? { orden_id: ordenId } : {}),
             });
             await fetchQuotes();
             return { success: true, data: result, errorMessage: null };
