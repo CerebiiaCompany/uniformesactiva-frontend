@@ -7,17 +7,23 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, FileText, Settings, Loader2, ChevronLeft, ChevronRight, SlidersHorizontal, Eye, Check, X, Pencil } from "lucide-react";
+import { Plus, Search, FileText, Settings, Loader2, ChevronLeft, ChevronRight, SlidersHorizontal, Eye, Check, X, Pencil, Printer, Package } from "lucide-react";
 import { useOrders, Order, OrderListFilters } from "@/hooks/useOrders";
 import { NewOrderDialog } from "@/components/NewOrderDialog";
 import { OrderDetailDialog } from "@/components/OrderDetailDialog";
 import { OrderStatusPanel } from "@/components/OrderStatusPanel";
 import { OrderPaymentDetailDialog, PaymentDetailSubject } from "@/components/OrderPaymentDetailDialog";
+import { ArticlesDetailDialog } from "@/components/ArticlesDetailDialog";
 import { useToast } from "@/components/ui/use-toast";
 import { EditableSalePriceCell, getOrderProfitPreview } from "@/components/EditableSalePriceCell";
 
 import { formatCurrency } from "@/lib/format-number";
-import { resolveFactoryCardInfo } from "@/lib/order-fields";
+import {
+  resolveFactoryCardInfo,
+  summarizeOrderArticles,
+  itemsToArticleDetailLines,
+} from "@/lib/order-fields";
+import { printOrderProductionGuide } from "@/lib/order-production-guide";
 
 const formatMoney = (value: string | number) => formatCurrency(value);
 
@@ -68,6 +74,9 @@ export default function Orders() {
 
   const [paymentDetailOrder, setPaymentDetailOrder] = useState<Order | null>(null);
   const [paymentDetailOpen, setPaymentDetailOpen] = useState(false);
+  const [printingOrderId, setPrintingOrderId] = useState<string | null>(null);
+  const [articlesOrder, setArticlesOrder] = useState<Order | null>(null);
+  const [articlesOpen, setArticlesOpen] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState("");
   const [salePriceDrafts, setSalePriceDrafts] = useState<Record<string, string>>({});
@@ -101,13 +110,26 @@ export default function Orders() {
   }, [fetchOrders, filters]);
 
   const filteredOrders = useMemo(() => {
-    const term = searchTerm.toLowerCase();
-    return orders.filter(
-      (order) =>
+    const term = searchTerm.toLowerCase().trim();
+    if (!term) return orders;
+    return orders.filter((order) => {
+      const articles = summarizeOrderArticles(order.items || [], {
+        fallbackColor: order.color,
+        fallbackProduct: order.producto_nombre,
+      }).plainText.toLowerCase();
+      return (
         order.cliente_nombre?.toLowerCase().includes(term) ||
         order.producto_nombre?.toLowerCase().includes(term) ||
-        order.id?.toLowerCase().includes(term)
-    );
+        order.id?.toLowerCase().includes(term) ||
+        articles.includes(term) ||
+        (order.items || []).some(
+          (item) =>
+            item.subproducto_nombre?.toLowerCase().includes(term) ||
+            item.talla_nombre?.toLowerCase().includes(term) ||
+            item.color?.toLowerCase().includes(term)
+        )
+      );
+    });
   }, [orders, searchTerm]);
 
   const openStatusPanel = (order: Order) => {
@@ -162,6 +184,28 @@ export default function Orders() {
       setCommentsDraft(freshOrder.comentarios ?? "");
     }
     setLoadingDetail(false);
+  };
+
+  const handlePrintGuide = async (order: Order) => {
+    setPrintingOrderId(order.id);
+    try {
+      // Abrir la ventana dentro de printOrderProductionGuide de forma síncrona
+      // (sin await previo) para no perder el gesto del click.
+      await printOrderProductionGuide(order, {
+        refreshOrder: () => fetchOrderById(order.id),
+      });
+    } catch (err) {
+      toast({
+        title: "No se pudo generar la guía",
+        description:
+          err instanceof Error
+            ? err.message
+            : "Intenta de nuevo o permite ventanas emergentes.",
+        variant: "destructive",
+      });
+    } finally {
+      setPrintingOrderId(null);
+    }
   };
 
   const handleSaveComments = async () => {
@@ -307,7 +351,7 @@ export default function Orders() {
                     <TableHead className="w-[64px] text-xs text-center">ID</TableHead>
                     <TableHead className="w-[78px] text-xs text-center">Inicio</TableHead>
                     <TableHead className="min-w-[100px] text-xs">Cliente</TableHead>
-                    <TableHead className="min-w-[100px] text-xs">Artículos</TableHead>
+                    <TableHead className="w-[88px] text-xs text-center">Artículos</TableHead>
                     <TableHead className="w-[88px] text-xs text-right">Costo</TableHead>
                     <TableHead className="w-[96px] text-xs text-right">Venta</TableHead>
                     <TableHead className="w-[80px] text-xs text-right">Ganancia</TableHead>
@@ -316,7 +360,7 @@ export default function Orders() {
                     <TableHead className="w-[52px] text-xs text-center">Bordado</TableHead>
                     <TableHead className="w-[84px] text-xs text-center">Pago</TableHead>
                     <TableHead className="w-[78px] text-xs text-center">Entrega</TableHead>
-                    <TableHead className="w-[72px] text-xs text-center">Acciones</TableHead>
+                    <TableHead className="w-[96px] text-xs text-center">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -344,6 +388,7 @@ export default function Orders() {
                             ? "text-red-600"
                             : "text-slate-600";
                       const factory = resolveFactoryCardInfo(order);
+                      const articleCount = (order.items || []).length;
 
                       return (
                         <TableRow key={order.id} className="hover:bg-muted/50">
@@ -356,8 +401,22 @@ export default function Orders() {
                           <TableCell className="text-muted-foreground text-sm truncate max-w-[140px] py-2.5">
                             {order.cliente_nombre}
                           </TableCell>
-                          <TableCell className="text-muted-foreground text-sm truncate max-w-[140px] py-2.5 font-medium text-foreground">
-                            {order.producto_nombre}
+                          <TableCell className="text-center py-2.5">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              title="Ver artículos de la orden"
+                              aria-label="Ver artículos de la orden"
+                              disabled={articleCount === 0 && !order.producto_nombre}
+                              onClick={() => {
+                                setArticlesOrder(order);
+                                setArticlesOpen(true);
+                              }}
+                              className="h-8 w-8 text-violet-600 hover:text-violet-700 hover:bg-violet-50"
+                            >
+                              <Package className="h-4 w-4" />
+                            </Button>
                           </TableCell>
                           <TableCell className="text-right font-medium text-foreground whitespace-nowrap text-sm py-2.5 tabular-nums">
                             ${formatMoney(order.costo_total)}
@@ -448,7 +507,7 @@ export default function Orders() {
                               : "—"}
                           </TableCell>
                           <TableCell className="text-center py-2.5">
-                            <div className="inline-flex items-center justify-center gap-1">
+                            <div className="inline-flex items-center justify-center gap-0.5">
                               <Button
                                 type="button"
                                 variant="ghost"
@@ -459,6 +518,22 @@ export default function Orders() {
                                 className="h-8 w-8 text-sky-600 hover:text-sky-700 hover:bg-sky-50"
                               >
                                 <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                title="Imprimir guía de producción (PDF)"
+                                aria-label="Imprimir guía de producción"
+                                disabled={printingOrderId === order.id}
+                                onClick={() => handlePrintGuide(order)}
+                                className="h-8 w-8 text-slate-600 hover:text-slate-800 hover:bg-slate-100"
+                              >
+                                {printingOrderId === order.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Printer className="h-4 w-4" />
+                                )}
                               </Button>
                               {order.estado === "pending" && (
                                 <Button
@@ -555,6 +630,32 @@ export default function Orders() {
         savingComments={updatingCommentsId === detailOrder?.id}
       />
 
+      <ArticlesDetailDialog
+        open={articlesOpen}
+        onOpenChange={(open) => {
+          setArticlesOpen(open);
+          if (!open) setArticlesOrder(null);
+        }}
+        documentLabel={
+          articlesOrder
+            ? `ORD-${articlesOrder.id.slice(0, 3).toUpperCase()}`
+            : ""
+        }
+        customerName={articlesOrder?.cliente_nombre}
+        lines={
+          articlesOrder
+            ? itemsToArticleDetailLines(articlesOrder.items || [], {
+                fallbackColor: articlesOrder.color,
+                fallbackProduct: articlesOrder.producto_nombre,
+                estampado: articlesOrder.estampado,
+              })
+            : []
+        }
+        fallbackLines={
+          articlesOrder?.producto_nombre ? [articlesOrder.producto_nombre] : []
+        }
+      />
+
       <OrderPaymentDetailDialog
         open={paymentDetailOpen}
         onOpenChange={(open) => {
@@ -588,7 +689,7 @@ export default function Orders() {
           );
           toast({
             title: "Pago actualizado",
-            description: "El estado de pago se reflejó en la tabla de órdenes.",
+            description: "El estado de pago se sincronizó en órdenes y cotizaciones.",
           });
         }}
       />

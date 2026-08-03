@@ -81,11 +81,13 @@ type RawItem = {
     talla_nombre?: string | null;
     cantidad: number;
     costo_unitario?: string | number | null;
+    precio_venta_unitario?: string | number | null;
     producto_id?: string | null;
     producto_nombre?: string | null;
     linea_id?: string | null;
     linea_nombre?: string | null;
     color?: string | null;
+    estampado?: string | null;
 };
 
 function itemsToProductEntries(
@@ -136,6 +138,11 @@ function itemsToProductEntries(
         const size_lines = [...sizeMap.values()];
         const qty = size_lines.reduce((s, l) => s + l.cantidad, 0);
         const costSum = size_lines.reduce((s, l) => s + l.costo_unitario * l.cantidad, 0);
+        const storedSale = Number(
+            (first as RawItem).precio_venta_unitario ??
+                groupItems.find((g) => Number(g.precio_venta_unitario) > 0)?.precio_venta_unitario ??
+                0
+        );
         const label =
             labels[labelIdx++] ||
             first.producto_nombre ||
@@ -146,16 +153,19 @@ function itemsToProductEntries(
         return {
             key: `edit-${variantId}-${index}`,
             line_id: first.linea_id || "",
+            line_name: first.linea_nombre || "",
             line_label: first.linea_nombre || "",
             producto_id: first.producto_id || options.fallbackProductId,
+            product_name: first.producto_nombre || options.fallbackProductName || label,
             producto_label: first.producto_nombre || options.fallbackProductName || label,
             variant_id: variantId,
             variant_label: first.subproducto_nombre || label,
             color: (first.color || options.fallbackColor || "").trim(),
-            estampado: (options.fallbackEstampado || "").trim(),
+            estampado: (first.estampado || options.fallbackEstampado || "").trim(),
             comentario: "",
             unit_cost: qty > 0 ? costSum / qty : 0,
-            ingreso_proyectado_unitario: Math.round(unitIncome * 100) / 100,
+            ingreso_proyectado_unitario:
+                storedSale > 0 ? Math.round(storedSale * 100) / 100 : Math.round(unitIncome * 100) / 100,
             size_lines,
         };
     });
@@ -205,11 +215,12 @@ export function seedFromQuote(quote: Quote): OrderFormSeed {
     const productEntries = itemsToProductEntries(
         items.map((item) => ({
             ...item,
-            subproducto_nombre: undefined,
-            talla_nombre: undefined,
-            costo_unitario: 0,
+            subproducto_nombre: item.subproducto_nombre,
+            talla_nombre: item.talla_nombre,
+            costo_unitario: item.costo_unitario ?? 0,
+            precio_venta_unitario: item.precio_venta_unitario,
             producto_id: payload.producto_id,
-            producto_nombre: undefined,
+            producto_nombre: item.producto_nombre,
         })),
         {
             fallbackProductId: payload.producto_id || "",

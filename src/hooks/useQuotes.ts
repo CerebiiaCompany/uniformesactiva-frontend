@@ -7,7 +7,21 @@ export interface QuoteOrderPayload {
     producto_id: string;
     tomado_por_id: string;
     valor_venta_proyectado: number;
-    items: { subproducto_id: string; talla_id: string; cantidad: number; color?: string }[];
+    items: {
+        subproducto_id: string;
+        talla_id: string;
+        cantidad: number;
+        color?: string;
+        talla_nombre?: string;
+        costo_unitario?: number;
+        /** Precio de venta unitario (ingreso proyectado) para impresión */
+        precio_venta_unitario?: number;
+        producto_nombre?: string;
+        subproducto_nombre?: string;
+        linea_id?: string;
+        linea_nombre?: string;
+        estampado?: string;
+    }[];
     fecha_estimada_entrega?: string;
     comentarios?: string;
     logo_manga_derecha?: boolean;
@@ -402,11 +416,12 @@ export function useQuotes() {
     }, [fetchQuotes]);
 
     /** Marca cotización aprobada → ordenado (endpoint dedicado, sin RBAC estricto). */
-    const markQuoteAsOrdered = useCallback(async (id: string) => {
+    const markQuoteAsOrdered = useCallback(async (id: string, ordenId?: string) => {
         setLoading(true);
         try {
             const result = await http<ApiQuote>(endpoints.quotes.markOrdered(id), {
                 method: "POST",
+                body: JSON.stringify(ordenId ? { orden_id: ordenId } : {}),
             });
             await fetchQuotes();
             return { success: true, data: result, errorMessage: null };
@@ -498,6 +513,20 @@ export function useQuotes() {
         setQuotes((prev) => prev.map((q) => (q.id === updated.id ? updated : q)));
     }, []);
 
+    const fetchQuoteById = useCallback(
+        async (id: string): Promise<Quote | null> => {
+            try {
+                const data = await http<ApiQuote>(endpoints.quotes.detail(id));
+                const mapped = mapApiQuoteToQuote(data);
+                mergeQuoteInList(mapped);
+                return mapped;
+            } catch {
+                return null;
+            }
+        },
+        [mergeQuoteInList]
+    );
+
     const updateQuotePayment = useCallback(
         async (
             quoteId: string,
@@ -529,6 +558,7 @@ export function useQuotes() {
         loading,
         error,
         fetchQuotes,
+        fetchQuoteById,
         createQuote,
         createQuoteFromOrderForm,
         updateQuoteFromOrderForm,

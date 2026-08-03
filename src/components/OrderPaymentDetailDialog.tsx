@@ -343,142 +343,156 @@ export function OrderPaymentDetailDialog({
             </div>
           )}
 
-          {status === "pagado" && (
-            <div className="space-y-4">
-              <div className="rounded-lg border bg-emerald-50/50 dark:bg-emerald-950/20 px-3 py-3 space-y-2">
-                <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
-                  Pago completo
-                </p>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Monto total</span>
-                  <span className="font-semibold tabular-nums">
-                    {formatMoney(abono.monto_total ?? saleValue)}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Monto pagado</span>
-                  <span className="font-semibold tabular-nums">
-                    {formatMoney(abono.monto_total ?? saleValue)}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Saldo pendiente</span>
-                  <span className="font-semibold tabular-nums">$0</span>
-                </div>
-              </div>
+          {status === "pagado" && (() => {
+            const totalDeuda = Number(abono.monto_total ?? saleValue) || saleValue;
+            const snap = abono.abono_detalle;
+            const hadPartial =
+              Boolean(snap?.monto_abono) ||
+              (abono.monto_abono != null &&
+                Number(abono.monto_abono) > 0 &&
+                Number(abono.monto_abono) < totalDeuda);
+            const abonoMonto = Number(snap?.monto_abono ?? abono.monto_abono) || 0;
+            const saldoTrasAbono =
+              Number(
+                snap?.saldo_pendiente ??
+                  abono.saldo_pendiente ??
+                  Math.max(0, totalDeuda - abonoMonto)
+              ) || 0;
+            const montoPagoFinal = hadPartial
+              ? saldoTrasAbono > 0
+                ? saldoTrasAbono
+                : Math.max(0, totalDeuda - abonoMonto)
+              : totalDeuda;
 
-              <div>
-                <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                  Registro del pago completo
-                </h4>
-                <div className="rounded-lg border divide-y">
-                  <DetailRow label="Medio de pago" value={medioLabel(abono.medio_pago)} />
-                  <DetailRow
-                    label="Registrado por"
-                    value={
-                      enrichingAudit
-                        ? "Completando..."
-                        : abono.registrado_por_nombre || "—"
-                    }
-                  />
-                  <DetailRow
-                    label="Fecha y hora"
-                    value={
-                      enrichingAudit
-                        ? "Completando..."
-                        : formatDateTime(abono.fecha_registro)
-                    }
-                  />
-                </div>
-              </div>
-
-              {(abono.abono_detalle || abono.monto_abono != null) && (
-                <div className="space-y-4">
-                  <Separator />
-                  <div>
-                    <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                      Detalle del abono previo
-                    </h4>
-                    <div className="rounded-lg border divide-y">
-                      <DetailRow
-                        label="Monto total de la deuda"
-                        value={formatMoney(
-                          abono.abono_detalle?.monto_total ??
-                            abono.monto_total ??
-                            saleValue
-                        )}
-                      />
-                      <DetailRow
-                        label="Monto del abono"
-                        value={formatMoney(
-                          abono.abono_detalle?.monto_abono ?? abono.monto_abono
-                        )}
-                        emphasize
-                      />
-                      <DetailRow
-                        label="Saldo que quedó pendiente"
-                        value={formatMoney(
-                          abono.abono_detalle?.saldo_pendiente ??
-                            abono.saldo_pendiente
-                        )}
-                        warn
-                      />
-                      <DetailRow
-                        label="Medio de pago del abono"
-                        value={medioLabel(abono.abono_detalle?.medio_pago)}
-                      />
-                      <DetailRow
-                        label="Concepto"
-                        value={
-                          abono.abono_detalle?.concepto ||
-                          abono.concepto ||
-                          "—"
-                        }
-                        multiline
-                      />
-                      <DetailRow
-                        label="Fecha límite del saldo"
-                        value={formatDateOnly(
-                          abono.abono_detalle?.fecha_limite_saldo ||
-                            abono.fecha_limite_saldo
-                        )}
-                      />
+            return (
+              <div className="space-y-4">
+                {/* 1. Resumen (solo si hubo abono previo; pago directo solo muestra registro final) */}
+                {hadPartial && (
+                  <div className="rounded-lg border bg-emerald-50/50 dark:bg-emerald-950/20 px-3 py-3 space-y-2">
+                    <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+                      Pago completo
+                    </p>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Monto total</span>
+                      <span className="font-semibold tabular-nums">
+                        {formatMoney(totalDeuda)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Monto pagado</span>
+                      <span className="font-semibold tabular-nums">
+                        {formatMoney(totalDeuda)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Saldo pendiente</span>
+                      <span className="font-semibold tabular-nums">$0</span>
                     </div>
                   </div>
+                )}
+
+                {/* 2. Registro de abono (solo si hubo pago parcial previo) */}
+                {hadPartial && (
                   <div>
                     <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                      Registro del abono
+                      Registro de abono
                     </h4>
                     <div className="rounded-lg border divide-y">
                       <DetailRow
                         label="Recibido por"
-                        value={
-                          abono.abono_detalle?.registrado_por_nombre || "—"
-                        }
+                        value={snap?.registrado_por_nombre || abono.registrado_por_nombre || "—"}
                       />
                       <DetailRow
-                        label="Fecha y hora del abono"
-                        value={formatDateTime(
-                          abono.abono_detalle?.fecha_registro
+                        label="Fecha y hora de abono"
+                        value={formatDateTime(snap?.fecha_registro || abono.fecha_registro)}
+                      />
+                      <DetailRow
+                        label="Monto del abono"
+                        value={formatMoney(abonoMonto)}
+                        emphasize
+                      />
+                      <DetailRow
+                        label="Saldo pendiente"
+                        value={formatMoney(saldoTrasAbono)}
+                        warn
+                      />
+                      <DetailRow
+                        label="Medio de pago de abono"
+                        value={medioLabel(snap?.medio_pago || abono.medio_pago)}
+                      />
+                      <DetailRow
+                        label="Concepto"
+                        value={snap?.concepto || abono.concepto || "—"}
+                        multiline
+                      />
+                      <DetailRow
+                        label="Fecha límite de pago"
+                        value={formatDateOnly(
+                          snap?.fecha_limite_saldo || abono.fecha_limite_saldo
                         )}
                       />
                     </div>
                   </div>
+                )}
+
+                {/* 3. Registro de pago completado */}
+                <div>
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                    Registro de pago completado
+                  </h4>
+                  <div className="rounded-lg border divide-y">
+                    <DetailRow
+                      label="Registrado por"
+                      value={
+                        enrichingAudit
+                          ? "Completando..."
+                          : abono.registrado_por_nombre || "—"
+                      }
+                    />
+                    <DetailRow
+                      label="Fecha y hora del pago"
+                      value={
+                        enrichingAudit
+                          ? "Completando..."
+                          : formatDateTime(abono.fecha_registro)
+                      }
+                    />
+                    <DetailRow
+                      label="Medio de pago"
+                      value={medioLabel(abono.medio_pago)}
+                    />
+                    {hadPartial && (
+                      <DetailRow
+                        label="Saldo que estaba pendiente"
+                        value={formatMoney(saldoTrasAbono)}
+                        warn
+                      />
+                    )}
+                    <DetailRow
+                      label="Monto pagado"
+                      value={formatMoney(montoPagoFinal)}
+                      emphasize
+                    />
+                  </div>
                 </div>
-              )}
-            </div>
-          )}
+              </div>
+            );
+          })()}
 
           {status === "parcial" && (
             <div className="space-y-4">
               <div>
                 <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                  Detalle financiero del abono
+                  Registro de abono
                 </h4>
                 <div className="rounded-lg border divide-y">
                   <DetailRow
-                    label="Monto total de la deuda"
-                    value={formatMoney(abono.monto_total ?? saleValue)}
+                    label="Recibido por"
+                    value={abono.registrado_por_nombre || "—"}
+                  />
+                  <DetailRow
+                    label="Fecha y hora de abono"
+                    value={formatDateTime(abono.fecha_registro)}
                   />
                   <DetailRow
                     label="Monto del abono"
@@ -494,34 +508,17 @@ export function OrderPaymentDetailDialog({
                     )}
                     warn
                   />
-                  <DetailRow label="Medio de pago" value={medioLabel(abono.medio_pago)} />
-                </div>
-              </div>
-              <Separator />
-              <div>
-                <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                  Registro del abono
-                </h4>
-                <div className="rounded-lg border divide-y">
                   <DetailRow
-                    label="Recibido por"
-                    value={abono.registrado_por_nombre || "—"}
+                    label="Medio de pago de abono"
+                    value={medioLabel(abono.medio_pago)}
                   />
                   <DetailRow
-                    label="Fecha y hora"
-                    value={formatDateTime(abono.fecha_registro)}
+                    label="Concepto"
+                    value={abono.concepto || "—"}
+                    multiline
                   />
-                </div>
-              </div>
-              <Separator />
-              <div>
-                <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                  Términos y compromisos futuros
-                </h4>
-                <div className="rounded-lg border divide-y">
-                  <DetailRow label="Concepto" value={abono.concepto || "—"} multiline />
                   <DetailRow
-                    label="Fecha límite del saldo"
+                    label="Fecha límite de pago"
                     value={formatDateOnly(abono.fecha_limite_saldo)}
                   />
                 </div>

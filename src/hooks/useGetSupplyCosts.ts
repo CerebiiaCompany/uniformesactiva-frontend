@@ -19,7 +19,22 @@ const resolveTipoLabel = (item: any, catalogById: Map<string, string>): string =
     return "";
 };
 
-const mapSupply = (item: any, catalogById: Map<string, string>): SupplyRecord => {
+const resolveTipoColor = (item: any, colorById: Map<string, string>): string => {
+    if (item.tipo_color) return String(item.tipo_color);
+    if (typeof item.tipo === "object" && item.tipo?.color) return String(item.tipo.color);
+    if (item.color) return String(item.color);
+
+    const tipoId = item.tipo_id ?? (typeof item.tipo === "object" ? item.tipo?.id : undefined);
+    if (tipoId && colorById.has(tipoId)) return colorById.get(tipoId)!;
+
+    return "";
+};
+
+const mapSupply = (
+    item: any,
+    catalogById: Map<string, string>,
+    colorById: Map<string, string>
+): SupplyRecord => {
     const tipoId = item.tipo_id ?? (typeof item.tipo === "object" ? item.tipo?.id : undefined);
     const tipoLabel = resolveTipoLabel(item, catalogById);
     const quantity = Number(item.quantity ?? 0);
@@ -33,6 +48,7 @@ const mapSupply = (item: any, catalogById: Map<string, string>): SupplyRecord =>
         tipo_id: tipoId ?? (typeof item.tipo === "string" ? item.tipo : ""),
         tipo: tipoId ?? (typeof item.tipo === "string" ? item.tipo : ""),
         tipo_label: tipoLabel,
+        color: resolveTipoColor(item, colorById).trim(),
         talla_id: item.talla_id ?? null,
         talla_nombre: item.talla_nombre ?? null,
         quantity: String(item.quantity ?? "0"),
@@ -49,6 +65,13 @@ const buildCatalogMap = (catalog: any[]): Map<string, string> =>
         ])
     );
 
+const buildColorMap = (catalog: any[]): Map<string, string> =>
+    new Map(
+        catalog
+            .filter((item) => item.id && (item.color || "").trim())
+            .map((item) => [item.id, String(item.color).trim()])
+    );
+
 export const useGetSupplyCosts = (variantId: string) => {
     return useQuery({
         queryKey: ["supply-costs", variantId],
@@ -58,7 +81,8 @@ export const useGetSupplyCosts = (variantId: string) => {
                 http<any[]>(endpoints.costos.tiposInsumo()),
             ]);
             const catalogById = buildCatalogMap(catalog);
-            return data.map((item) => mapSupply(item, catalogById));
+            const colorById = buildColorMap(catalog);
+            return data.map((item) => mapSupply(item, catalogById, colorById));
         },
         enabled: !!variantId,
     });

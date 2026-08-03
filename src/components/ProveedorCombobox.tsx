@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Check, ChevronsUpDown } from "lucide-react";
+import { Check, ChevronsUpDown, Plus } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Command,
@@ -23,6 +23,8 @@ interface ProveedorComboboxProps {
   placeholder?: string;
   disabled?: boolean;
   required?: boolean;
+  /** Permite usar un nombre nuevo si no está en el catálogo */
+  allowCreate?: boolean;
 }
 
 export function ProveedorCombobox({
@@ -31,16 +33,45 @@ export function ProveedorCombobox({
   onChange,
   placeholder = "Buscar o seleccionar proveedor...",
   disabled = false,
+  allowCreate = false,
 }: ProveedorComboboxProps) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
 
   const sortedProveedores = useMemo(
     () => [...proveedores].sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" })),
     [proveedores]
   );
 
+  const normalizedSearch = search.trim();
+  const exactMatch = useMemo(() => {
+    if (!normalizedSearch) return null;
+    return (
+      sortedProveedores.find(
+        (p) => p.name.toLocaleLowerCase("es") === normalizedSearch.toLocaleLowerCase("es")
+      ) ?? null
+    );
+  }, [sortedProveedores, normalizedSearch]);
+
+  const canCreate =
+    allowCreate &&
+    normalizedSearch.length > 0 &&
+    !exactMatch;
+
+  const selectName = (name: string) => {
+    onChange(name === value ? "" : name);
+    setOpen(false);
+    setSearch("");
+  };
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setSearch("");
+      }}
+    >
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -63,20 +94,43 @@ export function ProveedorCombobox({
         align="start"
       >
         <Command
-          filter={(itemValue, search) => {
+          shouldFilter={true}
+          filter={(itemValue, searchValue) => {
             const normalizedItem = itemValue.toLocaleLowerCase("es");
-            const normalizedSearch = search.trim().toLocaleLowerCase("es");
-            if (!normalizedSearch) return 1;
-            return normalizedItem.includes(normalizedSearch) ? 1 : 0;
+            const normalized = searchValue.trim().toLocaleLowerCase("es");
+            if (!normalized) return 1;
+            // El item de crear siempre visible cuando aplica
+            if (itemValue.startsWith("__create__:")) return 1;
+            return normalizedItem.includes(normalized) ? 1 : 0;
           }}
         >
-          <CommandInput placeholder="Escribe iniciales para filtrar..." />
+          <CommandInput
+            placeholder="Escribe iniciales para filtrar..."
+            value={search}
+            onValueChange={setSearch}
+          />
           <CommandList>
             <CommandEmpty>
-              {sortedProveedores.length === 0
-                ? "No hay proveedores. Crea uno con + Proveedor."
-                : "Sin coincidencias."}
+              {allowCreate && normalizedSearch
+                ? null
+                : sortedProveedores.length === 0
+                  ? allowCreate
+                    ? "Escribe un nombre para crear el proveedor."
+                    : "No hay proveedores. Crea uno con + Proveedor."
+                  : "Sin coincidencias."}
             </CommandEmpty>
+            {canCreate && (
+              <CommandGroup>
+                <CommandItem
+                  value={`__create__:${normalizedSearch}`}
+                  onSelect={() => selectName(normalizedSearch)}
+                  className="text-red-700"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Crear «{normalizedSearch}»
+                </CommandItem>
+              </CommandGroup>
+            )}
             <CommandGroup>
               {sortedProveedores.map((proveedor) => (
                 <CommandItem
@@ -87,8 +141,7 @@ export function ProveedorCombobox({
                       sortedProveedores.find(
                         (p) => p.name.toLocaleLowerCase("es") === selected.toLocaleLowerCase("es")
                       )?.name ?? selected;
-                    onChange(match === value ? "" : match);
-                    setOpen(false);
+                    selectName(match);
                   }}
                 >
                   <Check

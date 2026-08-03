@@ -12,13 +12,16 @@ import { useGetProductDetail } from "@/hooks/useGetProductDetail";
 import { useGetVariants } from "@/hooks/useGetVariants";
 import { useGetFabricCosts } from "@/hooks/useGetFabricCosts";
 import { useGetLaborCosts } from "@/hooks/useGetLaborCosts";
+import { useGetExtraCosts } from "@/hooks/useGetExtraCosts";
 import { useGetSizeConsumption } from "@/hooks/useGetSizeConsumption";
 import { useGetSupplyCosts } from "@/hooks/useGetSupplyCosts";
 import { useGetCostCatalogs } from "@/hooks/useGetCostCatalogs";
 import { useGetCostSummary } from "@/hooks/useGetCostSummary";
+import { useGetMaterials } from "@/hooks/useGetMaterials";
 import { useFabricCosts } from "@/hooks/useFabricCost";
 import { useSupplyCosts } from "@/hooks/useSupplyCosts";
 import { useLaborCosts } from "@/hooks/useLaborCosts";
+import { useExtraCosts } from "@/hooks/useExtraCosts";
 import { useSizeConsumption } from "@/hooks/useSizeConsumption";
 import { useCreateProveedor } from "@/hooks/useCreateProveedor";
 import { useCreateInsumoTipo } from "@/hooks/useCreateInsumoTipo";
@@ -27,13 +30,14 @@ import { useCreateVariant } from "@/hooks/useCreateVariant";
 import { FabricCostsTable } from "@/components/variant-cost/FabricCostsTable";
 import { SuppliesTable } from "@/components/variant-cost/SuppliesTable";
 import { LaborCostsTable } from "@/components/variant-cost/LaborCostsTable";
+import { ExtraCostsTable } from "@/components/variant-cost/ExtraCostsTable";
 import { SizeConsumptionTable } from "@/components/variant-cost/SizeConsumptionTable";
 import { VariantSizeCostBreakdownTable } from "@/components/variant-cost/VariantSizeCostBreakdownTable";
 import { ModalForm, FieldDefinition } from "@/components/ui/ModalForm";
 import { getNewInsumoTipoFields } from "@/lib/insumo-tipo-form";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { formatCurrency, formatDecimal, formatForInput } from "@/lib/format-number";
-import type { UpdateLaborPayload, UpdateSupplyPayload } from "@/types/variant";
+import type { UpdateLaborPayload, UpdateSupplyPayload, UpdateExtraCostPayload } from "@/types/variant";
 import { cn } from "@/lib/utils";
 
 const resolveTallaId = (value: string) => (value ? value : null);
@@ -45,6 +49,8 @@ type ModalType =
     | "edit_fabric"
     | "labor"
     | "edit_labor"
+    | "extra"
+    | "edit_extra"
     | "new_proveedor"
     | "new_insumo_tipo"
     | "";
@@ -67,6 +73,7 @@ export default function VariantCostPage() {
         useFabricCosts();
     const { addSupply, updateSupply, deleteSupply } = useSupplyCosts();
     const { addLabor, updateLabor, deleteLabor } = useLaborCosts();
+    const { addExtra, updateExtra, deleteExtra } = useExtraCosts();
     const { updateSizeConsumption, loading: isSalePriceSaving } = useSizeConsumption();
 
     const activeVariantId = variantId ?? "";
@@ -74,8 +81,20 @@ export default function VariantCostPage() {
 
     const { data: fabrics } = useGetFabricCosts(activeVariantId);
     const { data: labor } = useGetLaborCosts(activeVariantId);
+    const { data: extras } = useGetExtraCosts(activeVariantId);
     const { data: sizeCons } = useGetSizeConsumption(activeVariantId);
     const { data: supplies } = useGetSupplyCosts(activeVariantId);
+    const { materials: inventoryTelas } = useGetMaterials({ category: "Telas" });
+    const inventoryFabricRefs = useMemo(() => {
+        // Precio = costo unitario del material (como se configuró al crearlo).
+        // El proveedor en costeo es solo trazabilidad; no cambia el $/metro.
+        return inventoryTelas.map((m) => ({
+            reference: m.name,
+            unit_cost: Number(m.unit_cost) || 0,
+            color: (m.color || "").trim(),
+        }));
+    }, [inventoryTelas]);
+
     const { data: summary, isLoading: isSummaryLoading } = useGetCostSummary(activeVariantId);
     const [selectedCostSizeId, setSelectedCostSizeId] = useState<string>("");
     const [salePriceInput, setSalePriceInput] = useState("");
@@ -100,6 +119,7 @@ export default function VariantCostPage() {
     const fabricTotal = Number(selectedSizeCost?.fabric_total ?? summary?.fabric_total ?? 0);
     const suppliesTotal = Number(selectedSizeCost?.supplies_total ?? summary?.supplies_total ?? 0);
     const laborTotal = Number(selectedSizeCost?.labor_total ?? summary?.labor_total ?? 0);
+    const extrasTotal = Number(selectedSizeCost?.extras_total ?? summary?.extras_total ?? 0);
     const overallTotal = Number(selectedSizeCost?.overall_total ?? summary?.overall_total ?? 0);
     const sizeConsumption = Number(selectedSizeCost?.consumption ?? summary?.average_consumption ?? 0);
     const fabricPricePerMeter = Number(summary?.fabric_price_per_meter ?? 0);
@@ -108,11 +128,6 @@ export default function VariantCostPage() {
         selectedSizeCost?.talla_nombre ||
         sizes.find((s) => s.id === selectedCostSizeId)?.label ||
         sizes.find((s) => s.id === selectedCostSizeId)?.name;
-
-    const selectedSizeConsumptionId = useMemo(
-        () => sizeCons?.find((rec) => rec.size_id === selectedCostSizeId)?.id,
-        [sizeCons, selectedCostSizeId]
-    );
 
     const parsedSalePrice = useMemo(() => {
         const normalized = salePriceInput.replace(/\./g, "").replace(",", ".").trim();
@@ -127,53 +142,90 @@ export default function VariantCostPage() {
     }, [parsedSalePrice, overallTotal]);
 
     useEffect(() => {
-        const stored = selectedSizeCost?.precio_venta;
-        if (stored == null || stored === "") {
-            setSalePriceInput("");
+        const fromSelected = selectedSizeCost?.precio_venta;
+        if (fromSelected != null && fromSelected !== "") {
+            setSalePriceInput(formatForInput(fromSelected));
             return;
         }
-        setSalePriceInput(formatForInput(stored));
-    }, [selectedCostSizeId, selectedSizeCost?.precio_venta]);
+        // Si la talla actual no tiene valor, usar el de otra talla de la misma variante
+        const fromVariant = summary?.sizes?.find(
+            (s) => s.precio_venta != null && s.precio_venta !== "" && Number(s.precio_venta) > 0
+        )?.precio_venta;
+        if (fromVariant != null && fromVariant !== "") {
+            setSalePriceInput(formatForInput(fromVariant));
+            return;
+        }
+        setSalePriceInput("");
+    }, [selectedCostSizeId, selectedSizeCost?.precio_venta, summary?.sizes]);
 
     const handleSaveSalePrice = async () => {
-        if (!activeVariantId || !selectedSizeConsumptionId) {
+        if (!activeVariantId) return;
+
+        const configured = sizeCons || [];
+        if (configured.length === 0) {
             if (salePriceInput.trim()) {
-                toast.error("Configura el consumo de la talla antes de guardar el precio de venta.");
+                toast.error(
+                    "Configura el consumo de al menos una talla antes de guardar el ingreso proyectado."
+                );
             }
             return;
         }
 
-        const stored = selectedSizeCost?.precio_venta;
-        const storedNum =
-            stored == null || stored === "" ? null : Number(String(stored).replace(",", "."));
         const nextValue = parsedSalePrice;
+        const currentValues = (summary?.sizes || [])
+            .map((s) =>
+                s.precio_venta == null || s.precio_venta === ""
+                    ? null
+                    : Number(String(s.precio_venta).replace(",", "."))
+            )
+            .filter((n): n is number => n != null && Number.isFinite(n) && n > 0);
+        const allSame =
+            currentValues.length > 0 &&
+            currentValues.every((v) => Math.abs(v - (currentValues[0] || 0)) < 0.001);
+        const currentCommon = allSame ? currentValues[0] : null;
 
         if (nextValue == null && !salePriceInput.trim()) {
-            if (storedNum == null) return;
-            const ok = await updateSizeConsumption(
-                selectedSizeConsumptionId,
-                { precio_venta: null },
-                activeVariantId
-            );
-            if (ok) toast.success("Precio de venta eliminado");
-            else toast.error("No se pudo actualizar el precio de venta");
+            if (currentValues.length === 0) return;
+            for (let i = 0; i < configured.length; i++) {
+                const rec = configured[i];
+                const isLast = i === configured.length - 1;
+                const result = await updateSizeConsumption(
+                    rec.id,
+                    { precio_venta: null },
+                    activeVariantId,
+                    { skipCacheUpdate: !isLast }
+                );
+                if (result === false) {
+                    toast.error("No se pudo actualizar el ingreso proyectado");
+                    return;
+                }
+            }
+            toast.success("Ingreso proyectado eliminado de la variante");
             return;
         }
 
         if (nextValue == null) {
-            toast.error("Ingresa un precio de venta válido.");
+            toast.error("Ingresa un ingreso proyectado válido.");
             return;
         }
 
-        if (storedNum != null && Math.abs(storedNum - nextValue) < 0.001) return;
+        if (currentCommon != null && Math.abs(currentCommon - nextValue) < 0.001) return;
 
-        const ok = await updateSizeConsumption(
-            selectedSizeConsumptionId,
-            { precio_venta: nextValue },
-            activeVariantId
-        );
-        if (ok) toast.success("Precio de venta guardado");
-        else toast.error("No se pudo guardar el precio de venta");
+        for (let i = 0; i < configured.length; i++) {
+            const rec = configured[i];
+            const isLast = i === configured.length - 1;
+            const result = await updateSizeConsumption(
+                rec.id,
+                { precio_venta: nextValue },
+                activeVariantId,
+                { skipCacheUpdate: !isLast }
+            );
+            if (result === false) {
+                toast.error("No se pudo guardar el ingreso proyectado");
+                return;
+            }
+        }
+        toast.success("Ingreso proyectado guardado en la variante");
     };
 
     const [modalConfig, setModalConfig] = useState<{
@@ -314,6 +366,43 @@ export default function VariantCostPage() {
                     if (ok) toast.success("Fase actualizada");
                     else toast.error("No se pudo actualizar la fase");
                 }
+            } else if (modalConfig.type === "extra" && hasActiveVariant) {
+                const concepto = (data.concepto || "").trim();
+                if (!concepto) {
+                    toast.error("El concepto es obligatorio");
+                } else {
+                    const ok = await addExtra({
+                        variant_id: activeVariantId,
+                        concepto,
+                        talla_id: resolveTallaId(data.talla_id),
+                        cantidad: data.cantidad || "1",
+                        unit_price: data.unit_price,
+                    });
+                    if (ok) toast.success("Costo extra agregado");
+                    else toast.error("No se pudo agregar el costo extra");
+                }
+            } else if (modalConfig.type === "edit_extra" && modalConfig.initialData?.id && hasActiveVariant) {
+                const initial = modalConfig.initialData;
+                const payload: UpdateExtraCostPayload = {};
+                const initialTallaId = initial.talla_id || "";
+                const concepto = (data.concepto || "").trim();
+
+                if (concepto !== (initial.concepto || "")) payload.concepto = concepto;
+                if (data.cantidad !== initial.cantidad) payload.cantidad = data.cantidad;
+                if (data.unit_price !== initial.unit_price) payload.unit_price = data.unit_price;
+                if ((data.talla_id || "") !== initialTallaId) {
+                    payload.talla_id = resolveTallaId(data.talla_id);
+                }
+
+                if (Object.keys(payload).length === 0) {
+                    toast.info("No hay cambios para guardar");
+                } else if (payload.concepto !== undefined && !payload.concepto) {
+                    toast.error("El concepto es obligatorio");
+                } else {
+                    const ok = await updateExtra(initial.id, payload, activeVariantId);
+                    if (ok) toast.success("Costo extra actualizado");
+                    else toast.error("No se pudo actualizar el costo extra");
+                }
             } else if (modalConfig.type === "new_proveedor") {
                 const result = await createProveedor(data.name);
                 if (result.success) {
@@ -385,6 +474,14 @@ export default function VariantCostPage() {
         options: sizeScopeOptions,
     };
 
+    const extraTallaField = {
+        name: "talla_id",
+        label: "Alcance por talla",
+        type: "select" as const,
+        required: false,
+        options: sizeScopeOptions,
+    };
+
     const proveedorOptions = proveedores.map((p) => ({
         value: p.id,
         label: p.name,
@@ -400,9 +497,9 @@ export default function VariantCostPage() {
         { name: "reference", label: "Referencia", type: "text", placeholder: "REF-001" },
         {
             name: "meters",
-            label: "Metros",
+            label: "metro",
             type: "decimal",
-            placeholder: "2,500",
+            placeholder: "1",
         },
         {
             name: "price_per_meter",
@@ -517,7 +614,7 @@ export default function VariantCostPage() {
                                     <CardHeader className="space-y-3">
                                         <div className="space-y-1.5">
                                             <Label htmlFor="costo-venta" className="text-xs text-muted-foreground">
-                                                Precio de venta (opcional)
+                                                Ingreso proyectado (opcional)
                                             </Label>
                                             <div className="relative">
                                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
@@ -541,12 +638,15 @@ export default function VariantCostPage() {
                                                     }}
                                                     disabled={
                                                         isSalePriceSaving ||
-                                                        !selectedSizeCost ||
-                                                        !selectedSizeConsumptionId
+                                                        !(sizeCons && sizeCons.length > 0)
                                                     }
                                                     className="pl-7"
                                                 />
                                             </div>
+                                            <p className="text-[11px] text-muted-foreground">
+                                                Se aplica a todas las tallas de esta variante y se usa al
+                                                añadir el producto en órdenes o cotizaciones.
+                                            </p>
                                         </div>
                                         <div>
                                             <CardTitle className="text-sm font-bold">Resumen de costos</CardTitle>
@@ -590,6 +690,10 @@ export default function VariantCostPage() {
                                                 <div className="flex justify-between">
                                                     <span>Mano de obra</span>
                                                     <span>${formatCurrency(laborTotal)}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span>Costos extra</span>
+                                                    <span>${formatCurrency(extrasTotal)}</span>
                                                 </div>
                                                 {selectedSizeCost &&
                                                     (supplies?.length || labor?.length) &&
@@ -636,6 +740,7 @@ export default function VariantCostPage() {
                             data={fabrics || []}
                             variantId={activeVariantId}
                             proveedores={proveedores}
+                            inventoryFabricRefs={inventoryFabricRefs}
                             isSettingPrincipal={isFabricLoading}
                             onAdd={addFabric}
                             onSetPrincipal={async (id) => {
@@ -773,6 +878,59 @@ export default function VariantCostPage() {
                                 )
                             }
                             onDelete={(id) => deleteLabor(id, activeVariantId)}
+                        />
+
+                        <ExtraCostsTable
+                            data={extras || []}
+                            onAdd={() =>
+                                handleOpenModal(
+                                    "extra",
+                                    "Nuevo costo extra",
+                                    [
+                                        {
+                                            name: "concepto",
+                                            label: "Concepto",
+                                            type: "text",
+                                            placeholder: "Empaque, flete, acabado…",
+                                        },
+                                        extraTallaField,
+                                        { name: "cantidad", label: "Cantidad", type: "number", placeholder: "1" },
+                                        {
+                                            name: "unit_price",
+                                            label: "Precio unitario",
+                                            type: "number",
+                                            placeholder: "6",
+                                        },
+                                    ],
+                                    {
+                                        talla_id: selectedCostSizeId || "",
+                                        cantidad: "1",
+                                    }
+                                )
+                            }
+                            onEdit={(item) =>
+                                handleOpenModal(
+                                    "edit_extra",
+                                    "Editar costo extra",
+                                    [
+                                        {
+                                            name: "concepto",
+                                            label: "Concepto",
+                                            type: "text",
+                                        },
+                                        extraTallaField,
+                                        { name: "cantidad", label: "Cantidad", type: "number" },
+                                        { name: "unit_price", label: "Precio unitario", type: "number" },
+                                    ],
+                                    {
+                                        ...item,
+                                        talla_id: item.talla_id || "",
+                                        cantidad: formatForInput(item.cantidad),
+                                        unit_price: formatForInput(item.unit_price),
+                                    }
+                                )
+                            }
+                            onDelete={(id) => deleteExtra(id, activeVariantId)}
                         />
                     </>
                 )}

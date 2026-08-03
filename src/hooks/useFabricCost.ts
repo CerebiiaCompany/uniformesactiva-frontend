@@ -19,6 +19,7 @@ export function useFabricCosts() {
         handleCostMutationResponse(queryClient, variantId, response);
         invalidateVariantCostLists(queryClient, variantId);
         queryClient.invalidateQueries({ queryKey: ["cost-summary", variantId] });
+        queryClient.invalidateQueries({ queryKey: ["materials"] });
     };
 
     const addFabric = async (payload: CreateFabricPayload) => {

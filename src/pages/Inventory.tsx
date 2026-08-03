@@ -2,16 +2,20 @@ import { useState, useMemo } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { AlertTriangle, Plus, X } from "lucide-react";
+import { AlertTriangle, History, PackageX, Pencil, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetMaterials } from "@/hooks/useGetMaterials";
-import { useAddMaterialStock } from "@/hooks/useAddMaterialStock";
 import { useCreateMaterial } from "@/hooks/useCreateMaterial";
+import { useUpdateMaterial } from "@/hooks/useUpdateMaterial";
 import { useGetCostCatalogs } from "@/hooks/useGetCostCatalogs";
 import { useCreateProveedor } from "@/hooks/useCreateProveedor";
 import { useCreateInsumoTipo } from "@/hooks/useCreateInsumoTipo";
 import { ProveedorCombobox } from "@/components/ProveedorCombobox";
+import { MaterialSuppliersDialog } from "@/components/MaterialSuppliersDialog";
+import { AddMaterialStockDialog } from "@/components/AddMaterialStockDialog";
+import { MaterialMovementsDialog } from "@/components/MaterialMovementsDialog";
 import { ModalForm } from "@/components/ui/ModalForm";
+import { InventoryOverview, classifyMaterialStock } from "@/components/inventory/InventoryOverview";
 import { getNewInsumoTipoFields } from "@/lib/insumo-tipo-form";
 import { toast } from "sonner";
 
@@ -19,6 +23,7 @@ interface Material {
   id: string;
   name: string;
   category: string;
+  color?: string;
   supplier: string;
   unit: string;
   stock: number;
@@ -26,22 +31,39 @@ interface Material {
   unit_cost: number;
   status: string;
   is_low_stock: boolean;
+  suppliers_count?: number;
 }
+
+const EMPTY_MATERIAL_FORM = {
+  name: "",
+  category: "",
+  color: "",
+  supplier: "",
+  unit: "",
+  stock: "",
+  min_stock: "",
+  unit_cost: "",
+};
 
 export default function Inventory() {
   const [categoryFilter, setCategoryFilter] = useState("");
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [newMaterial, setNewMaterial] = useState({
+  const [newMaterial, setNewMaterial] = useState(EMPTY_MATERIAL_FORM);
+  const [createError, setCreateError] = useState("");
+
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingMaterial, setEditingMaterial] = useState<Material | null>(null);
+  const [editMaterial, setEditMaterial] = useState({
     name: "",
     category: "",
+    color: "",
     supplier: "",
     unit: "",
-    stock: "",
     min_stock: "",
     unit_cost: "",
   });
-  const [createError, setCreateError] = useState("");
+  const [editError, setEditError] = useState("");
 
   const [isProveedorModalOpen, setIsProveedorModalOpen] = useState(false);
   const [proveedorName, setProveedorName] = useState("");
@@ -50,9 +72,8 @@ export default function Inventory() {
 
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
-  const [newQuantity, setNewQuantity] = useState("");
-  const [reference, setReference] = useState("");
-  const [errorMsg, setErrorMsg] = useState("");
+  const [suppliersMaterial, setSuppliersMaterial] = useState<Material | null>(null);
+  const [historyMaterial, setHistoryMaterial] = useState<Material | null>(null);
 
   const { materials: allMaterials, isLoading: isLoadingAll } = useGetMaterials({});
   const { materials: filteredMaterials, isLoading: isLoadingFiltered, refetch } = useGetMaterials({
@@ -62,8 +83,8 @@ export default function Inventory() {
   const { createProveedor, isLoading: isCreatingProveedor } = useCreateProveedor();
   const { createInsumoTipo, isLoading: isCreatingInsumoTipo } = useCreateInsumoTipo();
 
-  const { addStock, isPending: isSubmitting } = useAddMaterialStock();
   const { createMaterial, isPending: isCreating } = useCreateMaterial();
+  const { updateMaterial, isPending: isUpdating } = useUpdateMaterial();
   const newInsumoTipoFields = useMemo(() => getNewInsumoTipoFields(), []);
 
   const categoryCounts = useMemo(() => {
@@ -84,17 +105,24 @@ export default function Inventory() {
   );
 
   const handleOpenCreateModal = () => {
-    setNewMaterial({
-      name: "",
-      category: "",
-      supplier: "",
-      unit: "",
-      stock: "",
-      min_stock: "",
-      unit_cost: "",
-    });
+    setNewMaterial({ ...EMPTY_MATERIAL_FORM });
     setCreateError("");
     setIsCreateModalOpen(true);
+  };
+
+  const handleOpenEditModal = (material: Material) => {
+    setEditingMaterial(material);
+    setEditMaterial({
+      name: material.name,
+      category: material.category,
+      color: material.color || "",
+      supplier: material.supplier,
+      unit: material.unit,
+      min_stock: String(material.min_stock ?? ""),
+      unit_cost: String(material.unit_cost ?? ""),
+    });
+    setEditError("");
+    setIsEditModalOpen(true);
   };
 
   const handleOpenProveedorModal = () => {
@@ -147,7 +175,11 @@ export default function Inventory() {
     setIsProveedorModalOpen(false);
 
     if (result.data?.name) {
-      setNewMaterial((prev) => ({ ...prev, supplier: result.data!.name }));
+      if (isEditModalOpen) {
+        setEditMaterial((prev) => ({ ...prev, supplier: result.data!.name }));
+      } else {
+        setNewMaterial((prev) => ({ ...prev, supplier: result.data!.name }));
+      }
     }
   };
 
@@ -164,6 +196,7 @@ export default function Inventory() {
       await createMaterial({
         name: newMaterial.name,
         category: newMaterial.category,
+        color: newMaterial.color.trim(),
         supplier: newMaterial.supplier,
         unit: newMaterial.unit,
         stock: parseFloat(newMaterial.stock) || 0,
@@ -171,36 +204,47 @@ export default function Inventory() {
         unit_cost: parseFloat(newMaterial.unit_cost) || 0,
       });
       setIsCreateModalOpen(false);
+      toast.success("Material creado");
       refetch();
     } catch (err: any) {
       setCreateError(err.message || "Error al crear el material");
     }
   };
 
-  const handleOpenAddStock = (material: Material) => {
-    setSelectedMaterial(material);
-    setNewQuantity("");
-    setReference("");
-    setErrorMsg("");
-    setIsStockModalOpen(true);
-  };
-
-  const handleAddStockSubmit = async (e: React.FormEvent) => {
+  const handleEditMaterialSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedMaterial) return;
+    if (!editingMaterial) return;
+    setEditError("");
 
-    setErrorMsg("");
+    if (!editMaterial.supplier.trim()) {
+      setEditError("Selecciona un proveedor.");
+      return;
+    }
+
     try {
-      await addStock({
-        materialId: selectedMaterial.id,
-        quantity: parseFloat(newQuantity),
-        reference: reference,
+      await updateMaterial({
+        materialId: editingMaterial.id,
+        payload: {
+          name: editMaterial.name.trim(),
+          category: editMaterial.category,
+          color: editMaterial.color.trim(),
+          supplier: editMaterial.supplier.trim(),
+          unit: editMaterial.unit.trim(),
+          min_stock: parseFloat(editMaterial.min_stock) || 0,
+          unit_cost: parseFloat(editMaterial.unit_cost) || 0,
+        },
       });
-      setIsStockModalOpen(false);
+      setIsEditModalOpen(false);
+      toast.success("Material actualizado");
       refetch();
     } catch (err: any) {
-      setErrorMsg(err.message || "Error al actualizar stock");
+      setEditError(err.message || "Error al actualizar el material");
     }
+  };
+
+  const handleOpenAddStock = (material: Material) => {
+    setSelectedMaterial(material);
+    setIsStockModalOpen(true);
   };
 
   const formatStock = (value: any) => {
@@ -222,7 +266,13 @@ export default function Inventory() {
   const isLoading = isLoadingAll || isLoadingFiltered;
 
   return (
-    <AppLayout title="Inventario" subtitle="Control de materias primas">
+    <AppLayout
+      title="Inventario"
+      subtitle="Insumos y telas (por referencia). El stock se descuenta al pasar una orden a producción."
+    >
+      <div className="space-y-6">
+        <InventoryOverview materials={allMaterials} isLoading={isLoadingAll} />
+
       <Card>
         <CardHeader className="pb-3 flex flex-row items-center justify-between gap-3">
           <CardTitle className="text-sm font-semibold">Materiales en stock</CardTitle>
@@ -289,7 +339,8 @@ export default function Inventory() {
                 <TableRow>
                   <TableHead>Material</TableHead>
                   <TableHead>Categoría</TableHead>
-                  <TableHead>Proveedor</TableHead>
+                  <TableHead>Color</TableHead>
+                  <TableHead>Proveedores</TableHead>
                   <TableHead>Unidad</TableHead>
                   <TableHead className="text-right">Stock</TableHead>
                   <TableHead className="text-right">Mínimo</TableHead>
@@ -300,32 +351,101 @@ export default function Inventory() {
               </TableHeader>
               <TableBody>
                 {displayMaterials.map((m) => {
-                  const isLow = Boolean(m.is_low_stock);
+                  const stockState = classifyMaterialStock(m);
+                  const isLow = stockState === "low";
+                  const isOut = stockState === "out";
+                  const isAlert = isLow || isOut;
+
                   return (
-                    <TableRow key={m.id}>
+                    <TableRow
+                      key={m.id}
+                      className={cn(
+                        isLow && "bg-red-50/90 hover:bg-red-50",
+                        isOut && "bg-zinc-50 hover:bg-zinc-100/80"
+                      )}
+                    >
                       <TableCell className="font-medium">{m.name}</TableCell>
-                      <TableCell>{m.category}</TableCell>
-                      <TableCell>{m.supplier}</TableCell>
-                      <TableCell>{m.unit}</TableCell>
-                      <TableCell className="text-right">{formatStock(m.stock)}</TableCell>
-                      <TableCell className="text-right">{formatStock(m.min_stock)}</TableCell>
-                      <TableCell className="text-right">${formatCurrency(m.unit_cost)}</TableCell>
                       <TableCell>
-                        {isLow ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700">
-                            <AlertTriangle className="h-3.5 w-3.5" /> Bajo stock
+                        <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                          {m.category}
+                        </span>
+                      </TableCell>
+                      <TableCell>{m.color?.trim() ? m.color : "—"}</TableCell>
+                      <TableCell>
+                        <button
+                          type="button"
+                          onClick={() => setSuppliersMaterial(m)}
+                          className="text-left text-red-700 hover:text-red-800 hover:underline font-medium"
+                          title="Ver y comparar proveedores"
+                        >
+                          {(() => {
+                            const count =
+                              typeof m.suppliers_count === "number"
+                                ? m.suppliers_count
+                                : m.supplier
+                                  ? 1
+                                  : 0;
+                            return count === 1
+                              ? "1 proveedor"
+                              : `${count} proveedores`;
+                          })()}
+                        </button>
+                      </TableCell>
+                      <TableCell>{m.unit}</TableCell>
+                      <TableCell
+                        className={cn(
+                          "text-right font-semibold tabular-nums",
+                          isLow && "text-red-600",
+                          isOut && "text-zinc-500",
+                          !isAlert && "text-foreground"
+                        )}
+                      >
+                        {formatStock(m.stock)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{formatStock(m.min_stock)}</TableCell>
+                      <TableCell className="text-right tabular-nums">${formatCurrency(m.unit_cost)}</TableCell>
+                      <TableCell>
+                        {isOut ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-600">
+                            <PackageX className="h-3.5 w-3.5" />
+                            Agotado
+                          </span>
+                        ) : isLow ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-700">
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                            Stock bajo
                           </span>
                         ) : (
-                          <span className="text-xs text-muted-foreground">OK</span>
+                          <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                            Óptimo
+                          </span>
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        <button
-                          onClick={() => handleOpenAddStock(m)}
-                          className="inline-flex items-center gap-1 px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded transition-colors"
-                        >
-                          ↑ Añadir
-                        </button>
+                        <div className="inline-flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditModal(m)}
+                            className="inline-flex items-center gap-1 px-3 py-1 border border-border bg-background hover:bg-muted text-foreground text-xs font-medium rounded transition-colors"
+                          >
+                            <Pencil className="h-3 w-3" /> Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenAddStock(m)}
+                            className="inline-flex items-center gap-1 px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded transition-colors"
+                          >
+                            ↑ Añadir
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setHistoryMaterial(m)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 border border-border bg-background hover:bg-muted text-foreground text-xs font-medium rounded transition-colors"
+                            title="Historial de movimientos"
+                          >
+                            <History className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -335,6 +455,7 @@ export default function Inventory() {
           )}
         </CardContent>
       </Card>
+      </div>
 
       {isCreateModalOpen && (
         <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
@@ -381,6 +502,20 @@ export default function Inventory() {
                   <option value="Accesorios">Accesorios</option>
                   <option value="Empaque">Empaque</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground mb-1">
+                  COLOR
+                </label>
+                <input
+                  type="text"
+                  maxLength={100}
+                  placeholder="Ej. Azul navy"
+                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 bg-background text-foreground"
+                  value={newMaterial.color}
+                  onChange={(e) => setNewMaterial({ ...newMaterial, color: e.target.value })}
+                />
               </div>
 
               <div>
@@ -490,6 +625,167 @@ export default function Inventory() {
         </div>
       )}
 
+      {isEditModalOpen && editingMaterial && (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-card text-card-foreground border rounded-lg shadow-lg w-full max-w-lg p-6 relative max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Editar material</h3>
+              <button
+                onClick={() => setIsEditModalOpen(false)}
+                className="p-1 hover:bg-muted rounded-md transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <p className="text-sm text-muted-foreground mb-4">
+              Stock actual: <strong className="text-foreground">{formatStock(editingMaterial.stock)}</strong>{" "}
+              {editingMaterial.unit}. Usa <strong>Añadir</strong> para ingresar stock.
+            </p>
+
+            <form onSubmit={handleEditMaterialSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground mb-1">
+                  NOMBRE DEL MATERIAL *
+                </label>
+                <input
+                  type="text"
+                  required
+                  maxLength={255}
+                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 bg-background text-foreground"
+                  value={editMaterial.name}
+                  onChange={(e) => setEditMaterial({ ...editMaterial, name: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground mb-1">
+                  CATEGORÍA *
+                </label>
+                <select
+                  required
+                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 bg-background text-foreground"
+                  value={editMaterial.category}
+                  onChange={(e) => setEditMaterial({ ...editMaterial, category: e.target.value })}
+                >
+                  <option value="">Seleccionar categoría</option>
+                  {Array.from(
+                    new Set([
+                      "Telas",
+                      "Insumos",
+                      "Accesorios",
+                      "Empaque",
+                      ...uniqueCategories,
+                      editMaterial.category,
+                    ].filter(Boolean))
+                  ).map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground mb-1">
+                  COLOR
+                </label>
+                <input
+                  type="text"
+                  maxLength={100}
+                  placeholder="Ej. Azul navy"
+                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 bg-background text-foreground"
+                  value={editMaterial.color}
+                  onChange={(e) => setEditMaterial({ ...editMaterial, color: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground mb-1">
+                  PROVEEDOR *
+                </label>
+                <ProveedorCombobox
+                  value={editMaterial.supplier}
+                  proveedores={sortedProveedores}
+                  onChange={(name) => setEditMaterial({ ...editMaterial, supplier: name })}
+                  placeholder="Buscar o seleccionar proveedor..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground mb-1">
+                  UNIDAD *
+                </label>
+                <input
+                  type="text"
+                  required
+                  maxLength={50}
+                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 bg-background text-foreground"
+                  value={editMaterial.unit}
+                  onChange={(e) => setEditMaterial({ ...editMaterial, unit: e.target.value })}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground mb-1">
+                    STOCK MÍNIMO
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 bg-background text-foreground"
+                    value={editMaterial.min_stock}
+                    onChange={(e) => setEditMaterial({ ...editMaterial, min_stock: e.target.value })}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground mb-1">
+                    COSTO UNIT.
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 bg-background text-foreground"
+                    value={editMaterial.unit_cost}
+                    onChange={(e) => setEditMaterial({ ...editMaterial, unit_cost: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              {editError && (
+                <div className="text-xs text-destructive bg-destructive/10 p-2.5 rounded">
+                  {editError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsEditModalOpen(false)}
+                  disabled={isUpdating}
+                  className="px-4 py-2 border rounded text-sm hover:bg-accent transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdating}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded text-sm transition-colors disabled:opacity-55"
+                >
+                  {isUpdating ? "Guardando..." : "Guardar cambios"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {isProveedorModalOpen && (
         <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-card text-card-foreground border rounded-lg shadow-lg w-full max-w-md p-6 relative">
@@ -556,77 +852,33 @@ export default function Inventory() {
         isLoading={isCreatingInsumoTipo}
       />
 
-      {isStockModalOpen && selectedMaterial && (
-        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-card text-card-foreground border rounded-lg shadow-lg w-full max-w-md p-6 relative">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-lg font-semibold">Añadir Stock</h3>
-              <button
-                onClick={() => setIsStockModalOpen(false)}
-                className="p-1 hover:bg-muted rounded-md transition-colors"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <p className="text-sm text-muted-foreground mb-4">
-              Añadiendo stock para: <strong className="text-foreground">{selectedMaterial.name}</strong> ({selectedMaterial.unit})
-            </p>
+      <MaterialSuppliersDialog
+        open={!!suppliersMaterial}
+        materialId={suppliersMaterial?.id ?? null}
+        materialName={suppliersMaterial?.name}
+        onClose={() => {
+          setSuppliersMaterial(null);
+          refetch();
+        }}
+        proveedores={sortedProveedores}
+        onProveedoresChange={refetchProveedores}
+      />
 
-            <form onSubmit={handleAddStockSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-muted-foreground mb-1">CANTIDAD A INCLUIR *</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  required
-                  placeholder="0.00"
-                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 bg-background text-foreground"
-                  value={newQuantity}
-                  onChange={(e) => setNewQuantity(e.target.value)}
-                />
-              </div>
+      <AddMaterialStockDialog
+        open={isStockModalOpen}
+        material={selectedMaterial}
+        onClose={() => {
+          setIsStockModalOpen(false);
+          setSelectedMaterial(null);
+        }}
+        onSuccess={() => refetch()}
+      />
 
-              <div>
-                <label className="block text-xs font-semibold text-muted-foreground mb-1">REFERENCIA DE COMPRA O PEDIDO *</label>
-                <input
-                  type="text"
-                  required
-                  maxLength={255}
-                  placeholder="Ej. Factura #1034 o Lote 23B"
-                  className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 bg-background text-foreground"
-                  value={reference}
-                  onChange={(e) => setReference(e.target.value)}
-                />
-              </div>
-
-              {errorMsg && (
-                <div className="text-xs text-destructive bg-destructive/10 p-2.5 rounded">
-                  {errorMsg}
-                </div>
-              )}
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsStockModalOpen(false)}
-                  disabled={isSubmitting}
-                  className="px-4 py-2 border rounded text-sm hover:bg-accent transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded text-sm transition-colors disabled:opacity-55"
-                >
-                  {isSubmitting ? "Actualizando..." : "Confirmar"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <MaterialMovementsDialog
+        open={!!historyMaterial}
+        material={historyMaterial}
+        onClose={() => setHistoryMaterial(null)}
+      />
     </AppLayout>
   );
 }

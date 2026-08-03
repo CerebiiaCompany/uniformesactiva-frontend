@@ -66,7 +66,7 @@ interface NewOrderDialogProps {
     initialDeliveryDate?: string;
     quoteId?: string;
     /** Se llama tras crear la orden (antes de onSuccess) si venía de cotización */
-    onOrderCreatedFromQuote?: (quoteId: string) => Promise<void> | void;
+    onOrderCreatedFromQuote?: (quoteId: string, ordenId: string) => Promise<void> | void;
     /** Editar orden existente (solo pending) */
     editOrder?: Order | null;
     /** Editar cotización existente */
@@ -511,25 +511,65 @@ export function NewOrderDialog({
         }
 
         const productoId = productEntries[0].producto_id;
-        const rawItems = productEntries.flatMap((entry) =>
+        type PayloadLineItem = {
+            subproducto_id: string;
+            talla_id: string;
+            cantidad: number;
+            color?: string;
+            talla_nombre?: string;
+            costo_unitario?: number;
+            precio_venta_unitario?: number;
+            producto_nombre?: string;
+            subproducto_nombre?: string;
+            linea_id?: string;
+            linea_nombre?: string;
+            estampado?: string;
+        };
+        const rawItems: PayloadLineItem[] = productEntries.flatMap((entry) =>
             entry.size_lines.map((line) => ({
                 subproducto_id: entry.variant_id,
                 talla_id: line.talla_id,
                 cantidad: line.cantidad,
                 color: entry.color.trim() || undefined,
+                talla_nombre: (line.talla_nombre || "").trim() || undefined,
+                costo_unitario: Number(line.costo_unitario) || 0,
+                precio_venta_unitario:
+                    Number(entry.ingreso_proyectado_unitario) > 0
+                        ? Number(entry.ingreso_proyectado_unitario)
+                        : undefined,
+                producto_nombre: entry.product_name || entry.producto_label || undefined,
+                subproducto_nombre: entry.variant_label || undefined,
+                linea_id: entry.line_id || undefined,
+                linea_nombre: entry.line_name || entry.line_label || undefined,
+                estampado: entry.estampado?.trim() || undefined,
             }))
         );
 
-        const mergedItemsMap = new Map<
-            string,
-            { subproducto_id: string; talla_id: string; cantidad: number; color?: string }
-        >();
+        const mergedItemsMap = new Map<string, PayloadLineItem>();
         for (const item of rawItems) {
             const key = `${item.subproducto_id}:${item.talla_id}`;
             const existing = mergedItemsMap.get(key);
             if (existing) {
                 existing.cantidad += item.cantidad;
                 if (!existing.color && item.color) existing.color = item.color;
+                if (!existing.talla_nombre && item.talla_nombre) {
+                    existing.talla_nombre = item.talla_nombre;
+                }
+                if (!existing.costo_unitario && item.costo_unitario) {
+                    existing.costo_unitario = item.costo_unitario;
+                }
+                if (!existing.precio_venta_unitario && item.precio_venta_unitario) {
+                    existing.precio_venta_unitario = item.precio_venta_unitario;
+                }
+                if (!existing.linea_nombre && item.linea_nombre) {
+                    existing.linea_nombre = item.linea_nombre;
+                }
+                if (!existing.linea_id && item.linea_id) {
+                    existing.linea_id = item.linea_id;
+                }
+                if (!existing.estampado && item.estampado) {
+                    existing.estampado = item.estampado;
+                }
             } else {
                 mergedItemsMap.set(key, { ...item });
             }
@@ -618,7 +658,23 @@ export function NewOrderDialog({
                 producto_id: productoId,
                 tomado_por_id: takenBy,
                 valor_venta_proyectado: income,
-                items,
+                items: items.map(
+                    ({
+                        subproducto_id,
+                        talla_id,
+                        cantidad,
+                        color,
+                        precio_venta_unitario,
+                    }) => ({
+                        subproducto_id,
+                        talla_id,
+                        cantidad,
+                        ...(color ? { color } : {}),
+                        ...(precio_venta_unitario && precio_venta_unitario > 0
+                            ? { precio_venta_unitario }
+                            : {}),
+                    })
+                ),
                 ...logoFields,
                 ...(comentariosFinal ? { comentarios: comentariosFinal } : {}),
                 ...(shippingIso ? { fecha_estimada_entrega: shippingIso } : {}),
@@ -627,6 +683,7 @@ export function NewOrderDialog({
                 ...(detalleAbono ? { detalle_abono: detalleAbono } : { detalle_abono: null }),
                 ...(colorLabel ? { color: colorLabel } : {}),
                 ...(estampadoLabel ? { estampado: estampadoLabel } : {}),
+                ...(quoteId ? { quote_id: quoteId } : {}),
             };
 
             if (editOrder) {
@@ -641,12 +698,12 @@ export function NewOrderDialog({
                 return;
             }
 
-            const { success, errorMessage } = await createOrder(payload);
+            const { success, order, errorMessage } = await createOrder(payload);
             if (success) {
                 let quoteMarked = !fromQuote;
-                if (quoteId && onOrderCreatedFromQuote) {
+                if (quoteId && onOrderCreatedFromQuote && order?.id) {
                     try {
-                        await onOrderCreatedFromQuote(quoteId);
+                        await onOrderCreatedFromQuote(quoteId, order.id);
                         quoteMarked = true;
                     } catch (err) {
                         const msg =
