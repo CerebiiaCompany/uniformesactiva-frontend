@@ -2,15 +2,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
 
-interface CreateMaterialPayload {
-    name: string;
-    category: string;
+export interface UpdateMaterialPayload {
+    name?: string;
+    category?: string;
     color?: string;
-    supplier: string;
-    unit: string;
-    stock: number;
-    min_stock: number;
-    unit_cost: number;
+    supplier?: string;
+    unit?: string;
+    min_stock?: number;
+    unit_cost?: number;
 }
 
 interface MaterialResponse {
@@ -27,13 +26,19 @@ interface MaterialResponse {
     is_low_stock: boolean;
 }
 
-export function useCreateMaterial() {
+export function useUpdateMaterial() {
     const queryClient = useQueryClient();
 
     const mutation = useMutation({
-        mutationFn: async (payload: CreateMaterialPayload) => {
-            return http<MaterialResponse>(endpoints.inventory.create(), {
-                method: "POST",
+        mutationFn: async ({
+            materialId,
+            payload,
+        }: {
+            materialId: string;
+            payload: UpdateMaterialPayload;
+        }) => {
+            return http<MaterialResponse>(endpoints.inventory.detail(materialId), {
+                method: "PATCH",
                 body: JSON.stringify(payload),
             });
         },
@@ -43,9 +48,8 @@ export function useCreateMaterial() {
     });
 
     return {
-        createMaterial: mutation.mutateAsync,
+        updateMaterial: mutation.mutateAsync,
         isPending: mutation.isPending,
         error: mutation.error,
-        isSuccess: mutation.isSuccess,
     };
 }

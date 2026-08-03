@@ -24,7 +24,7 @@ export function VariantSizeCostBreakdownTable({
                 </CardHeader>
                 <CardContent className="pb-6 text-sm text-muted-foreground">
                     Configura el consumo de tela por talla para ver el desglose completo (tela + insumos + mano
-                    de obra).
+                    de obra + extras).
                 </CardContent>
             </Card>
         );
@@ -47,6 +47,7 @@ export function VariantSizeCostBreakdownTable({
                             <th className="text-right font-semibold px-3 py-2">Tela</th>
                             <th className="text-right font-semibold px-3 py-2">Insumos</th>
                             <th className="text-right font-semibold px-3 py-2">M. obra</th>
+                            <th className="text-right font-semibold px-3 py-2">Extras</th>
                             <th className="text-right font-semibold px-4 py-2">Total</th>
                         </tr>
                     </thead>
@@ -69,6 +70,9 @@ export function VariantSizeCostBreakdownTable({
                                     <td className="px-3 py-2.5 text-right">${formatMoney(size.fabric_total)}</td>
                                     <td className="px-3 py-2.5 text-right">${formatMoney(size.supplies_total)}</td>
                                     <td className="px-3 py-2.5 text-right">${formatMoney(size.labor_total)}</td>
+                                    <td className="px-3 py-2.5 text-right">
+                                        ${formatMoney(size.extras_total ?? 0)}
+                                    </td>
                                     <td className="px-4 py-2.5 text-right font-bold">
                                         ${formatMoney(size.overall_total)}
                                     </td>

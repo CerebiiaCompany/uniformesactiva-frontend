@@ -2,10 +2,17 @@ import { useQuery } from "@tanstack/react-query";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
 
+export interface MaterialSupplierOfferBrief {
+    supplier_name: string;
+    unit_cost: number | string;
+    code?: string;
+}
+
 export interface Material {
     id: string;
     name: string;
     category: string;
+    color?: string;
     supplier: string;
     unit: string;
     stock: number;
@@ -13,6 +20,8 @@ export interface Material {
     unit_cost: number;
     status: string;
     is_low_stock: boolean;
+    suppliers_count?: number;
+    supplier_offers?: MaterialSupplierOfferBrief[];
 }
 
 interface UseGetMaterialsProps {
