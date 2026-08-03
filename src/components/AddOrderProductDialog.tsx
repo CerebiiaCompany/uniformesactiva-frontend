@@ -34,8 +34,12 @@ interface VariantOption {
 export interface OrderProductEntry {
     key: string;
     line_id: string;
+    /** Nombre de línea desde BD (sin código) */
+    line_name: string;
     line_label: string;
     producto_id: string;
+    /** Nombre de producto desde BD (sin código) */
+    product_name: string;
     producto_label: string;
     variant_id: string;
     variant_label: string;
@@ -399,6 +403,8 @@ export function AddOrderProductDialog({
                 const sizes = summary.sizes ?? [];
                 setAvailableSizes(sizes);
 
+                const fabricColor = (summary.fabric_color || "").trim();
+
                 const qtyMap = Object.fromEntries(sizes.map((s) => [s.talla_id, ""]));
                 if (hydrate?.variant_id === selectedVariantId && hydrate.size_lines?.length) {
                     for (const line of hydrate.size_lines) {
@@ -407,6 +413,8 @@ export function AddOrderProductDialog({
                         }
                     }
                     setSizeQuantities(qtyMap);
+                    // Color: conservar el de la línea editada; si viene vacío, usar tela de la variante
+                    setSelectedColor((prev) => prev.trim() || hydrate.color?.trim() || fabricColor);
                     if (hydrate.ingreso_proyectado_unitario > 0) {
                         setIngresoProyectadoRaw(String(hydrate.ingreso_proyectado_unitario));
                         setIngresoEditable(false);
@@ -430,6 +438,8 @@ export function AddOrderProductDialog({
                 } else {
                     setSizeQuantities(qtyMap);
                     setUnitCostRaw("");
+                    // Nueva selección de variante → color de la tela principal del costeo
+                    setSelectedColor(fabricColor);
                     if (!skipSizeResetRef.current) {
                         const fromVariant = resolveIngresoProyectadoFromSizes(sizes);
                         if (fromVariant != null) {
@@ -470,13 +480,6 @@ export function AddOrderProductDialog({
             setSelectedGenero("hombre");
         }
     }, [availableSizes]);
-
-    useEffect(() => {
-        if (!selectedVariantId || selectedColor) return;
-        const variant = variants.find((v) => v.id === selectedVariantId);
-        const fromVariant = variant?.attributes?.color?.trim();
-        if (fromVariant) setSelectedColor(fromVariant);
-    }, [selectedVariantId, selectedColor, variants]);
 
     const selectedLine = lines.find((l) => l.id === selectedLineId);
     const selectedProduct = products.find((p) => p.id === selectedProductId);
@@ -610,8 +613,10 @@ export function AddOrderProductDialog({
         onAdd({
             key: editEntry?.key || `${selectedVariant.id}-${Date.now()}`,
             line_id: selectedLine.id,
+            line_name: selectedLine.name,
             line_label: `${selectedLine.code} — ${selectedLine.name}`,
             producto_id: selectedProduct.id,
+            product_name: selectedProduct.name,
             producto_label: `${selectedProduct.code} — ${selectedProduct.name}`,
             variant_id: selectedVariant.id,
             variant_label: selectedVariant.name,
@@ -737,11 +742,15 @@ export function AddOrderProductDialog({
                                     <Input
                                         value={selectedColor}
                                         onChange={(e) => setSelectedColor(e.target.value)}
-                                        placeholder="Ej. Blanco, Azul marino..."
+                                        placeholder="Se carga del color de la tela de la variante"
                                         disabled={!selectedVariantId}
                                         className="h-10"
                                     />
-                                </div>
+                                    {selectedVariantId && selectedColor ? (
+                                        <p className="text-[10px] text-muted-foreground">
+                                            Color de la tela principal del costeo (editable).
+                                        </p>
+                                    ) : null}                                </div>
                                 <div className="space-y-1.5">
                                     <Label className="text-xs font-medium">Estampado</Label>
                                     <Select value={selectedEstampado} onValueChange={setSelectedEstampado}>

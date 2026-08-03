@@ -87,6 +87,7 @@ type RawItem = {
     linea_id?: string | null;
     linea_nombre?: string | null;
     color?: string | null;
+    estampado?: string | null;
 };
 
 function itemsToProductEntries(
@@ -152,13 +153,15 @@ function itemsToProductEntries(
         return {
             key: `edit-${variantId}-${index}`,
             line_id: first.linea_id || "",
+            line_name: first.linea_nombre || "",
             line_label: first.linea_nombre || "",
             producto_id: first.producto_id || options.fallbackProductId,
+            product_name: first.producto_nombre || options.fallbackProductName || label,
             producto_label: first.producto_nombre || options.fallbackProductName || label,
             variant_id: variantId,
             variant_label: first.subproducto_nombre || label,
             color: (first.color || options.fallbackColor || "").trim(),
-            estampado: (options.fallbackEstampado || "").trim(),
+            estampado: (first.estampado || options.fallbackEstampado || "").trim(),
             comentario: "",
             unit_cost: qty > 0 ? costSum / qty : 0,
             ingreso_proyectado_unitario:

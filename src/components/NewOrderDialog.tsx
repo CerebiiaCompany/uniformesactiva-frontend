@@ -521,6 +521,9 @@ export function NewOrderDialog({
             precio_venta_unitario?: number;
             producto_nombre?: string;
             subproducto_nombre?: string;
+            linea_id?: string;
+            linea_nombre?: string;
+            estampado?: string;
         };
         const rawItems: PayloadLineItem[] = productEntries.flatMap((entry) =>
             entry.size_lines.map((line) => ({
@@ -534,8 +537,11 @@ export function NewOrderDialog({
                     Number(entry.ingreso_proyectado_unitario) > 0
                         ? Number(entry.ingreso_proyectado_unitario)
                         : undefined,
-                producto_nombre: entry.producto_label || undefined,
+                producto_nombre: entry.product_name || entry.producto_label || undefined,
                 subproducto_nombre: entry.variant_label || undefined,
+                linea_id: entry.line_id || undefined,
+                linea_nombre: entry.line_name || entry.line_label || undefined,
+                estampado: entry.estampado?.trim() || undefined,
             }))
         );
 
@@ -554,6 +560,15 @@ export function NewOrderDialog({
                 }
                 if (!existing.precio_venta_unitario && item.precio_venta_unitario) {
                     existing.precio_venta_unitario = item.precio_venta_unitario;
+                }
+                if (!existing.linea_nombre && item.linea_nombre) {
+                    existing.linea_nombre = item.linea_nombre;
+                }
+                if (!existing.linea_id && item.linea_id) {
+                    existing.linea_id = item.linea_id;
+                }
+                if (!existing.estampado && item.estampado) {
+                    existing.estampado = item.estampado;
                 }
             } else {
                 mergedItemsMap.set(key, { ...item });

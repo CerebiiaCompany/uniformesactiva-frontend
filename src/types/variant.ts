@@ -56,6 +56,7 @@ export interface SupplyRecord {
     tipo: string;
     tipo_id?: string;
     tipo_label?: string;
+    color?: string;
     talla_id?: string | null;
     talla_nombre?: string | null;
     quantity: string;
@@ -83,6 +84,7 @@ export interface VariantSizeCostSummary {
     fabric_total: string | number;
     supplies_total: string | number;
     labor_total: string | number;
+    extras_total?: string | number;
     overall_total: string | number;
     precio_venta?: string | number | null;
     ganancia?: string | number | null;
@@ -95,7 +97,12 @@ export interface VariantCostSummary {
     fabric_total: string | number;
     supplies_total: string | number;
     labor_total: string | number;
+    extras_total?: string | number;
     overall_total: string | number;
+    /** Referencia de la tela principal del costeo */
+    fabric_reference?: string;
+    /** Color de esa tela en inventario */
+    fabric_color?: string;
     sizes?: VariantSizeCostSummary[];
 }
 
@@ -143,6 +150,32 @@ export interface CreateLaborPayload {
 
 export interface UpdateLaborPayload {
     fase_id?: string;
+    talla_id?: string | null;
+    cantidad?: string | number;
+    unit_price?: string | number;
+}
+
+export interface ExtraCost {
+    id: string;
+    variant_id: string;
+    concepto: string;
+    talla_id?: string | null;
+    talla_nombre?: string | null;
+    cantidad: string;
+    unit_price: string;
+    total: string;
+}
+
+export interface CreateExtraCostPayload {
+    variant_id: string;
+    concepto: string;
+    talla_id?: string | null;
+    cantidad: string | number;
+    unit_price: string | number;
+}
+
+export interface UpdateExtraCostPayload {
+    concepto?: string;
     talla_id?: string | null;
     cantidad?: string | number;
     unit_price?: string | number;

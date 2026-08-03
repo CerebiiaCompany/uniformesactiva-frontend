@@ -1,61 +1,51 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Plus, Pencil, Trash2 } from "lucide-react";
-import type { SupplyRecord } from "@/types/variant";
+import type { ExtraCost } from "@/types/variant";
 import { formatCurrency, formatQuantity } from "@/lib/format-number";
 
-interface SuppliesTableProps {
-    data: SupplyRecord[];
+interface ExtraCostsTableProps {
+    data: ExtraCost[];
     onAdd: () => void;
-    onCreateTipo?: () => void;
-    onEdit: (supply: SupplyRecord) => void;
+    onEdit: (extra: ExtraCost) => void;
     onDelete: (id: string) => void;
 }
 
-const formatTalla = (item: Pick<SupplyRecord, "talla_nombre" | "talla_id">) => {
+const formatTalla = (item: Pick<ExtraCost, "talla_nombre" | "talla_id">) => {
     if (item.talla_id && item.talla_nombre) return item.talla_nombre;
     if (item.talla_id) return item.talla_id;
     return "Todas las tallas (compartido)";
 };
 
-export function SuppliesTable({ data, onAdd, onCreateTipo, onEdit, onDelete }: SuppliesTableProps) {
+export function ExtraCostsTable({ data, onAdd, onEdit, onDelete }: ExtraCostsTableProps) {
     return (
         <Card className="w-full">
-            <CardHeader className="flex flex-row items-center justify-between py-4 gap-3">
-                <CardTitle className="text-sm font-bold">Insumos</CardTitle>
-                <div className="flex items-center gap-2 shrink-0">
-                    {onCreateTipo && (
-                        <Button variant="ghost" size="sm" onClick={onCreateTipo}>
-                            <Plus className="h-3 w-3 mr-1" /> Tipo de insumo
-                        </Button>
-                    )}
-                    <Button variant="outline" size="sm" onClick={onAdd}>
-                        <Plus className="h-3 w-3 mr-1" /> Añadir
-                    </Button>
-                </div>
+            <CardHeader className="flex flex-row items-center justify-between py-4">
+                <CardTitle className="text-sm font-bold">Costos extra</CardTitle>
+                <Button variant="outline" size="sm" onClick={onAdd}>
+                    <Plus className="h-3 w-3 mr-1" /> Añadir
+                </Button>
             </CardHeader>
             <CardContent>
                 {data.length > 0 ? (
                     <div className="space-y-2">
-                        <div className="grid grid-cols-[1.2fr_0.7fr_0.8fr_0.6fr_0.8fr_1fr] gap-2 text-xs font-semibold text-muted-foreground border-b pb-2">
-                            <div>Tipo</div>
-                            <div>Color</div>
+                        <div className="grid grid-cols-[1.2fr_0.8fr_0.6fr_0.8fr_1fr] gap-2 text-xs font-semibold text-muted-foreground border-b pb-2">
+                            <div>Concepto</div>
                             <div>Talla</div>
                             <div>Cantidad</div>
-                            <div>Valor unit.</div>
+                            <div>Precio unit.</div>
                             <div>Total</div>
                         </div>
                         {data.map((item) => (
                             <div
                                 key={item.id}
-                                className="grid grid-cols-[1.2fr_0.7fr_0.8fr_0.6fr_0.8fr_1fr] gap-2 text-sm items-center border-b py-2"
+                                className="grid grid-cols-[1.2fr_0.8fr_0.6fr_0.8fr_1fr] gap-2 text-sm items-center border-b py-2"
                             >
-                                <div className="truncate">{item.tipo_label || item.tipo || "—"}</div>
-                                <div className="truncate text-muted-foreground">
-                                    {item.color?.trim() ? item.color : "—"}
+                                <div className="truncate">{item.concepto || "—"}</div>
+                                <div className="text-xs text-muted-foreground truncate">
+                                    {formatTalla(item)}
                                 </div>
-                                <div className="text-xs text-muted-foreground truncate">{formatTalla(item)}</div>
-                                <div>{formatQuantity(item.quantity)}</div>
+                                <div>{formatQuantity(item.cantidad)}</div>
                                 <div>${formatCurrency(item.unit_price)}</div>
                                 <div className="flex items-center justify-between gap-1">
                                     <span className="font-bold">${formatCurrency(item.total)}</span>
@@ -74,7 +64,9 @@ export function SuppliesTable({ data, onAdd, onCreateTipo, onEdit, onDelete }: S
                         ))}
                     </div>
                 ) : (
-                    <div className="py-10 text-center text-muted-foreground">Sin insumos configurados</div>
+                    <div className="py-10 text-center text-muted-foreground">
+                        Sin costos extra configurados
+                    </div>
                 )}
             </CardContent>
         </Card>

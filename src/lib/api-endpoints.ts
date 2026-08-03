@@ -27,13 +27,21 @@ export const endpoints = {
         manoDeObraByVariant: (variantId: string) =>
             `${base()}/api/v1/costos/mano-de-obra/${variantId}/`,
         manoDeObraDetalle: (id: string) => `${base()}/api/v1/costos/mano-de-obra/detalle/${id}/`,
+        extras: () => `${base()}/api/v1/costos/extras/`,
+        extrasByVariant: (variantId: string) => `${base()}/api/v1/costos/extras/${variantId}/`,
+        extrasDetalle: (id: string) => `${base()}/api/v1/costos/extras/detalle/${id}/`,
         resumenByVariant: (variantId: string) =>
             `${base()}/api/v1/costos/variante/${variantId}/resumen/`,
     },
     inventory: {
         list: (params?: string) => `${base()}/api/v1/inventory/${params ? `?${params}` : ''}`,
         create: () => `${base()}/api/v1/inventory/`,
+        detail: (id: string) => `${base()}/api/v1/inventory/${id}/`,
         addStock: (id: string) => `${base()}/api/v1/inventory/${id}/add-stock/`,
+        movements: (id: string) => `${base()}/api/v1/inventory/${id}/movements/`,
+        suppliers: (id: string) => `${base()}/api/v1/inventory/${id}/suppliers/`,
+        supplierDetail: (id: string, offerId: string) =>
+            `${base()}/api/v1/inventory/${id}/suppliers/${offerId}/`,
     },
     lineas: {
         list: () => `${base()}/api/v1/products/lineas/`,

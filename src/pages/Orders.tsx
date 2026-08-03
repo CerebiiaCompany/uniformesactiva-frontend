@@ -21,7 +21,7 @@ import { formatCurrency } from "@/lib/format-number";
 import {
   resolveFactoryCardInfo,
   summarizeOrderArticles,
-  groupOrderItemsForFactory,
+  itemsToArticleDetailLines,
 } from "@/lib/order-fields";
 import { printOrderProductionGuide } from "@/lib/order-production-guide";
 
@@ -636,15 +636,18 @@ export default function Orders() {
           setArticlesOpen(open);
           if (!open) setArticlesOrder(null);
         }}
-        title={
+        documentLabel={
           articlesOrder
-            ? `ORD-${articlesOrder.id.slice(0, 3).toUpperCase()} · ${articlesOrder.cliente_nombre}`
+            ? `ORD-${articlesOrder.id.slice(0, 3).toUpperCase()}`
             : ""
         }
-        variants={
+        customerName={articlesOrder?.cliente_nombre}
+        lines={
           articlesOrder
-            ? groupOrderItemsForFactory(articlesOrder.items || [], {
+            ? itemsToArticleDetailLines(articlesOrder.items || [], {
                 fallbackColor: articlesOrder.color,
+                fallbackProduct: articlesOrder.producto_nombre,
+                estampado: articlesOrder.estampado,
               })
             : []
         }

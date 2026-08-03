@@ -12,13 +12,16 @@ import { useGetProductDetail } from "@/hooks/useGetProductDetail";
 import { useGetVariants } from "@/hooks/useGetVariants";
 import { useGetFabricCosts } from "@/hooks/useGetFabricCosts";
 import { useGetLaborCosts } from "@/hooks/useGetLaborCosts";
+import { useGetExtraCosts } from "@/hooks/useGetExtraCosts";
 import { useGetSizeConsumption } from "@/hooks/useGetSizeConsumption";
 import { useGetSupplyCosts } from "@/hooks/useGetSupplyCosts";
 import { useGetCostCatalogs } from "@/hooks/useGetCostCatalogs";
 import { useGetCostSummary } from "@/hooks/useGetCostSummary";
+import { useGetMaterials } from "@/hooks/useGetMaterials";
 import { useFabricCosts } from "@/hooks/useFabricCost";
 import { useSupplyCosts } from "@/hooks/useSupplyCosts";
 import { useLaborCosts } from "@/hooks/useLaborCosts";
+import { useExtraCosts } from "@/hooks/useExtraCosts";
 import { useSizeConsumption } from "@/hooks/useSizeConsumption";
 import { useCreateProveedor } from "@/hooks/useCreateProveedor";
 import { useCreateInsumoTipo } from "@/hooks/useCreateInsumoTipo";
@@ -27,13 +30,14 @@ import { useCreateVariant } from "@/hooks/useCreateVariant";
 import { FabricCostsTable } from "@/components/variant-cost/FabricCostsTable";
 import { SuppliesTable } from "@/components/variant-cost/SuppliesTable";
 import { LaborCostsTable } from "@/components/variant-cost/LaborCostsTable";
+import { ExtraCostsTable } from "@/components/variant-cost/ExtraCostsTable";
 import { SizeConsumptionTable } from "@/components/variant-cost/SizeConsumptionTable";
 import { VariantSizeCostBreakdownTable } from "@/components/variant-cost/VariantSizeCostBreakdownTable";
 import { ModalForm, FieldDefinition } from "@/components/ui/ModalForm";
 import { getNewInsumoTipoFields } from "@/lib/insumo-tipo-form";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { formatCurrency, formatDecimal, formatForInput } from "@/lib/format-number";
-import type { UpdateLaborPayload, UpdateSupplyPayload } from "@/types/variant";
+import type { UpdateLaborPayload, UpdateSupplyPayload, UpdateExtraCostPayload } from "@/types/variant";
 import { cn } from "@/lib/utils";
 
 const resolveTallaId = (value: string) => (value ? value : null);
@@ -45,6 +49,8 @@ type ModalType =
     | "edit_fabric"
     | "labor"
     | "edit_labor"
+    | "extra"
+    | "edit_extra"
     | "new_proveedor"
     | "new_insumo_tipo"
     | "";
@@ -67,6 +73,7 @@ export default function VariantCostPage() {
         useFabricCosts();
     const { addSupply, updateSupply, deleteSupply } = useSupplyCosts();
     const { addLabor, updateLabor, deleteLabor } = useLaborCosts();
+    const { addExtra, updateExtra, deleteExtra } = useExtraCosts();
     const { updateSizeConsumption, loading: isSalePriceSaving } = useSizeConsumption();
 
     const activeVariantId = variantId ?? "";
@@ -74,8 +81,20 @@ export default function VariantCostPage() {
 
     const { data: fabrics } = useGetFabricCosts(activeVariantId);
     const { data: labor } = useGetLaborCosts(activeVariantId);
+    const { data: extras } = useGetExtraCosts(activeVariantId);
     const { data: sizeCons } = useGetSizeConsumption(activeVariantId);
     const { data: supplies } = useGetSupplyCosts(activeVariantId);
+    const { materials: inventoryTelas } = useGetMaterials({ category: "Telas" });
+    const inventoryFabricRefs = useMemo(() => {
+        // Precio = costo unitario del material (como se configuró al crearlo).
+        // El proveedor en costeo es solo trazabilidad; no cambia el $/metro.
+        return inventoryTelas.map((m) => ({
+            reference: m.name,
+            unit_cost: Number(m.unit_cost) || 0,
+            color: (m.color || "").trim(),
+        }));
+    }, [inventoryTelas]);
+
     const { data: summary, isLoading: isSummaryLoading } = useGetCostSummary(activeVariantId);
     const [selectedCostSizeId, setSelectedCostSizeId] = useState<string>("");
     const [salePriceInput, setSalePriceInput] = useState("");
@@ -100,6 +119,7 @@ export default function VariantCostPage() {
     const fabricTotal = Number(selectedSizeCost?.fabric_total ?? summary?.fabric_total ?? 0);
     const suppliesTotal = Number(selectedSizeCost?.supplies_total ?? summary?.supplies_total ?? 0);
     const laborTotal = Number(selectedSizeCost?.labor_total ?? summary?.labor_total ?? 0);
+    const extrasTotal = Number(selectedSizeCost?.extras_total ?? summary?.extras_total ?? 0);
     const overallTotal = Number(selectedSizeCost?.overall_total ?? summary?.overall_total ?? 0);
     const sizeConsumption = Number(selectedSizeCost?.consumption ?? summary?.average_consumption ?? 0);
     const fabricPricePerMeter = Number(summary?.fabric_price_per_meter ?? 0);
@@ -346,6 +366,43 @@ export default function VariantCostPage() {
                     if (ok) toast.success("Fase actualizada");
                     else toast.error("No se pudo actualizar la fase");
                 }
+            } else if (modalConfig.type === "extra" && hasActiveVariant) {
+                const concepto = (data.concepto || "").trim();
+                if (!concepto) {
+                    toast.error("El concepto es obligatorio");
+                } else {
+                    const ok = await addExtra({
+                        variant_id: activeVariantId,
+                        concepto,
+                        talla_id: resolveTallaId(data.talla_id),
+                        cantidad: data.cantidad || "1",
+                        unit_price: data.unit_price,
+                    });
+                    if (ok) toast.success("Costo extra agregado");
+                    else toast.error("No se pudo agregar el costo extra");
+                }
+            } else if (modalConfig.type === "edit_extra" && modalConfig.initialData?.id && hasActiveVariant) {
+                const initial = modalConfig.initialData;
+                const payload: UpdateExtraCostPayload = {};
+                const initialTallaId = initial.talla_id || "";
+                const concepto = (data.concepto || "").trim();
+
+                if (concepto !== (initial.concepto || "")) payload.concepto = concepto;
+                if (data.cantidad !== initial.cantidad) payload.cantidad = data.cantidad;
+                if (data.unit_price !== initial.unit_price) payload.unit_price = data.unit_price;
+                if ((data.talla_id || "") !== initialTallaId) {
+                    payload.talla_id = resolveTallaId(data.talla_id);
+                }
+
+                if (Object.keys(payload).length === 0) {
+                    toast.info("No hay cambios para guardar");
+                } else if (payload.concepto !== undefined && !payload.concepto) {
+                    toast.error("El concepto es obligatorio");
+                } else {
+                    const ok = await updateExtra(initial.id, payload, activeVariantId);
+                    if (ok) toast.success("Costo extra actualizado");
+                    else toast.error("No se pudo actualizar el costo extra");
+                }
             } else if (modalConfig.type === "new_proveedor") {
                 const result = await createProveedor(data.name);
                 if (result.success) {
@@ -417,6 +474,14 @@ export default function VariantCostPage() {
         options: sizeScopeOptions,
     };
 
+    const extraTallaField = {
+        name: "talla_id",
+        label: "Alcance por talla",
+        type: "select" as const,
+        required: false,
+        options: sizeScopeOptions,
+    };
+
     const proveedorOptions = proveedores.map((p) => ({
         value: p.id,
         label: p.name,
@@ -432,9 +497,9 @@ export default function VariantCostPage() {
         { name: "reference", label: "Referencia", type: "text", placeholder: "REF-001" },
         {
             name: "meters",
-            label: "Metros",
+            label: "metro",
             type: "decimal",
-            placeholder: "2,500",
+            placeholder: "1",
         },
         {
             name: "price_per_meter",
@@ -626,6 +691,10 @@ export default function VariantCostPage() {
                                                     <span>Mano de obra</span>
                                                     <span>${formatCurrency(laborTotal)}</span>
                                                 </div>
+                                                <div className="flex justify-between">
+                                                    <span>Costos extra</span>
+                                                    <span>${formatCurrency(extrasTotal)}</span>
+                                                </div>
                                                 {selectedSizeCost &&
                                                     (supplies?.length || labor?.length) &&
                                                     suppliesTotal === 0 &&
@@ -671,6 +740,7 @@ export default function VariantCostPage() {
                             data={fabrics || []}
                             variantId={activeVariantId}
                             proveedores={proveedores}
+                            inventoryFabricRefs={inventoryFabricRefs}
                             isSettingPrincipal={isFabricLoading}
                             onAdd={addFabric}
                             onSetPrincipal={async (id) => {
@@ -808,6 +878,59 @@ export default function VariantCostPage() {
                                 )
                             }
                             onDelete={(id) => deleteLabor(id, activeVariantId)}
+                        />
+
+                        <ExtraCostsTable
+                            data={extras || []}
+                            onAdd={() =>
+                                handleOpenModal(
+                                    "extra",
+                                    "Nuevo costo extra",
+                                    [
+                                        {
+                                            name: "concepto",
+                                            label: "Concepto",
+                                            type: "text",
+                                            placeholder: "Empaque, flete, acabado…",
+                                        },
+                                        extraTallaField,
+                                        { name: "cantidad", label: "Cantidad", type: "number", placeholder: "1" },
+                                        {
+                                            name: "unit_price",
+                                            label: "Precio unitario",
+                                            type: "number",
+                                            placeholder: "6",
+                                        },
+                                    ],
+                                    {
+                                        talla_id: selectedCostSizeId || "",
+                                        cantidad: "1",
+                                    }
+                                )
+                            }
+                            onEdit={(item) =>
+                                handleOpenModal(
+                                    "edit_extra",
+                                    "Editar costo extra",
+                                    [
+                                        {
+                                            name: "concepto",
+                                            label: "Concepto",
+                                            type: "text",
+                                        },
+                                        extraTallaField,
+                                        { name: "cantidad", label: "Cantidad", type: "number" },
+                                        { name: "unit_price", label: "Precio unitario", type: "number" },
+                                    ],
+                                    {
+                                        ...item,
+                                        talla_id: item.talla_id || "",
+                                        cantidad: formatForInput(item.cantidad),
+                                        unit_price: formatForInput(item.unit_price),
+                                    }
+                                )
+                            }
+                            onDelete={(id) => deleteExtra(id, activeVariantId)}
                         />
                     </>
                 )}

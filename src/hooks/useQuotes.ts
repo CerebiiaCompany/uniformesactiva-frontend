@@ -18,7 +18,9 @@ export interface QuoteOrderPayload {
         precio_venta_unitario?: number;
         producto_nombre?: string;
         subproducto_nombre?: string;
+        linea_id?: string;
         linea_nombre?: string;
+        estampado?: string;
     }[];
     fecha_estimada_entrega?: string;
     comentarios?: string;

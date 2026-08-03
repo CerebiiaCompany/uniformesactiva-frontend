@@ -41,6 +41,7 @@ export function invalidateVariantCostLists(queryClient: QueryClient, variantId: 
     queryClient.invalidateQueries({ queryKey: ["fabric-costs", variantId] });
     queryClient.invalidateQueries({ queryKey: ["supply-costs", variantId] });
     queryClient.invalidateQueries({ queryKey: ["labor-costs", variantId] });
+    queryClient.invalidateQueries({ queryKey: ["extra-costs", variantId] });
     queryClient.invalidateQueries({ queryKey: ["size-consumption", variantId] });
 }
 

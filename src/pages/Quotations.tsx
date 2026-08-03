@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/select";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
-import { quotePayloadToArticleVariants } from "@/lib/order-fields";
+import { quotePayloadToArticleLines } from "@/lib/order-fields";
 import { printQuoteProductionGuide } from "@/lib/quote-production-guide";
 
 interface FilterUserOption {
@@ -102,21 +102,21 @@ export default function Quotations() {
 
   const [articlesQuote, setArticlesQuote] = useState<Quote | null>(null);
   const [articlesOpen, setArticlesOpen] = useState(false);
-  const articlesVariants = useMemo(
+  const articlesLines = useMemo(
     () =>
       articlesQuote
-        ? quotePayloadToArticleVariants(articlesQuote.orderPayload as QuoteOrderPayload)
+        ? quotePayloadToArticleLines(articlesQuote.orderPayload as QuoteOrderPayload)
         : [],
     [articlesQuote]
   );
   const articlesFallback = useMemo(() => {
     if (!articlesQuote) return [];
-    if (articlesVariants.length > 0) return [];
+    if (articlesLines.length > 0) return [];
     return String(articlesQuote.items || "")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-  }, [articlesQuote, articlesVariants.length]);
+  }, [articlesQuote, articlesLines.length]);
 
   // Estado para filtros
   const [searchTerm, setSearchTerm] = useState("");
@@ -817,12 +817,9 @@ export default function Quotations() {
           setArticlesOpen(open);
           if (!open) setArticlesQuote(null);
         }}
-        title={
-          articlesQuote
-            ? `${getFormattedId(articlesQuote.id)} · ${articlesQuote.customerName}`
-            : ""
-        }
-        variants={articlesVariants}
+        documentLabel={articlesQuote ? getFormattedId(articlesQuote.id) : ""}
+        customerName={articlesQuote?.customerName}
+        lines={articlesLines}
         fallbackLines={articlesFallback}
       />
 
