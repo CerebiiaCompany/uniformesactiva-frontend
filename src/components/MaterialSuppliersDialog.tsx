@@ -77,9 +77,11 @@ export function MaterialSuppliersDialog({
         [proveedores]
     );
 
-    const ensureProveedorInCatalog = async (name: string): Promise<string | null> => {
+    const ensureProveedorInCatalog = async (name: string): Promise<string> => {
         const trimmed = name.trim();
-        if (!trimmed) return null;
+        if (!trimmed) {
+            throw new Error("Selecciona o escribe el nombre del proveedor.");
+        }
 
         const exists = sortedProveedores.some(
             (p) => p.name.toLocaleLowerCase("es") === trimmed.toLocaleLowerCase("es")
@@ -97,6 +99,7 @@ export function MaterialSuppliersDialog({
             throw new Error(result.error || "No se pudo crear el proveedor en el catálogo.");
         }
         await onProveedoresChange?.();
+        toast.success(`Proveedor «${result.data?.name || trimmed}» creado`);
         return result.data?.name?.trim() || trimmed;
     };
 
@@ -129,10 +132,6 @@ export function MaterialSuppliersDialog({
         }
         try {
             const supplierName = await ensureProveedorInCatalog(form.supplier_name);
-            if (!supplierName) {
-                setFormError("Selecciona o escribe el nombre del proveedor.");
-                return;
-            }
             await createOffer({
                 supplier_name: supplierName,
                 unit_cost: cost,
@@ -170,10 +169,6 @@ export function MaterialSuppliersDialog({
         }
         try {
             const supplierName = await ensureProveedorInCatalog(editForm.supplier_name);
-            if (!supplierName) {
-                setEditError("El nombre es obligatorio.");
-                return;
-            }
             await updateOffer({
                 offerId: editing.id,
                 payload: {
@@ -325,6 +320,7 @@ export function MaterialSuppliersDialog({
                                     }
                                     placeholder="Proveedor"
                                     allowCreate
+                                    onCreateNew={ensureProveedorInCatalog}
                                 />
                             </div>
                             <div>
@@ -388,6 +384,7 @@ export function MaterialSuppliersDialog({
                                 onChange={(name) => setForm((prev) => ({ ...prev, supplier_name: name }))}
                                 placeholder="Proveedor"
                                 allowCreate
+                                onCreateNew={ensureProveedorInCatalog}
                             />
                         </div>
                         <div>

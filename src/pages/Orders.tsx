@@ -7,13 +7,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, FileText, Settings, Loader2, ChevronLeft, ChevronRight, SlidersHorizontal, Eye, Check, X, Pencil, Printer, Package } from "lucide-react";
+import { Plus, Search, FileText, Settings, Loader2, ChevronLeft, ChevronRight, SlidersHorizontal, Eye, Check, X, Pencil, Printer, Package, Calculator } from "lucide-react";
 import { useOrders, Order, OrderListFilters } from "@/hooks/useOrders";
 import { NewOrderDialog } from "@/components/NewOrderDialog";
 import { OrderDetailDialog } from "@/components/OrderDetailDialog";
 import { OrderStatusPanel } from "@/components/OrderStatusPanel";
 import { OrderPaymentDetailDialog, PaymentDetailSubject } from "@/components/OrderPaymentDetailDialog";
 import { ArticlesDetailDialog } from "@/components/ArticlesDetailDialog";
+import { OrderRealCostDialog } from "@/components/OrderRealCostDialog";
 import { useToast } from "@/components/ui/use-toast";
 import { EditableSalePriceCell, getOrderProfitPreview } from "@/components/EditableSalePriceCell";
 
@@ -24,6 +25,11 @@ import {
   itemsToArticleDetailLines,
 } from "@/lib/order-fields";
 import { printOrderProductionGuide } from "@/lib/order-production-guide";
+import {
+  getOrderRealCostFromOrder,
+  ORDER_REAL_COST_EVENT,
+  type OrderRealCostBreakdown,
+} from "@/lib/order-real-cost";
 
 const formatMoney = (value: string | number) => formatCurrency(value);
 
@@ -77,6 +83,9 @@ export default function Orders() {
   const [printingOrderId, setPrintingOrderId] = useState<string | null>(null);
   const [articlesOrder, setArticlesOrder] = useState<Order | null>(null);
   const [articlesOpen, setArticlesOpen] = useState(false);
+  const [realCostOrder, setRealCostOrder] = useState<Order | null>(null);
+  const [realCostOpen, setRealCostOpen] = useState(false);
+  const [realCostTick, setRealCostTick] = useState(0);
 
   const [searchTerm, setSearchTerm] = useState("");
   const [salePriceDrafts, setSalePriceDrafts] = useState<Record<string, string>>({});
@@ -94,6 +103,28 @@ export default function Orders() {
   });
 
   const totalPages = Math.max(1, Math.ceil(totalCount / (filters.page_size || 10)));
+
+  useEffect(() => {
+    const refreshFromDb = () => {
+      setRealCostTick((n) => n + 1);
+      void fetchOrders(filters);
+    };
+    window.addEventListener(ORDER_REAL_COST_EVENT, refreshFromDb);
+    window.addEventListener("focus", refreshFromDb);
+    return () => {
+      window.removeEventListener(ORDER_REAL_COST_EVENT, refreshFromDb);
+      window.removeEventListener("focus", refreshFromDb);
+    };
+  }, [fetchOrders, filters]);
+
+  const realCostByOrder = useMemo(() => {
+    void realCostTick;
+    const map: Record<string, OrderRealCostBreakdown | null> = {};
+    for (const order of orders) {
+      map[order.id] = getOrderRealCostFromOrder(order);
+    }
+    return map;
+  }, [orders, realCostTick]);
 
   useEffect(() => {
     if (error) {
@@ -353,6 +384,7 @@ export default function Orders() {
                     <TableHead className="min-w-[100px] text-xs">Cliente</TableHead>
                     <TableHead className="w-[88px] text-xs text-center">Artículos</TableHead>
                     <TableHead className="w-[88px] text-xs text-right">Costo</TableHead>
+                    <TableHead className="w-[96px] text-xs text-right">Costo real</TableHead>
                     <TableHead className="w-[96px] text-xs text-right">Venta</TableHead>
                     <TableHead className="w-[80px] text-xs text-right">Ganancia</TableHead>
                     <TableHead className="w-[56px] text-xs text-center">Margen</TableHead>
@@ -366,7 +398,7 @@ export default function Orders() {
                 <TableBody>
                   {filteredOrders.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={13} className="text-center py-8 text-muted-foreground text-sm">
+                      <TableCell colSpan={14} className="text-center py-8 text-muted-foreground text-sm">
                         No hay órdenes para mostrar.
                       </TableCell>
                     </TableRow>
@@ -420,6 +452,21 @@ export default function Orders() {
                           </TableCell>
                           <TableCell className="text-right font-medium text-foreground whitespace-nowrap text-sm py-2.5 tabular-nums">
                             ${formatMoney(order.costo_total)}
+                          </TableCell>
+                          <TableCell className="text-right py-2.5">
+                            <button
+                              type="button"
+                              title="Ver desglose de costo real"
+                              onClick={() => {
+                                setRealCostOrder(order);
+                                setRealCostOpen(true);
+                              }}
+                              className="inline-flex items-center justify-end gap-1 w-full text-sm font-semibold tabular-nums text-red-600 hover:text-red-700 hover:underline"
+                            >
+                              <Calculator className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                              $
+                              {formatMoney(realCostByOrder[order.id]?.total ?? 0)}
+                            </button>
                           </TableCell>
                           <TableCell className="text-right py-2.5">
                             <EditableSalePriceCell
@@ -654,6 +701,20 @@ export default function Orders() {
         fallbackLines={
           articlesOrder?.producto_nombre ? [articlesOrder.producto_nombre] : []
         }
+      />
+
+      <OrderRealCostDialog
+        open={realCostOpen}
+        onClose={() => {
+          setRealCostOpen(false);
+          setRealCostOrder(null);
+        }}
+        orderId={realCostOrder?.id || ""}
+        orderLabel={
+          realCostOrder ? `ORD-${realCostOrder.id.slice(0, 3).toUpperCase()}` : undefined
+        }
+        estimatedCost={Number(realCostOrder?.costo_total) || 0}
+        breakdown={realCostOrder ? realCostByOrder[realCostOrder.id] : null}
       />
 
       <OrderPaymentDetailDialog

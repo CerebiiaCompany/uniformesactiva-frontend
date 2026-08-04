@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Check, ChevronsUpDown, Plus } from "lucide-react";
+import { Check, ChevronsUpDown, Loader2, Plus } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Command,
@@ -25,6 +25,11 @@ interface ProveedorComboboxProps {
   required?: boolean;
   /** Permite usar un nombre nuevo si no está en el catálogo */
   allowCreate?: boolean;
+  /**
+   * Si se define, al elegir "Crear «nombre»" se llama para persistir el proveedor
+   * en el catálogo y luego se selecciona el nombre devuelto.
+   */
+  onCreateNew?: (name: string) => Promise<string | void>;
 }
 
 export function ProveedorCombobox({
@@ -34,9 +39,11 @@ export function ProveedorCombobox({
   placeholder = "Buscar o seleccionar proveedor...",
   disabled = false,
   allowCreate = false,
+  onCreateNew,
 }: ProveedorComboboxProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [creating, setCreating] = useState(false);
 
   const sortedProveedores = useMemo(
     () => [...proveedores].sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" })),
@@ -56,7 +63,8 @@ export function ProveedorCombobox({
   const canCreate =
     allowCreate &&
     normalizedSearch.length > 0 &&
-    !exactMatch;
+    !exactMatch &&
+    !creating;
 
   const selectName = (name: string) => {
     onChange(name === value ? "" : name);
@@ -64,10 +72,32 @@ export function ProveedorCombobox({
     setSearch("");
   };
 
+  const handleCreate = async () => {
+    const name = normalizedSearch;
+    if (!name) return;
+
+    if (!onCreateNew) {
+      selectName(name);
+      return;
+    }
+
+    setCreating(true);
+    try {
+      const created = await onCreateNew(name);
+      const finalName = (created || name).trim();
+      onChange(finalName);
+      setOpen(false);
+      setSearch("");
+    } finally {
+      setCreating(false);
+    }
+  };
+
   return (
     <Popover
       open={open}
       onOpenChange={(next) => {
+        if (creating) return;
         setOpen(next);
         if (!next) setSearch("");
       }}
@@ -77,7 +107,7 @@ export function ProveedorCombobox({
           type="button"
           role="combobox"
           aria-expanded={open}
-          disabled={disabled}
+          disabled={disabled || creating}
           className={cn(
             "flex w-full items-center justify-between rounded border px-3 py-2 text-sm transition-colors",
             "bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-red-600",
@@ -85,8 +115,14 @@ export function ProveedorCombobox({
             !value && "text-muted-foreground"
           )}
         >
-          <span className="truncate text-left">{value || placeholder}</span>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          <span className="truncate text-left">
+            {creating ? "Creando proveedor..." : value || placeholder}
+          </span>
+          {creating ? (
+            <Loader2 className="ml-2 h-4 w-4 shrink-0 animate-spin opacity-70" />
+          ) : (
+            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          )}
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -123,7 +159,9 @@ export function ProveedorCombobox({
               <CommandGroup>
                 <CommandItem
                   value={`__create__:${normalizedSearch}`}
-                  onSelect={() => selectName(normalizedSearch)}
+                  onSelect={() => {
+                    void handleCreate();
+                  }}
                   className="text-red-700"
                 >
                   <Plus className="mr-2 h-4 w-4" />
