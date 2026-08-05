@@ -11,6 +11,8 @@ export interface DashboardStats {
   monthlyProfit: number;
   quotationsPending: number;
   customersActive: number;
+  ordersUnpaidCount: number;
+  ordersUnpaidBalance: number;
 }
 
 export interface DashboardTrends {
@@ -40,6 +42,22 @@ export interface DashboardAlert {
   daysLate: number;
 }
 
+export type DashboardPaymentEstado = "no_pagado" | "parcial" | "pagado" | string;
+
+export interface DashboardUnpaidOrder {
+  id: string;
+  shortId: string;
+  clienteNombre: string;
+  productoNombre: string;
+  estadoPago: DashboardPaymentEstado;
+  valorVenta: number;
+  montoCobrado: number;
+  saldoPendiente: number;
+  porcentajePagado: number;
+  fechaLimiteSaldo: string | null;
+  fechaCreacion: string | null;
+}
+
 interface DashboardApiResponse {
   stats: {
     orders_in_progress: number;
@@ -50,6 +68,8 @@ interface DashboardApiResponse {
     monthly_profit: number;
     quotations_pending: number;
     customers_active: number;
+    orders_unpaid_count?: number;
+    orders_unpaid_balance?: number;
   };
   trends: {
     orders_in_progress_pct: number | null;
@@ -75,6 +95,19 @@ interface DashboardApiResponse {
     fecha_estimada_entrega: string | null;
     days_late: number;
   }>;
+  unpaid_orders?: Array<{
+    id: string;
+    short_id: string;
+    cliente_nombre: string;
+    producto_nombre: string;
+    estado_pago: string;
+    valor_venta_proyectado: number;
+    monto_cobrado: number;
+    saldo_pendiente: number;
+    porcentaje_pagado: number;
+    fecha_limite_saldo: string | null;
+    fecha_creacion: string | null;
+  }>;
   meta?: { month?: string; notes?: string[] };
 }
 
@@ -89,6 +122,8 @@ function mapResponse(data: DashboardApiResponse) {
       monthlyProfit: data.stats.monthly_profit ?? 0,
       quotationsPending: data.stats.quotations_pending ?? 0,
       customersActive: data.stats.customers_active ?? 0,
+      ordersUnpaidCount: data.stats.orders_unpaid_count ?? 0,
+      ordersUnpaidBalance: data.stats.orders_unpaid_balance ?? 0,
     } satisfies DashboardStats,
     trends: {
       ordersInProgressPct: data.trends?.orders_in_progress_pct ?? null,
@@ -118,6 +153,21 @@ function mapResponse(data: DashboardApiResponse) {
         daysLate: a.days_late,
       })
     ),
+    unpaidOrders: (data.unpaid_orders || []).map(
+      (o): DashboardUnpaidOrder => ({
+        id: o.id,
+        shortId: o.short_id,
+        clienteNombre: o.cliente_nombre,
+        productoNombre: o.producto_nombre,
+        estadoPago: o.estado_pago,
+        valorVenta: o.valor_venta_proyectado ?? 0,
+        montoCobrado: o.monto_cobrado ?? 0,
+        saldoPendiente: o.saldo_pendiente ?? 0,
+        porcentajePagado: o.porcentaje_pagado ?? 0,
+        fechaLimiteSaldo: o.fecha_limite_saldo,
+        fechaCreacion: o.fecha_creacion,
+      })
+    ),
     notes: data.meta?.notes || [],
   };
 }
@@ -129,6 +179,7 @@ export function useDashboard() {
   const [trends, setTrends] = useState<DashboardTrends | null>(null);
   const [recentOrders, setRecentOrders] = useState<DashboardRecentOrder[]>([]);
   const [alerts, setAlerts] = useState<DashboardAlert[]>([]);
+  const [unpaidOrders, setUnpaidOrders] = useState<DashboardUnpaidOrder[]>([]);
   const [notes, setNotes] = useState<string[]>([]);
 
   const fetchDashboard = useCallback(async () => {
@@ -141,6 +192,7 @@ export function useDashboard() {
       setTrends(mapped.trends);
       setRecentOrders(mapped.recentOrders);
       setAlerts(mapped.alerts);
+      setUnpaidOrders(mapped.unpaidOrders);
       setNotes(mapped.notes);
     } catch (err) {
       const message =
@@ -166,6 +218,7 @@ export function useDashboard() {
     trends,
     recentOrders,
     alerts,
+    unpaidOrders,
     notes,
     refetch: fetchDashboard,
   };

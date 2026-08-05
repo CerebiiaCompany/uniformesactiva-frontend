@@ -6,10 +6,22 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ChevronLeft, Plus, Loader2 } from "lucide-react";
+import { ChevronLeft, Plus, Loader2, Trash2 } from "lucide-react";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 import { useGetProductDetail } from "@/hooks/useGetProductDetail";
 import { useGetVariants } from "@/hooks/useGetVariants";
+import { useDeleteVariant } from "@/hooks/useDeleteVariant";
+import type { ProductVariant } from "@/types/variant";
 import { useGetFabricCosts } from "@/hooks/useGetFabricCosts";
 import { useGetLaborCosts } from "@/hooks/useGetLaborCosts";
 import { useGetExtraCosts } from "@/hooks/useGetExtraCosts";
@@ -25,6 +37,7 @@ import { useExtraCosts } from "@/hooks/useExtraCosts";
 import { useSizeConsumption } from "@/hooks/useSizeConsumption";
 import { useCreateProveedor } from "@/hooks/useCreateProveedor";
 import { useCreateInsumoTipo } from "@/hooks/useCreateInsumoTipo";
+import { useCreateManoDeObraFase } from "@/hooks/useCreateManoDeObraFase";
 import { useCreateVariant } from "@/hooks/useCreateVariant";
 
 import { FabricCostsTable } from "@/components/variant-cost/FabricCostsTable";
@@ -99,6 +112,7 @@ type ModalType =
     | "edit_extra"
     | "new_proveedor"
     | "new_insumo_tipo"
+    | "new_labor_fase"
     | "";
 
 export default function VariantCostPage() {
@@ -109,12 +123,15 @@ export default function VariantCostPage() {
 
     const { product, isLoading: isProductLoading } = useGetProductDetail(productId);
     const { variants, isLoading: isVariantsLoading, refetch: refetchVariants } = useGetVariants(productId);
-    const { sizes, supplyTypes, laborPhases, proveedores, refetchProveedores, refetchSupplyTypes } =
+    const { sizes, supplyTypes, laborPhases, proveedores, refetchProveedores, refetchSupplyTypes, refetchLaborPhases } =
         useGetCostCatalogs();
     const { createProveedor } = useCreateProveedor();
     const { createInsumoTipo } = useCreateInsumoTipo();
+    const { createManoDeObraFase } = useCreateManoDeObraFase();
 
     const { createVariant } = useCreateVariant();
+    const { deleteVariant, isLoading: isDeletingVariant } = useDeleteVariant();
+    const [deletingVariant, setDeletingVariant] = useState<ProductVariant | null>(null);
     const { addFabric, updateFabric, deleteFabric, setFabricPrincipal, loading: isFabricLoading } =
         useFabricCosts();
     const { addSupply, updateSupply, deleteSupply } = useSupplyCosts();
@@ -352,6 +369,38 @@ export default function VariantCostPage() {
         return `/products/${productId}/variants/${id}/costing${query}`;
     };
 
+    const handleDeleteVariantConfirm = async () => {
+        if (!productId || !deletingVariant) return;
+
+        if (variants.length <= 1) {
+            toast.error("No se puede eliminar la única variante de un producto.");
+            setDeletingVariant(null);
+            return;
+        }
+
+        const removedId = deletingVariant.id;
+        const result = await deleteVariant(productId, removedId);
+
+        if (!result.success) {
+            toast.error(result.error || "No se pudo eliminar la variante");
+            return;
+        }
+
+        toast.success("Variante eliminada correctamente");
+        setDeletingVariant(null);
+        await refetchVariants();
+
+        if (removedId === variantId) {
+            const next = variants.find((v) => v.id !== removedId);
+            if (next) {
+                navigate(variantCostingUrl(next.id), { replace: true });
+            } else {
+                const query = lineCode ? `?lineCode=${encodeURIComponent(lineCode)}` : "";
+                navigate(`/products/${productId}${query}`, { replace: true });
+            }
+        }
+    };
+
     const handleOpenModal = (
         type: ModalType,
         title: string,
@@ -529,6 +578,17 @@ export default function VariantCostPage() {
                 } else {
                     toast.error(result.error || "No se pudo crear el tipo de insumo");
                 }
+            } else if (modalConfig.type === "new_labor_fase") {
+                const result = await createManoDeObraFase({
+                    name: data.name,
+                    orden: data.orden ? Number(data.orden) : 0,
+                });
+                if (result.success) {
+                    toast.success("Fase de mano de obra creada");
+                    await refetchLaborPhases();
+                } else {
+                    toast.error(result.error || "No se pudo crear la fase");
+                }
             }
         } finally {
             setModalConfig((prev) => ({ ...prev, isOpen: false }));
@@ -612,6 +672,7 @@ export default function VariantCostPage() {
         <AppLayout
             title={product?.name || "Producto"}
             subtitle="Variantes, tallas y estructura de costos"
+            eyebrow="Operación"
         >
             <div className="space-y-6">
                 <div className="flex items-center gap-4">
@@ -631,7 +692,7 @@ export default function VariantCostPage() {
 
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between py-4">
-                        <CardTitle className="text-sm font-bold">Variantes</CardTitle>
+                        <CardTitle className="text-lg font-bold tracking-tight">Variantes</CardTitle>
                         <Button
                             variant="outline"
                             size="sm"
@@ -653,18 +714,36 @@ export default function VariantCostPage() {
                         ) : variants.length ? (
                             variants.map((v) => {
                                 const isActive = v.id === variantId;
+                                const canDelete = variants.length > 1;
                                 return (
                                     <div
                                         key={v.id}
-                                        className={`grid grid-cols-3 px-6 py-3 border-b items-center text-sm cursor-pointer hover:bg-muted/10 ${isActive ? "bg-muted/5 font-semibold" : ""
-                                            }`}
-                                        onClick={() => !isActive && navigate(variantCostingUrl(v.id))}
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => {
+                                            if (!isActive) navigate(variantCostingUrl(v.id));
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if ((e.key === "Enter" || e.key === " ") && !isActive) {
+                                                e.preventDefault();
+                                                navigate(variantCostingUrl(v.id));
+                                            }
+                                        }}
+                                        className={cn(
+                                            "grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto] px-6 py-3 border-b items-center text-sm cursor-pointer transition-colors hover:bg-primary/5",
+                                            isActive && "bg-primary/5"
+                                        )}
                                     >
-                                        <div className={isActive ? "text-primary font-bold" : "text-foreground"}>
+                                        <span
+                                            className={cn(
+                                                "truncate",
+                                                isActive ? "text-primary font-bold" : "text-foreground"
+                                            )}
+                                        >
                                             {v.code}
-                                        </div>
-                                        <div className="col-span-2 flex items-center justify-between gap-2">
-                                            <span>
+                                        </span>
+                                        <div className="min-w-0 flex items-center justify-between gap-2 text-left">
+                                            <span className="truncate">
                                                 {v.name}
                                                 {isActive && (
                                                     <span className="ml-2 text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded">
@@ -673,11 +752,35 @@ export default function VariantCostPage() {
                                                 )}
                                             </span>
                                             {v.estimated_cost != null && Number(v.estimated_cost) > 0 && (
-                                                <span className="text-xs text-muted-foreground shrink-0">
+                                                <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
                                                     ${formatCurrency(v.estimated_cost)}
                                                 </span>
                                             )}
                                         </div>
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
+                                            title={
+                                                canDelete
+                                                    ? "Eliminar variante"
+                                                    : "No se puede eliminar la única variante"
+                                            }
+                                            disabled={!canDelete || isDeletingVariant}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                if (!canDelete) {
+                                                    toast.error(
+                                                        "No se puede eliminar la única variante de un producto."
+                                                    );
+                                                    return;
+                                                }
+                                                setDeletingVariant(v);
+                                            }}
+                                        >
+                                            <Trash2 className="h-4 w-4" />
+                                        </Button>
                                     </div>
                                 );
                             })
@@ -739,7 +842,7 @@ export default function VariantCostPage() {
                                                         isSalePriceSaving ||
                                                         !(sizeCons && sizeCons.length > 0)
                                                     }
-                                                    className="pl-7 font-semibold"
+                                                    className="pl-7 tabular-nums"
                                                 />
                                             </div>
                                             <p className="text-[11px] text-muted-foreground">
@@ -750,7 +853,7 @@ export default function VariantCostPage() {
                                             </p>
                                         </div>
                                         <div>
-                                            <CardTitle className="text-sm font-bold">Resumen de costos</CardTitle>
+                                            <CardTitle className="text-lg font-bold tracking-tight">Resumen de costos</CardTitle>
                                             {selectedSizeName && (
                                                 <p className="text-xs text-muted-foreground mt-1">
                                                     Talla {selectedSizeName}
@@ -833,7 +936,7 @@ export default function VariantCostPage() {
                                                             talla del resumen.
                                                         </p>
                                                     )}
-                                                <div className="border-t pt-2 font-bold flex justify-between text-base rounded-md bg-sky-50 px-2 py-2 -mx-0.5">
+                                                <div className="border-t pt-2 flex justify-between text-base rounded-md bg-sky-50 px-2 py-2 -mx-0.5">
                                                     <span>Costo total prenda</span>
                                                     <span className="tabular-nums">
                                                         ${formatCurrency(overallTotal)}
@@ -880,7 +983,7 @@ export default function VariantCostPage() {
                                                                 ${formatCurrency(salePricing.iva)}
                                                             </span>
                                                         </div>
-                                                        <div className="flex justify-between font-bold text-base rounded-md bg-amber-100 px-2 py-2 -mx-0.5 border border-amber-200">
+                                                        <div className="flex justify-between text-base rounded-md bg-amber-100 px-2 py-2 -mx-0.5 border border-amber-200">
                                                             <span>Precio de venta IVA incluido</span>
                                                             <span className="tabular-nums">
                                                                 ${formatCurrency(salePricing.precioConIva)}
@@ -904,6 +1007,7 @@ export default function VariantCostPage() {
                             sizes={summary?.sizes ?? []}
                             selectedSizeId={selectedCostSizeId}
                             onSelectSize={setSelectedCostSizeId}
+                            averageConsumption={summary?.average_consumption}
                         />
 
                         <FabricCostsTable
@@ -998,6 +1102,16 @@ export default function VariantCostPage() {
 
                         <LaborCostsTable
                             data={labor || []}
+                            onCreateFase={() =>
+                                handleOpenModal("new_labor_fase", "Crear fase", [
+                                    {
+                                        name: "name",
+                                        label: "Nombre de la fase",
+                                        type: "text",
+                                        placeholder: "Ej. Planchado, Empaque...",
+                                    },
+                                ])
+                            }
                             onAdd={() =>
                                 handleOpenModal(
                                     "labor",
@@ -1114,6 +1228,35 @@ export default function VariantCostPage() {
                     onClose={() => setModalConfig((prev) => ({ ...prev, isOpen: false }))}
                     onSubmit={handleSubmit}
                 />
+
+                <AlertDialog
+                    open={!!deletingVariant}
+                    onOpenChange={(open) => !open && !isDeletingVariant && setDeletingVariant(null)}
+                >
+                    <AlertDialogContent>
+                        <AlertDialogHeader>
+                            <AlertDialogTitle>¿Eliminar variante?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                                Se eliminará <strong>{deletingVariant?.name}</strong> (código{" "}
+                                {deletingVariant?.code}) junto con su costeo asociado. Esta acción no se
+                                puede deshacer.
+                            </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                            <AlertDialogCancel disabled={isDeletingVariant}>Cancelar</AlertDialogCancel>
+                            <AlertDialogAction
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    void handleDeleteVariantConfirm();
+                                }}
+                                disabled={isDeletingVariant}
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            >
+                                {isDeletingVariant ? "Eliminando..." : "Eliminar"}
+                            </AlertDialogAction>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
             </div>
         </AppLayout>
     );

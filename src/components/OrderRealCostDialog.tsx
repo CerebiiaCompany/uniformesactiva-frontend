@@ -1,7 +1,7 @@
 import { Calculator, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/format-number";
-import { getKanbanStageChipClass } from "@/lib/kanban-stage-theme";
+import { KanbanStageChip } from "@/components/KanbanStageChip";
 import {
   emptyRealCost,
   type OrderRealCostBreakdown,
@@ -27,20 +27,6 @@ function isUnassignedName(name?: string | null) {
   return n === "sin asignar" || n === "sin asignar (producción)";
 }
 
-function StageChip({ label, stageKey }: { label: string; stageKey?: string | null }) {
-  if (!label) return null;
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold",
-        getKanbanStageChipClass(stageKey || label)
-      )}
-    >
-      {label}
-    </span>
-  );
-}
-
 function CategoryBlock({
   title,
   amount,
@@ -60,7 +46,7 @@ function CategoryBlock({
     <details open={defaultOpen} className="rounded-xl border bg-card">
       <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between gap-3">
         <span className="text-sm font-semibold text-foreground">{title}</span>
-        <span className="text-sm font-semibold tabular-nums text-foreground">{money(amount)}</span>
+        <span className="text-sm tabular-nums text-foreground">{money(amount)}</span>
       </summary>
       {visibleLines.length > 0 ? (
         <div className="border-t px-4 py-2.5 space-y-2">
@@ -81,7 +67,7 @@ function CategoryBlock({
                     </span>
                   ) : null}
                 </div>
-                <span className="tabular-nums font-medium shrink-0 text-right">
+                <span className="tabular-nums shrink-0 text-right">
                   {money(line.amount)}
                 </span>
               </div>
@@ -160,7 +146,7 @@ export function OrderRealCostDialog({
                 className="flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm bg-card"
               >
                 <span className="text-foreground">{cat.title}</span>
-                <span className="font-semibold tabular-nums shrink-0">{money(cat.amount)}</span>
+                <span className="tabular-nums shrink-0">{money(cat.amount)}</span>
               </div>
             ))}
           </div>
@@ -168,7 +154,7 @@ export function OrderRealCostDialog({
           <div className="rounded-xl border bg-muted/20 px-4 py-3 space-y-2">
             <div className="flex items-center justify-between gap-3">
               <span className="text-sm font-semibold text-foreground">Costo real acumulado</span>
-              <span className="text-base font-bold text-red-600 tabular-nums">
+              <span className="text-base text-red-600 tabular-nums">
                 {money(data.total)}
               </span>
             </div>
@@ -182,7 +168,7 @@ export function OrderRealCostDialog({
               </span>
               <span
                 className={cn(
-                  "font-bold tabular-nums",
+                  "tabular-nums",
                   diff <= 0 ? "text-emerald-600" : "text-red-600"
                 )}
               >
@@ -214,16 +200,17 @@ export function OrderRealCostDialog({
                         {(user.stages || []).length > 0 ? (
                           <div className="flex flex-wrap gap-1">
                             {user.stages.map((stage) => (
-                              <StageChip
+                              <KanbanStageChip
                                 key={`${user.userId}-${stage.key}`}
                                 label={stage.label || stage.key}
                                 stageKey={stage.key}
+                                className="text-[10px] font-semibold px-2 py-0.5"
                               />
                             ))}
                           </div>
                         ) : null}
                       </div>
-                      <span className="text-sm font-semibold tabular-nums shrink-0 pt-0.5">
+                      <span className="text-sm tabular-nums shrink-0 pt-0.5">
                         {money(user.amount)}
                       </span>
                     </summary>
@@ -238,7 +225,7 @@ export function OrderRealCostDialog({
                             <span className="text-muted-foreground break-words leading-snug min-w-0">
                               {baseLabel}
                             </span>
-                            <span className="tabular-nums font-medium shrink-0 text-right">
+                            <span className="tabular-nums shrink-0 text-right">
                               {money(line.amount)}
                             </span>
                           </div>

@@ -232,8 +232,10 @@ export default function Quotations() {
     }, 500);
   };
 
-  // Filtrar en frontend por búsqueda general (usando debouncedSearchTerm)
+  // Filtrar en frontend por búsqueda general (usando debouncedSearchTerm).
+  // Las ya convertidas a orden no deben listarse en Cotizaciones.
   const filteredQuotes = quotes.filter((q) => {
+    if (q.status === "ordered") return false;
     if (!debouncedSearchTerm) return true;
     const lowerSearch = debouncedSearchTerm.toLowerCase();
     return (
@@ -351,7 +353,8 @@ export default function Quotations() {
       if (result.success) {
         toast({
           title: "Orden creada",
-          description: "La cotización pasó a Ordenado y la orden está en el módulo Órdenes.",
+          description:
+            "La cotización pasó a Órdenes y ya no se muestra en Cotizaciones.",
         });
         navigate("/orders");
       } else {
@@ -389,7 +392,7 @@ export default function Quotations() {
   // Estados de carga y error
   if (loading && quotes.length === 0) {
     return (
-      <AppLayout title="Cotizaciones" subtitle="Gestión de cotizaciones y propuestas">
+      <AppLayout title="Cotizaciones" subtitle="Gestión de cotizaciones y propuestas" eyebrow="Comercial">
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
@@ -402,7 +405,7 @@ export default function Quotations() {
 
   if (error) {
     return (
-      <AppLayout title="Cotizaciones" subtitle="Gestión de cotizaciones y propuestas">
+      <AppLayout title="Cotizaciones" subtitle="Gestión de cotizaciones y propuestas" eyebrow="Comercial">
         <Card>
           <CardContent className="py-8">
             <p className="text-destructive text-center">{error}</p>
@@ -416,7 +419,7 @@ export default function Quotations() {
   }
 
   return (
-    <AppLayout title="Cotizaciones" subtitle="Gestión de cotizaciones y propuestas">
+    <AppLayout title="Cotizaciones" subtitle="Gestión de cotizaciones y propuestas" eyebrow="Comercial">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-3">
           <CardTitle className="text-base font-semibold">Cotizaciones</CardTitle>
@@ -462,7 +465,6 @@ export default function Quotations() {
                   <SelectItem value="approved">Aprobada</SelectItem>
                   <SelectItem value="rejected">Rechazada</SelectItem>
                   <SelectItem value="in_review">En Revisión</SelectItem>
-                  <SelectItem value="ordered">Ordenado</SelectItem>
                   <SelectItem value="inactive">Inactiva</SelectItem>
                 </SelectContent>
               </Select>
@@ -592,7 +594,7 @@ export default function Quotations() {
                         <Package className="h-4 w-4" />
                       </Button>
                     </TableCell>
-                    <TableCell className="text-right font-medium text-foreground whitespace-nowrap text-sm">
+                    <TableCell className="text-right text-foreground whitespace-nowrap text-sm tabular-nums">
                       {formatAmount(q.totalAmount)}
                     </TableCell>
                     <TableCell>
@@ -679,7 +681,7 @@ export default function Quotations() {
                         className="inline-flex items-center gap-1 text-red-500 hover:text-red-600 hover:bg-red-50 rounded-md px-1.5 py-0.5 transition-colors"
                       >
                         <MessageSquare className="h-4 w-4" />
-                        <span className="text-sm font-medium tabular-nums">
+                        <span className="text-sm tabular-nums">
                           {q.novedadesCount ?? 0}
                         </span>
                       </button>
@@ -726,9 +728,6 @@ export default function Quotations() {
                             <ShoppingCart className="h-3.5 w-3.5" />
                             {isPlacingOrderId === q.id ? "Ordenando..." : "Ordenar"}
                           </Button>
-                        )}
-                        {q.status === "ordered" && (
-                          <span className="text-xs text-muted-foreground">Ya ordenada</span>
                         )}
                       </div>
                     </TableCell>

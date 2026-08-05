@@ -29,6 +29,7 @@ export default function Administration() {
     <AppLayout
       title="Administración"
       subtitle="Centraliza la configuración de tu compañía, usuarios, áreas y roles desde un solo lugar."
+      eyebrow="Gerencia"
     >
       <div className="space-y-6">
         <Card className="animate-fade-in">

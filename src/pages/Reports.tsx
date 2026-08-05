@@ -11,7 +11,7 @@ const reports = [
 
 export default function Reports() {
   return (
-    <AppLayout title="Reportes" subtitle="Informes y análisis">
+    <AppLayout title="Reportes" subtitle="Informes y análisis" eyebrow="Gerencia">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {reports.map((report) => (
           <Card key={report.title} className="hover:shadow-md transition-shadow cursor-pointer animate-fade-in">

@@ -21,6 +21,11 @@ import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
 import type { Order } from "@/hooks/useOrders";
 import { useKanbanEtapas } from "@/hooks/useKanbanEtapas";
+import { KanbanStageChip } from "@/components/KanbanStageChip";
+import {
+  getKanbanStageSoftPanelClass,
+  getKanbanStageSoftTextClass,
+} from "@/lib/kanban-stage-theme";
 import {
   buildProductionUserPanel,
   formatMoneyCop,
@@ -189,12 +194,11 @@ export function ProductionUserDashboard() {
                     </span>
                   ) : null}
                   {user.stageKeys.map((key) => (
-                    <span
+                    <KanbanStageChip
                       key={key}
-                      className="inline-flex rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground"
-                    >
-                      {etapas.find((e) => e.key === key)?.label || key}
-                    </span>
+                      stageKey={key}
+                      label={etapas.find((e) => e.key === key)?.label || key}
+                    />
                   ))}
                 </div>
               </div>
@@ -242,7 +246,7 @@ export function ProductionUserDashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-semibold">
+              <CardTitle className="text-lg font-semibold tracking-tight">
                 Estado de pagos por capas del pedido
               </CardTitle>
               <p className="text-xs text-muted-foreground">
@@ -296,7 +300,7 @@ export function ProductionUserDashboard() {
                           </div>
                         </div>
                         <div className="text-right shrink-0">
-                          <p className="text-sm font-semibold tabular-nums">
+                          <p className="text-sm tabular-nums">
                             {formatMoneyCop(order.cost)}
                           </p>
                           <p className="text-[10px] text-muted-foreground">MO total</p>
@@ -311,9 +315,11 @@ export function ProductionUserDashboard() {
                               className="flex items-center justify-between gap-2 px-3 py-2"
                             >
                               <div className="min-w-0 flex items-center gap-2 flex-wrap">
-                                <span className="text-xs font-semibold text-foreground">
-                                  {stage.stageLabel}
-                                </span>
+                                <KanbanStageChip
+                                  stageKey={stage.stageKey}
+                                  label={stage.stageLabel}
+                                  className="text-[10px] font-semibold px-2 py-0.5"
+                                />
                                 {stage.inWork ? (
                                   <span className="inline-flex rounded-full bg-sky-100 text-sky-800 px-1.5 py-0.5 text-[9px] font-medium">
                                     Actual
@@ -332,7 +338,7 @@ export function ProductionUserDashboard() {
                                     : "Por pagar"}
                                 </span>
                               </div>
-                              <span className="text-xs font-semibold tabular-nums shrink-0">
+                              <span className="text-xs tabular-nums shrink-0">
                                 {formatMoneyCop(stage.cost)}
                               </span>
                             </div>
@@ -348,7 +354,7 @@ export function ProductionUserDashboard() {
 
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <CardTitle className="text-lg font-semibold tracking-tight flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-destructive" />
                 Alertas de producción
               </CardTitle>
@@ -388,7 +394,7 @@ export function ProductionUserDashboard() {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <CardTitle className="text-lg font-semibold tracking-tight flex items-center gap-2">
               <History className="h-4 w-4 text-red-600" />
               Historial por pedido
             </CardTitle>
@@ -459,21 +465,19 @@ export function ProductionUserDashboard() {
                           {capasPreview.length > 0 ? (
                             <div className="flex flex-wrap gap-1.5 mt-2">
                               {capasPreview.map((stage) => (
-                                <span
+                                <KanbanStageChip
                                   key={`${item.orderId}-chip-${stage.stageKey}`}
-                                  className={cn(
-                                    "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-semibold border",
-                                    "bg-red-50 text-red-700 border-red-200"
-                                  )}
+                                  stageKey={stage.stageKey}
+                                  label={stage.stageLabel}
+                                  className="text-[10px] font-semibold"
                                   title="Capa en la que trabajaste"
                                 >
-                                  {stage.stageLabel}
                                   {stage.isCurrent ? (
-                                    <span className="text-[9px] font-medium text-red-500">
+                                    <span className="text-[9px] font-medium opacity-80">
                                       · actual
                                     </span>
                                   ) : null}
-                                </span>
+                                </KanbanStageChip>
                               ))}
                             </div>
                           ) : null}
@@ -482,7 +486,7 @@ export function ProductionUserDashboard() {
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                             MO total
                           </p>
-                          <p className="text-base font-semibold tabular-nums">
+                          <p className="text-base tabular-nums">
                             {formatMoneyCop(item.totalLabor)}
                           </p>
                         </div>
@@ -533,9 +537,7 @@ export function ProductionUserDashboard() {
                                     key={`${item.orderId}-${stage.stageKey}`}
                                     className={cn(
                                       "rounded-lg px-3 py-2.5 space-y-1.5 border",
-                                      worked
-                                        ? "bg-red-50/80 border-red-300 ring-1 ring-red-200/70"
-                                        : "bg-muted/20 border-border"
+                                      getKanbanStageSoftPanelClass(stage.stageKey, worked)
                                     )}
                                   >
                                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -543,18 +545,18 @@ export function ProductionUserDashboard() {
                                         <span
                                           className={cn(
                                             "text-sm font-semibold truncate",
-                                            worked ? "text-red-800" : "text-foreground"
+                                            getKanbanStageSoftTextClass(stage.stageKey)
                                           )}
                                         >
                                           {stage.stageLabel}
                                         </span>
                                         {worked ? (
-                                          <span className="inline-flex rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-medium text-white">
+                                          <span className="inline-flex rounded-full bg-foreground/80 px-2 py-0.5 text-[10px] font-medium text-background">
                                             Trabajada
                                           </span>
                                         ) : null}
                                         {stage.isCurrent ? (
-                                          <span className="inline-flex rounded-full bg-white border border-red-300 px-2 py-0.5 text-[10px] font-medium text-red-700">
+                                          <span className="inline-flex rounded-full bg-white/90 border border-current/20 px-2 py-0.5 text-[10px] font-medium">
                                             Actual
                                           </span>
                                         ) : null}
@@ -572,7 +574,12 @@ export function ProductionUserDashboard() {
                                         </span>
                                       </div>
                                       {stage.laborAmount > 0 ? (
-                                        <span className="text-xs font-semibold tabular-nums text-red-800">
+                                        <span
+                                          className={cn(
+                                            "text-xs tabular-nums",
+                                            getKanbanStageSoftTextClass(stage.stageKey)
+                                          )}
+                                        >
                                           {formatMoneyCop(stage.laborAmount)}
                                         </span>
                                       ) : null}
@@ -584,7 +591,14 @@ export function ProductionUserDashboard() {
                                             key={action}
                                             className="flex items-start gap-1.5"
                                           >
-                                            <span className="text-red-600 mt-0.5">•</span>
+                                            <span
+                                              className={cn(
+                                                "mt-0.5",
+                                                getKanbanStageSoftTextClass(stage.stageKey)
+                                              )}
+                                            >
+                                              •
+                                            </span>
                                             <span>{action}</span>
                                           </li>
                                         ))}

@@ -212,7 +212,7 @@ export function FabricCostsTable({
         <Card className="w-full">
             <CardHeader className="flex flex-row items-center justify-between py-4">
                 <div>
-                    <CardTitle className="text-sm font-bold">Costos de tela</CardTitle>
+                    <CardTitle className="text-lg font-bold tracking-tight">Costos de tela</CardTitle>
                     <p className="text-xs text-muted-foreground mt-1">
                         Elige <strong>proveedor</strong> (trazabilidad del pedido) y la{" "}
                         <strong>referencia</strong> de inventario. El <strong>$/metro</strong> es el
@@ -290,7 +290,7 @@ export function FabricCostsTable({
                         <div>${formatCurrency(item.price_per_meter)}</div>
                         <div>{item.tiene_iva ? "Sí" : "No"}</div>
                         <div className="flex items-center justify-between gap-1 min-w-0">
-                            <span className="font-bold">${formatCurrency(item.total)}</span>
+                            <span>${formatCurrency(item.total)}</span>
                             <div className="flex gap-1 shrink-0">
                                 <Pencil
                                     className="h-4 w-4 cursor-pointer text-muted-foreground hover:text-primary"
@@ -435,7 +435,7 @@ export function FabricCostsTable({
                                 />
                             </div>
                             <div className="flex items-center gap-2 pt-1">
-                                <span className="font-bold text-xs">
+                                <span className="text-xs">
                                     $
                                     {formatCurrency(
                                         calcTotal(newRow.meters, newRow.price_per_meter, newRow.tiene_iva)

@@ -2,13 +2,24 @@ import { useState, useMemo } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { AlertTriangle, History, PackageX, Pencil, Plus, X } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { AlertTriangle, History, PackageX, Pencil, Plus, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetMaterials } from "@/hooks/useGetMaterials";
 import { useCreateMaterial } from "@/hooks/useCreateMaterial";
 import { useUpdateMaterial } from "@/hooks/useUpdateMaterial";
 import { useGetCostCatalogs } from "@/hooks/useGetCostCatalogs";
 import { useCreateProveedor } from "@/hooks/useCreateProveedor";
+import { useDeleteProveedor } from "@/hooks/useDeleteProveedor";
 import { useCreateInsumoTipo } from "@/hooks/useCreateInsumoTipo";
 import { ProveedorCombobox } from "@/components/ProveedorCombobox";
 import { MaterialSuppliersDialog } from "@/components/MaterialSuppliersDialog";
@@ -16,7 +27,8 @@ import { AddMaterialStockDialog } from "@/components/AddMaterialStockDialog";
 import { MaterialMovementsDialog } from "@/components/MaterialMovementsDialog";
 import { ModalForm } from "@/components/ui/ModalForm";
 import { InventoryOverview, classifyMaterialStock } from "@/components/inventory/InventoryOverview";
-import { getNewInsumoTipoFields } from "@/lib/insumo-tipo-form";
+import { getNewInsumoTipoFields, UNIDAD_MEDIDA_OPTIONS } from "@/lib/insumo-tipo-form";
+import { formatUnitCost } from "@/lib/format-number";
 import { toast } from "sonner";
 
 interface Material {
@@ -68,6 +80,9 @@ export default function Inventory() {
   const [isProveedorModalOpen, setIsProveedorModalOpen] = useState(false);
   const [proveedorName, setProveedorName] = useState("");
   const [proveedorError, setProveedorError] = useState("");
+  const [deletingProveedor, setDeletingProveedor] = useState<{ id: string; name: string } | null>(
+    null
+  );
   const [isInsumoTipoModalOpen, setIsInsumoTipoModalOpen] = useState(false);
 
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
@@ -81,6 +96,7 @@ export default function Inventory() {
   });
   const { proveedores, refetchProveedores } = useGetCostCatalogs();
   const { createProveedor, isLoading: isCreatingProveedor } = useCreateProveedor();
+  const { deleteProveedor, isLoading: isDeletingProveedor } = useDeleteProveedor();
   const { createInsumoTipo, isLoading: isCreatingInsumoTipo } = useCreateInsumoTipo();
 
   const { createMaterial, isPending: isCreating } = useCreateMaterial();
@@ -207,6 +223,18 @@ export default function Inventory() {
     }
   };
 
+  const handleDeleteProveedorConfirm = async () => {
+    if (!deletingProveedor) return;
+    const result = await deleteProveedor(deletingProveedor.id);
+    if (!result.success) {
+      toast.error(result.error || "No se pudo eliminar el proveedor");
+      return;
+    }
+    toast.success(`Proveedor «${deletingProveedor.name}» eliminado`);
+    setDeletingProveedor(null);
+    await refetchProveedores();
+  };
+
   const handleCreateMaterialSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreateError("");
@@ -277,15 +305,6 @@ export default function Inventory() {
     return num.toFixed(2);
   };
 
-  const formatCurrency = (value: any) => {
-    const num = typeof value === "string" ? parseFloat(value) : value;
-    if (isNaN(num)) return "0";
-    return num.toLocaleString("es-CO", {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    });
-  };
-
   const displayMaterials = filteredMaterials;
   const isLoading = isLoadingAll || isLoadingFiltered;
 
@@ -293,13 +312,14 @@ export default function Inventory() {
     <AppLayout
       title="Inventario"
       subtitle="Insumos y telas (por referencia). El stock se descuenta al pasar una orden a producción."
+      eyebrow="Operación"
     >
       <div className="space-y-6">
         <InventoryOverview materials={allMaterials} isLoading={isLoadingAll} />
 
       <Card>
         <CardHeader className="pb-3 flex flex-row items-center justify-between gap-3">
-          <CardTitle className="text-sm font-semibold">Materiales en stock</CardTitle>
+          <CardTitle className="text-lg font-semibold tracking-tight">Materiales en stock</CardTitle>
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
@@ -418,7 +438,7 @@ export default function Inventory() {
                       <TableCell>{m.unit}</TableCell>
                       <TableCell
                         className={cn(
-                          "text-right font-semibold tabular-nums",
+                          "text-right tabular-nums",
                           isLow && "text-red-600",
                           isOut && "text-zinc-500",
                           !isAlert && "text-foreground"
@@ -427,7 +447,7 @@ export default function Inventory() {
                         {formatStock(m.stock)}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{formatStock(m.min_stock)}</TableCell>
-                      <TableCell className="text-right tabular-nums">${formatCurrency(m.unit_cost)}</TableCell>
+                      <TableCell className="text-right tabular-nums">${formatUnitCost(m.unit_cost)}</TableCell>
                       <TableCell>
                         {isOut ? (
                           <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-600">
@@ -479,6 +499,59 @@ export default function Inventory() {
           )}
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader className="pb-3 flex flex-row items-center justify-between gap-3">
+          <div>
+            <CardTitle className="text-lg font-semibold tracking-tight">Proveedores</CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Catálogo de proveedores disponibles al registrar materiales y costos.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleOpenProveedorModal}
+            className="inline-flex items-center gap-1 px-4 py-1.5 border border-border bg-background hover:bg-muted text-foreground text-sm font-medium rounded-md transition-colors shadow-sm shrink-0"
+          >
+            <Plus className="h-4 w-4" /> Proveedor
+          </button>
+        </CardHeader>
+        <CardContent className="p-0">
+          {sortedProveedores.length === 0 ? (
+            <div className="p-8 text-center text-muted-foreground text-sm">
+              No hay proveedores registrados. Usa <strong>+ Proveedor</strong> para crear uno.
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Nombre</TableHead>
+                  <TableHead className="text-right w-[120px]">Acciones</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sortedProveedores.map((prov) => (
+                  <TableRow key={prov.id}>
+                    <TableCell className="font-medium">{prov.name}</TableCell>
+                    <TableCell className="text-right">
+                      <button
+                        type="button"
+                        onClick={() => setDeletingProveedor({ id: prov.id, name: prov.name })}
+                        disabled={isDeletingProveedor}
+                        className="inline-flex items-center gap-1 px-3 py-1 border border-destructive/30 text-destructive hover:bg-destructive/10 text-xs font-medium rounded transition-colors disabled:opacity-50"
+                        title="Eliminar proveedor"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Eliminar
+                      </button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
       </div>
 
       {isCreateModalOpen && (
@@ -522,7 +595,6 @@ export default function Inventory() {
                 >
                   <option value="">Seleccionar categoría</option>
                   <option value="Telas">Telas</option>
-                  <option value="Insumos">Insumos</option>
                   <option value="Accesorios">Accesorios</option>
                   <option value="Empaque">Empaque</option>
                 </select>
@@ -564,15 +636,19 @@ export default function Inventory() {
                 <label className="block text-xs font-semibold text-muted-foreground mb-1">
                   UNIDAD *
                 </label>
-                <input
-                  type="text"
+                <select
                   required
-                  maxLength={50}
-                  placeholder="Ej. metros, conos, piezas"
                   className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 bg-background text-foreground"
                   value={newMaterial.unit}
                   onChange={(e) => setNewMaterial({ ...newMaterial, unit: e.target.value })}
-                />
+                >
+                  <option value="">Seleccionar unidad</option>
+                  {UNIDAD_MEDIDA_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="grid grid-cols-3 gap-3">
@@ -697,10 +773,10 @@ export default function Inventory() {
                   {Array.from(
                     new Set([
                       "Telas",
-                      "Insumos",
                       "Accesorios",
                       "Empaque",
-                      ...uniqueCategories,
+                      ...uniqueCategories.filter((cat) => cat !== "Insumos"),
+                      // Conservar categoría actual si el material ya era "Insumos"
                       editMaterial.category,
                     ].filter(Boolean))
                   ).map((cat) => (
@@ -747,14 +823,23 @@ export default function Inventory() {
                 <label className="block text-xs font-semibold text-muted-foreground mb-1">
                   UNIDAD *
                 </label>
-                <input
-                  type="text"
+                <select
                   required
-                  maxLength={50}
                   className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 bg-background text-foreground"
                   value={editMaterial.unit}
                   onChange={(e) => setEditMaterial({ ...editMaterial, unit: e.target.value })}
-                />
+                >
+                  <option value="">Seleccionar unidad</option>
+                  {UNIDAD_MEDIDA_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                  {editMaterial.unit &&
+                    !UNIDAD_MEDIDA_OPTIONS.some((opt) => opt.value === editMaterial.unit) && (
+                      <option value={editMaterial.unit}>{editMaterial.unit}</option>
+                    )}
+                </select>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -910,6 +995,35 @@ export default function Inventory() {
         material={historyMaterial}
         onClose={() => setHistoryMaterial(null)}
       />
+
+      <AlertDialog
+        open={!!deletingProveedor}
+        onOpenChange={(open) => !open && !isDeletingProveedor && setDeletingProveedor(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar proveedor?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminará <strong>{deletingProveedor?.name}</strong> del catálogo. Los
+              materiales que ya lo tengan como texto conservarán el nombre; en costos de tela
+              el vínculo quedará vacío. Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingProveedor}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void handleDeleteProveedorConfirm();
+              }}
+              disabled={isDeletingProveedor}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeletingProveedor ? "Eliminando..." : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppLayout>
   );
 }

@@ -249,17 +249,21 @@ export function AppSidebar() {
     <Sidebar collapsible="icon" className="h-screen flex flex-col">
       <SidebarHeader className="p-4 border-b border-sidebar-border shrink-0">
         <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-lg bg-white flex items-center justify-center shrink-0 overflow-hidden">
+          <div className="h-10 w-10 rounded-xl bg-sidebar-primary flex items-center justify-center shrink-0 shadow-[0_8px_24px_-10px_rgba(220,38,38,0.8)]">
             <img
-              src="/activ@600x_negro.webp"
+              src="/ACTIVA_logo_blanco_16x16.webp"
               alt="Logo"
-              className="h-full w-full object-contain p-2"
+              className="h-5 w-5 object-contain"
             />
           </div>
           {!collapsed && (
-            <div className="animate-fade-in">
-              <h1 className="text-sm font-bold text-sidebar-accent-foreground tracking-tight">Uniformes Activa</h1>
-              <p className="text-[10px] text-sidebar-foreground/60">Sistema de gestión</p>
+            <div className="animate-fade-in min-w-0">
+              <h1 className="text-sm font-bold text-sidebar-accent-foreground tracking-tight truncate">
+                Uniformes Activa
+              </h1>
+              <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-sidebar-foreground/45">
+                Plataforma ERP
+              </p>
             </div>
           )}
         </div>
@@ -277,7 +281,11 @@ export function AppSidebar() {
                 {generalItems.filter(item => canViewModule(item.title)).map((item) => (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton asChild isActive={isActive(item.url)}>
-                      <NavLink to={item.url} end={item.url === "/"} activeClassName="bg-sidebar-accent text-sidebar-accent-foreground">
+                      <NavLink
+                        to={item.url}
+                        end={item.url === "/"}
+                        activeClassName="bg-sidebar-accent text-sidebar-accent-foreground border-l-2 border-l-sidebar-primary"
+                      >
                         <item.icon className="h-4 w-4" />
                         {!collapsed && <span>{item.title}</span>}
                       </NavLink>
@@ -300,7 +308,7 @@ export function AppSidebar() {
                 {comercialItems.filter(item => canViewModule(item.title)).map((item) => (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton asChild isActive={isActive(item.url)}>
-                      <NavLink to={item.url} activeClassName="bg-sidebar-accent text-sidebar-accent-foreground">
+                      <NavLink to={item.url} activeClassName="bg-sidebar-accent text-sidebar-accent-foreground border-l-2 border-l-sidebar-primary">
                         <item.icon className="h-4 w-4" />
                         {!collapsed && <span>{item.title}</span>}
                       </NavLink>
@@ -323,7 +331,7 @@ export function AppSidebar() {
                 {operacionItems.filter(item => canViewModule(item.title)).map((item) => (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton asChild isActive={isActive(item.url)}>
-                      <NavLink to={item.url} activeClassName="bg-sidebar-accent text-sidebar-accent-foreground">
+                      <NavLink to={item.url} activeClassName="bg-sidebar-accent text-sidebar-accent-foreground border-l-2 border-l-sidebar-primary">
                         <item.icon className="h-4 w-4" />
                         {!collapsed && <span>{item.title}</span>}
                       </NavLink>
@@ -346,7 +354,11 @@ export function AppSidebar() {
                 {gerenciaItems.filter(item => canViewModule(item.title)).map((item) => (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton asChild isActive={isActive(item.url)}>
-                      <NavLink to={item.url} end={item.url === "/"} activeClassName="bg-sidebar-accent text-sidebar-accent-foreground">
+                      <NavLink
+                        to={item.url}
+                        end={item.url === "/"}
+                        activeClassName="bg-sidebar-accent text-sidebar-accent-foreground border-l-2 border-l-sidebar-primary"
+                      >
                         <item.icon className="h-4 w-4" />
                         {!collapsed && <span>{item.title}</span>}
                       </NavLink>

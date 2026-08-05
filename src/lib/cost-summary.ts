@@ -17,6 +17,7 @@ export function normalizeVariantCostSummary(raw: Record<string, unknown>): Varia
         ? raw.sizes.map((size: Record<string, unknown>) => ({
               talla_id: String(size.talla_id ?? ""),
               talla_nombre: String(size.talla_nombre ?? size.talla ?? ""),
+              talla_genero: size.talla_genero != null ? String(size.talla_genero) : null,
               consumption: pickAmount(size, "consumption", "consumo"),
               fabric_total: pickAmount(size, "fabric_total", "tela", "costo_tela"),
               supplies_total: pickAmount(size, "supplies_total", "insumos", "costo_insumos"),

@@ -3,43 +3,22 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-    BarChart3,
-    Factory,
-    Lock,
-    ShieldCheck,
-    ShoppingCart,
-    User,
-} from "lucide-react";
+import { Eye, EyeOff, Lock, ShieldCheck, User } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { getApiBaseUrl } from "@/lib/api-base";
 import { resetAuthRedirectGuard } from "@/lib/auth-redirect";
 import { clearAuthSession, getStoredAccessToken, isAccessTokenExpired } from "@/lib/auth-session";
+import { cn } from "@/lib/utils";
 
 const BASE_URL = getApiBaseUrl();
 
-const highlights = [
-    {
-        icon: ShoppingCart,
-        title: "Comercial",
-        description: "Clientes, cotizaciones y órdenes en un solo lugar.",
-    },
-    {
-        icon: Factory,
-        title: "Operación",
-        description: "Producción, inventario y costos bajo control.",
-    },
-    {
-        icon: BarChart3,
-        title: "Gerencia",
-        description: "Reportes y métricas para decisiones oportunas.",
-    },
-];
+const pillars = ["Comercial", "Producción", "Inventario", "Costos"] as const;
 
 export default function Login() {
     const navigate = useNavigate();
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
+    const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
 
     const isFormValid = username.trim().length > 0 && password.trim().length > 0;
@@ -124,9 +103,9 @@ export default function Login() {
                         "Operativo",
                     ];
 
-                    const normalizeRole = (raw: unknown): string => {
-                        if (typeof raw !== "string") return "";
-                        const s = raw.trim();
+                    const normalizeRole = (rawRole: unknown): string => {
+                        if (typeof rawRole !== "string") return "";
+                        const s = rawRole.trim();
                         if (!s) return "";
                         const m = s.match(/name=['"]([^'"]+)['"]/);
                         if (m?.[1]) return m[1];
@@ -198,155 +177,183 @@ export default function Login() {
     };
 
     return (
-        <div className="min-h-screen w-full flex flex-col lg:flex-row">
-            {/* Panel de marca — negro, blanco y rojo */}
-            <div className="relative hidden lg:flex lg:w-[44%] xl:w-[42%] flex-col justify-between overflow-hidden bg-black p-10 xl:p-12">
-                <div className="absolute inset-0 bg-gradient-to-br from-black via-neutral-950 to-neutral-900" />
-                <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-red-600/20 blur-3xl" />
-                <div className="absolute -bottom-20 -left-16 h-64 w-64 rounded-full bg-red-600/10 blur-3xl" />
-                <div className="absolute left-0 top-0 h-full w-1 bg-red-600" />
+        <div className="login-page min-h-screen w-full flex flex-col lg:flex-row">
+            {/* Marca — plano visual dominante */}
+            <aside className="relative hidden lg:flex lg:w-[52%] xl:w-[54%] flex-col justify-between overflow-hidden bg-black px-12 xl:px-16 py-12">
+                <div className="absolute inset-0 bg-[#0a0a0a]" />
+                <div className="absolute inset-0 login-diagonal" />
+                <div className="absolute inset-0 login-weave opacity-80" />
+                <div className="absolute -left-10 top-0 h-full w-1.5 bg-red-600 animate-login-bar" />
+                <div className="absolute right-[-20%] top-[-10%] h-[420px] w-[420px] rounded-full bg-red-600/15 blur-[100px]" />
+                <div className="absolute bottom-[-15%] left-[10%] h-[280px] w-[280px] rounded-full bg-red-600/10 blur-[90px]" />
 
-                <div className="relative z-10 animate-slide-in">
-                    <div className="flex items-center gap-3">
-                        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-red-600 shadow-lg shadow-red-600/30">
+                <div className="relative z-10 animate-login-rise">
+                    <div className="flex items-center gap-4">
+                        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-red-600 shadow-[0_12px_40px_-12px_rgba(220,38,38,0.7)]">
                             <img
                                 src="/ACTIVA_logo_blanco_16x16.webp"
-                                alt="Uniformes Activa"
-                                className="h-6 w-6 object-contain"
+                                alt=""
+                                className="h-7 w-7 object-contain"
                             />
                         </div>
                         <div>
-                            <p className="text-lg font-bold tracking-tight text-white">
+                            <p className="login-display text-2xl font-bold tracking-tight text-white leading-none">
                                 Uniformes Activa
                             </p>
-                            <p className="text-[11px] uppercase tracking-[0.2em] text-white/50">
+                            <p className="mt-1.5 text-[11px] font-medium uppercase tracking-[0.28em] text-white/45">
                                 Plataforma ERP
                             </p>
                         </div>
                     </div>
                 </div>
 
-                <div className="relative z-10 space-y-8 animate-fade-in">
-                    <div className="space-y-3">
-                        <h1 className="max-w-md text-3xl font-bold leading-tight tracking-tight text-white xl:text-4xl">
-                            Gestión integral de tu operación textil
+                <div className="relative z-10 max-w-xl space-y-8 animate-login-rise-delay">
+                    <div className="space-y-4">
+                        <h1 className="login-display max-w-lg text-3xl font-semibold leading-tight tracking-tight text-white xl:text-4xl">
+                            Gestión integral de tu{" "}
+                            <span className="text-red-500">operación textil</span>
                         </h1>
-                        <p className="max-w-md text-sm leading-relaxed text-white/60">
-                            Centraliza clientes, producción, inventario y reportes en una sola plataforma
-                            diseñada para equipos comerciales y operativos.
+                        <p className="max-w-md text-sm leading-relaxed text-white/55 xl:text-[15px]">
+                            La operación textil de tu equipo, centralizada: desde la cotización
+                            hasta el despacho.
                         </p>
                     </div>
 
-                    <div className="space-y-3">
-                        {highlights.map((item) => (
-                            <div
-                                key={item.title}
-                                className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur-sm"
-                            >
-                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-red-600 text-white">
-                                    <item.icon className="h-5 w-5" />
-                                </div>
-                                <div>
-                                    <p className="text-sm font-semibold text-white">{item.title}</p>
-                                    <p className="mt-0.5 text-xs text-white/60">{item.description}</p>
-                                </div>
+                    <div className="flex flex-wrap gap-x-6 gap-y-3 border-t border-white/10 pt-6">
+                        {pillars.map((label) => (
+                            <div key={label} className="flex items-center gap-2.5">
+                                <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                                <span className="text-sm font-medium text-white/80">{label}</span>
                             </div>
                         ))}
                     </div>
                 </div>
 
-                <p className="relative z-10 text-xs text-white/40">
+                <p className="relative z-10 text-xs tracking-wide text-white/35 animate-login-rise-delay-2">
                     © {new Date().getFullYear()} Uniformes Activa · Cerebiia
                 </p>
-            </div>
+            </aside>
 
-            {/* Panel de acceso — blanco y negro con acentos rojos */}
-            <div className="flex min-h-screen flex-1 flex-col bg-white">
-                <div className="flex items-center gap-3 border-b border-neutral-200 bg-black px-6 py-4 lg:hidden">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-600">
+            {/* Acceso */}
+            <main className="relative flex min-h-screen flex-1 flex-col login-form-panel login-noise">
+                <div className="flex items-center gap-3 border-b border-black/10 bg-black px-5 py-4 lg:hidden">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-600">
                         <img
                             src="/ACTIVA_logo_blanco_16x16.webp"
-                            alt="Uniformes Activa"
+                            alt=""
                             className="h-5 w-5 object-contain"
                         />
                     </div>
                     <div>
-                        <p className="text-sm font-bold text-white">Uniformes Activa</p>
-                        <p className="text-[10px] text-white/60">Plataforma ERP</p>
+                        <p className="login-display text-sm font-bold text-white leading-none">
+                            Uniformes Activa
+                        </p>
+                        <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-white/50">
+                            Plataforma ERP
+                        </p>
                     </div>
                 </div>
 
-                <div className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6">
-                    <div className="w-full max-w-md animate-fade-in">
-                        <div className="mb-8 space-y-2 text-center lg:text-left">
-                            <h2 className="text-2xl font-bold tracking-tight text-black">
+                <div className="flex flex-1 items-center justify-center px-5 py-12 sm:px-8">
+                    <div className="w-full max-w-[400px] animate-login-rise">
+                        <div className="mb-10 space-y-3">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-red-600">
+                                Acceso
+                            </p>
+                            <h1 className="login-display text-2xl font-semibold tracking-tight text-neutral-950 sm:text-[1.75rem]">
                                 Iniciar sesión
-                            </h2>
-                            <p className="text-sm text-neutral-500">
-                                Ingresa tus credenciales organizacionales para acceder al sistema.
+                            </h1>
+                            <p className="text-sm leading-relaxed text-neutral-500">
+                                Usa tu usuario o correo corporativo para entrar al sistema.
                             </p>
                         </div>
 
-                        <div className="rounded-xl border border-neutral-200 bg-white p-6 shadow-sm sm:p-8">
-                            <form onSubmit={handleSubmit} className="space-y-5">
-                                <div className="space-y-2">
-                                    <Label htmlFor="username" className="text-sm font-medium text-black">
-                                        Usuario o correo
-                                    </Label>
-                                    <div className="relative">
-                                        <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-                                        <Input
-                                            id="username"
-                                            type="text"
-                                            placeholder="usuario o correo@empresa.com"
-                                            value={username}
-                                            onChange={(e) => setUsername(e.target.value)}
-                                            className="h-11 rounded-lg border-neutral-300 bg-white pl-10 text-black placeholder:text-neutral-400 focus-visible:ring-red-600"
-                                            disabled={loading}
-                                            autoComplete="username"
-                                            required
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="space-y-2">
-                                    <Label htmlFor="password" className="text-sm font-medium text-black">
-                                        Contraseña
-                                    </Label>
-                                    <div className="relative">
-                                        <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-                                        <Input
-                                            id="password"
-                                            type="password"
-                                            placeholder="••••••••"
-                                            value={password}
-                                            onChange={(e) => setPassword(e.target.value)}
-                                            className="h-11 rounded-lg border-neutral-300 bg-white pl-10 text-black placeholder:text-neutral-400 focus-visible:ring-red-600"
-                                            disabled={loading}
-                                            autoComplete="current-password"
-                                            required
-                                        />
-                                    </div>
-                                </div>
-
-                                <Button
-                                    type="submit"
-                                    className="h-11 w-full rounded-lg text-sm font-semibold shadow-sm transition-colors focus-visible:ring-red-600 disabled:pointer-events-none disabled:opacity-100 bg-red-600 text-white hover:bg-red-700 disabled:bg-neutral-200 disabled:text-neutral-400 disabled:shadow-none"
-                                    disabled={isSubmitDisabled}
-                                    aria-disabled={isSubmitDisabled}
+                        <form onSubmit={handleSubmit} className="space-y-6">
+                            <div className="space-y-2">
+                                <Label
+                                    htmlFor="username"
+                                    className="text-[13px] font-semibold text-neutral-800"
                                 >
-                                    {loading ? "Autenticando..." : "Iniciar sesión"}
-                                </Button>
-                            </form>
+                                    Usuario o correo
+                                </Label>
+                                <div className="relative group">
+                                    <User className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400 transition-colors group-focus-within:text-red-600" />
+                                    <Input
+                                        id="username"
+                                        type="text"
+                                        placeholder="usuario o correo@empresa.com"
+                                        value={username}
+                                        onChange={(e) => setUsername(e.target.value)}
+                                        className="h-12 rounded-xl border-neutral-200/90 bg-white pl-11 pr-3 text-[15px] text-neutral-900 shadow-[0_1px_2px_rgba(0,0,0,0.03)] placeholder:text-neutral-400 focus-visible:border-red-600 focus-visible:ring-red-600/30"
+                                        disabled={loading}
+                                        autoComplete="username"
+                                        required
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label
+                                    htmlFor="password"
+                                    className="text-[13px] font-semibold text-neutral-800"
+                                >
+                                    Contraseña
+                                </Label>
+                                <div className="relative group">
+                                    <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400 transition-colors group-focus-within:text-red-600" />
+                                    <Input
+                                        id="password"
+                                        type={showPassword ? "text" : "password"}
+                                        placeholder="••••••••"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        className="h-12 rounded-xl border-neutral-200/90 bg-white pl-11 pr-11 text-[15px] text-neutral-900 shadow-[0_1px_2px_rgba(0,0,0,0.03)] placeholder:text-neutral-400 focus-visible:border-red-600 focus-visible:ring-red-600/30"
+                                        disabled={loading}
+                                        autoComplete="current-password"
+                                        required
+                                    />
+                                    <button
+                                        type="button"
+                                        className="absolute right-2.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
+                                        onClick={() => setShowPassword((v) => !v)}
+                                        aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                                        tabIndex={-1}
+                                    >
+                                        {showPassword ? (
+                                            <EyeOff className="h-4 w-4" />
+                                        ) : (
+                                            <Eye className="h-4 w-4" />
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <Button
+                                type="submit"
+                                className={cn(
+                                    "h-12 w-full rounded-xl text-[15px] font-semibold tracking-wide transition-all focus-visible:ring-red-600",
+                                    isSubmitDisabled && !loading
+                                        ? "bg-neutral-200 text-neutral-400 shadow-none hover:bg-neutral-200"
+                                        : "bg-red-600 text-white shadow-[0_10px_28px_-12px_rgba(220,38,38,0.85)] hover:bg-red-700 hover:shadow-[0_14px_32px_-12px_rgba(220,38,38,0.9)]"
+                                )}
+                                disabled={isSubmitDisabled}
+                                aria-disabled={isSubmitDisabled}
+                            >
+                                {loading ? "Autenticando..." : "Iniciar sesión"}
+                            </Button>
+                        </form>
+
+                        <div className="mt-10 flex items-start gap-2.5 border-t border-neutral-200/80 pt-6 text-xs leading-relaxed text-neutral-500">
+                            <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600" />
+                            <span>Acceso seguro con control de permisos por rol.</span>
                         </div>
 
-                        <div className="mt-6 flex items-center justify-center gap-2 text-xs text-neutral-500 lg:justify-start">
-                            <ShieldCheck className="h-3.5 w-3.5 text-red-600" />
-                            <span>Acceso seguro con control de permisos por rol</span>
-                        </div>
+                        <p className="mt-8 text-center text-[11px] text-neutral-400 lg:hidden">
+                            © {new Date().getFullYear()} Uniformes Activa · Cerebiia
+                        </p>
                     </div>
                 </div>
-            </div>
+            </main>
         </div>
     );
 }

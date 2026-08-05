@@ -175,7 +175,7 @@ export default function Customers() {
   const hasActiveFilters = Boolean((filters.current.search || "").trim());
 
   return (
-    <AppLayout title="Clientes" subtitle="CRM y gestión de clientes">
+    <AppLayout title="Clientes" subtitle="CRM y gestión de clientes" eyebrow="Comercial">
       <div className="space-y-4">
         {/* Barra superior de acciones */}
         <div className="flex justify-end">
@@ -324,11 +324,11 @@ export default function Customers() {
             {/* Control de Paginación */}
             <div className="flex items-center justify-between border-t border-border/60 pt-4 px-1 text-sm text-muted-foreground">
               <div>
-                Total de clientes: <span className="font-medium text-foreground">{pagination.totalCount}</span>
+                Total de clientes: <span className="tabular-nums text-foreground">{pagination.totalCount}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs mr-2">
-                  Página <span className="font-medium text-foreground">{pagination.page}</span>
+                  Página <span className="tabular-nums text-foreground">{pagination.page}</span>
                 </span>
                 <Button
                   variant="outline"

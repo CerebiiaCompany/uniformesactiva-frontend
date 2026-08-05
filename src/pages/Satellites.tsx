@@ -4,6 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -11,19 +13,49 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ChevronRight, Factory, Filter, Plus, Satellite, X, ArrowLeft, Phone, MapPin, FileText, CheckSquare, DollarSign, Download } from "lucide-react";
+import {
+  ChevronRight,
+  Factory,
+  Filter,
+  Plus,
+  Satellite,
+  X,
+  ArrowLeft,
+  Phone,
+  MapPin,
+  FileText,
+  CheckSquare,
+  DollarSign,
+  Download,
+  Trash2,
+  Eye,
+  EyeOff,
+  UserPlus,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
   useCreateSatellite,
+  useDeleteSatellite,
   useGetSatellites,
   useUpdateSatellite,
   type SatelliteFilters,
 } from "@/hooks/useSatellites";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useKanbanEtapas } from "@/hooks/useKanbanEtapas";
-import { http } from "@/lib/http";
+import { http, HttpError } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
 import type { Order } from "@/hooks/useOrders";
+import { joinStageKeys } from "@/lib/production-capa-permissions";
 import {
   buildSatelliteDashboard,
   buildSatelliteOrderDetails,
@@ -46,17 +78,28 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-
-const SPECIALTIES = ["Corte", "Bordado", "Estampado", "Confección", "Calidad", "Otro"] as const;
+import { KanbanStageChip } from "@/components/KanbanStageChip";
+import {
+  getKanbanStageSoftPanelClass,
+  getKanbanStageSoftTextClass,
+} from "@/lib/kanban-stage-theme";
 
 const EMPTY_FORM = {
   name: "",
-  contact_name: "",
+  person_name: "",
+  email: "",
   phone: "",
   address: "",
-  specialties: [] as string[],
   notes: "",
+  cargo: "",
+  password: "",
+  status: "active" as "active" | "inactive",
+  production_stage_keys: [] as string[],
 };
+
+function toggleStageKey(keys: string[], key: string): string[] {
+  return keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key];
+}
 
 const EMPTY_FILTERS: SatelliteFilters = {
   desde: "",
@@ -94,16 +137,20 @@ export default function Satellites() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [isCreatingAll, setIsCreatingAll] = useState(false);
 
   const { satellites, isLoading, refetch } = useGetSatellites(appliedFilters);
   const { createSatellite, isPending } = useCreateSatellite();
   const { updateSatellite, isPending: updatingSatellite } = useUpdateSatellite();
+  const { deleteSatellite, isPending: isDeletingSatellite } = useDeleteSatellite();
   const { etapas, fetchEtapas } = useKanbanEtapas();
 
   const [satelliteUsers, setSatelliteUsers] = useState<SatelliteUserRef[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [deletingSatellite, setDeletingSatellite] = useState<SatelliteDashboardCard | null>(null);
   const [detailPagoFilter, setDetailPagoFilter] = useState<"todos" | "pending" | "paid">("todos");
   const [showDetailFilters, setShowDetailFilters] = useState(false);
   const [confirmDetail, setConfirmDetail] = useState<SatelliteOrderDetail | null>(null);
@@ -300,21 +347,11 @@ export default function Satellites() {
   }, [appliedFilters]);
 
   const openCreate = () => {
-    setForm({ ...EMPTY_FORM, specialties: [] });
+    setForm({ ...EMPTY_FORM, production_stage_keys: [] });
     setFormError("");
+    setShowPassword(false);
     setIsCreateOpen(true);
-  };
-
-  const toggleSpecialty = (value: string) => {
-    setForm((prev) => {
-      const exists = prev.specialties.includes(value);
-      return {
-        ...prev,
-        specialties: exists
-          ? prev.specialties.filter((s) => s !== value)
-          : [...prev.specialties, value],
-      };
-    });
+    void fetchEtapas();
   };
 
   const applyFilters = () => {
@@ -329,27 +366,131 @@ export default function Satellites() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     const name = form.name.trim();
+    const personName = form.person_name.trim();
+    const email = form.email.trim();
+    const phone = form.phone.trim();
+
     if (!name) {
-      setFormError("El nombre del taller es obligatorio.");
+      setFormError("El nombre del satélite es obligatorio.");
+      return;
+    }
+    if (!personName) {
+      setFormError("El nombre de la persona es obligatorio.");
+      return;
+    }
+    if (!email) {
+      setFormError("El correo es obligatorio.");
+      return;
+    }
+    if (!phone) {
+      setFormError("El teléfono es obligatorio.");
+      return;
+    }
+    if (form.production_stage_keys.length === 0) {
+      setFormError("Selecciona al menos una capa (permisos del satélite).");
       return;
     }
 
+    setIsCreatingAll(true);
+    setFormError("");
+
     try {
-      await createSatellite({
+      // Especialidades = etiquetas de las capas seleccionadas
+      const specialtiesFromCapas = etapas
+        .filter((c) => form.production_stage_keys.includes(c.key))
+        .map((c) => c.label);
+
+      const created = await createSatellite({
         name,
-        contact_name: form.contact_name.trim(),
-        phone: form.phone.trim(),
+        contact_name: personName,
+        phone,
         address: form.address.trim(),
-        specialties: form.specialties,
+        specialties: specialtiesFromCapas,
         notes: form.notes.trim(),
+        status: "active",
       });
-      toast.success("Satélite creado");
+
+      const nameParts = personName.split(/\s+/);
+      const first_name = nameParts[0] || personName;
+      const last_name = nameParts.slice(1).join(" ");
+
+      const userPayload = {
+        full_name: personName,
+        first_name,
+        last_name,
+        email,
+        phone,
+        area: "Producción",
+        cargo: form.cargo.trim(),
+        roles: ["Satélite"],
+        production_stage_keys: form.production_stage_keys,
+        production_stage_key: joinStageKeys(form.production_stage_keys),
+        satellite_id: created.id,
+        password: form.password.trim() || undefined,
+        status: form.status,
+      };
+
+      try {
+        const userData = await http<{ username?: string }>(endpoints.users.list(), {
+          method: "POST",
+          body: JSON.stringify(userPayload),
+        });
+        const createdUsername = userData?.username || email;
+        const usedTempPassword = !form.password.trim();
+        toast.success(
+          usedTempPassword
+            ? `Satélite y usuario creados. Usuario: ${createdUsername}. Contraseña temporal: Temp.${createdUsername}123!`
+            : `Satélite y usuario ${createdUsername} creados correctamente.`
+        );
+      } catch (userErr: unknown) {
+        const msg =
+          userErr instanceof HttpError
+            ? userErr.message
+            : userErr instanceof Error
+              ? userErr.message
+              : "No se pudo crear el usuario.";
+        toast.error(
+          `El taller «${name}» se creó, pero el usuario falló: ${msg}. Puedes vincularlo desde Usuarios.`
+        );
+      }
+
       setIsCreateOpen(false);
-      setForm({ ...EMPTY_FORM, specialties: [] });
-      refetch();
-      loadMetrics();
+      setForm({ ...EMPTY_FORM, production_stage_keys: [] });
+      await refetch();
+      await loadMetrics();
     } catch (err: any) {
       setFormError(err?.message || "No se pudo crear el satélite.");
+    } finally {
+      setIsCreatingAll(false);
+    }
+  };
+
+  const canDeleteSatellite = (card: SatelliteDashboardCard) =>
+    Number(card.porPagar || 0) <= 0;
+
+  const requestDeleteSatellite = (card: SatelliteDashboardCard) => {
+    if (!canDeleteSatellite(card)) {
+      toast.error(
+        "No se puede eliminar: este satélite tiene deudas pendientes. Debe quedar en ceros."
+      );
+      return;
+    }
+    setDeletingSatellite(card);
+  };
+
+  const handleDeleteSatelliteConfirm = async () => {
+    if (!deletingSatellite) return;
+    try {
+      await deleteSatellite(deletingSatellite.id);
+      toast.success(`Satélite "${deletingSatellite.name}" eliminado`);
+      if (selectedId === deletingSatellite.id) {
+        setSelectedId(null);
+      }
+      setDeletingSatellite(null);
+      await refetch();
+      await loadMetrics();
+    } catch (err: any) {
+      toast.error(err?.message || "No se pudo eliminar el satélite.");
     }
   };
 
@@ -361,6 +502,7 @@ export default function Satellites() {
           ? `${selectedCard.contactName} · liquidación de mano de obra por pedido`
           : "Talleres externos y usuarios satélite: capas, órdenes y mano de obra por pagar."
       }
+      eyebrow="Operación"
     >
       {selectedCard ? (
         <div className="space-y-4">
@@ -395,12 +537,7 @@ export default function Satellites() {
               {selectedCard.capas.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
                   {selectedCard.capas.map((c) => (
-                    <span
-                      key={c.key}
-                      className="inline-flex rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground"
-                    >
-                      {c.label}
-                    </span>
+                    <KanbanStageChip key={c.key} stageKey={c.key} label={c.label} />
                   ))}
                 </div>
               ) : null}
@@ -436,6 +573,22 @@ export default function Satellites() {
               {selectedOrderDetails.filter((d) => d.paymentStatus === "pending").length ||
                 selectedOrderDetails.length}
               )
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
+              disabled={!canDeleteSatellite(selectedCard) || isDeletingSatellite}
+              title={
+                canDeleteSatellite(selectedCard)
+                  ? "Eliminar satélite"
+                  : "No se puede eliminar: tiene deudas pendientes"
+              }
+              onClick={() => requestDeleteSatellite(selectedCard)}
+            >
+              <Trash2 className="h-4 w-4 mr-1" />
+              Eliminar
             </Button>
             <span className="ml-auto text-xs text-muted-foreground">
               Mostrando {filteredOrderDetails.length} de {selectedOrderDetails.length}
@@ -492,7 +645,7 @@ export default function Satellites() {
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold">Resumen de liquidación</CardTitle>
+              <CardTitle className="text-lg font-semibold tracking-tight">Resumen de liquidación</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -500,7 +653,7 @@ export default function Satellites() {
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Total facturado
                   </p>
-                  <p className="text-xl font-semibold tabular-nums">
+                  <p className="text-xl tabular-nums">
                     {formatMoneyCop(detailSummary.totalFacturado)}
                   </p>
                 </div>
@@ -508,7 +661,7 @@ export default function Satellites() {
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Pagado
                   </p>
-                  <p className="text-xl font-semibold tabular-nums text-emerald-600">
+                  <p className="text-xl tabular-nums text-emerald-600">
                     {formatMoneyCop(detailSummary.pagado)}
                   </p>
                 </div>
@@ -516,7 +669,7 @@ export default function Satellites() {
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Por pagar
                   </p>
-                  <p className="text-xl font-semibold tabular-nums text-red-600">
+                  <p className="text-xl tabular-nums text-red-600">
                     {formatMoneyCop(detailSummary.porPagar)}
                   </p>
                 </div>
@@ -524,7 +677,7 @@ export default function Satellites() {
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Órdenes activas
                   </p>
-                  <p className="text-xl font-semibold tabular-nums">
+                  <p className="text-xl tabular-nums">
                     {detailSummary.ordenesActivas}
                   </p>
                 </div>
@@ -622,8 +775,8 @@ export default function Satellites() {
       ) : (
       <Card>
         <CardHeader className="pb-3 flex flex-row items-center justify-between gap-3">
-          <CardTitle className="text-sm font-semibold flex items-center gap-2">
-            <Satellite className="h-4 w-4 text-muted-foreground" />
+          <CardTitle className="text-lg font-semibold tracking-tight flex items-center gap-2">
+            <Satellite className="h-5 w-5 text-muted-foreground" />
             Talleres satélite
             {metricsLoading ? (
               <span className="text-xs font-normal text-muted-foreground">Actualizando…</span>
@@ -765,6 +918,9 @@ export default function Satellites() {
                   card={card}
                   selected={selectedId === card.id}
                   onSelect={() => setSelectedId(card.id)}
+                  canDelete={canDeleteSatellite(card)}
+                  deleting={isDeletingSatellite && deletingSatellite?.id === card.id}
+                  onDelete={() => requestDeleteSatellite(card)}
                 />
               ))}
             </div>
@@ -773,25 +929,71 @@ export default function Satellites() {
       </Card>
       )}
 
+      <AlertDialog
+        open={!!deletingSatellite}
+        onOpenChange={(open) => !open && !isDeletingSatellite && setDeletingSatellite(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar satélite?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminará <strong>{deletingSatellite?.name}</strong>. Solo se permite si no
+              tiene nada por pagar. Los usuarios vinculados quedarán sin taller asignado. Esta
+              acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingSatellite}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void handleDeleteSatelliteConfirm();
+              }}
+              disabled={isDeletingSatellite}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeletingSatellite ? "Eliminando..." : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {isCreateOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-          <div className="bg-card text-card-foreground border rounded-xl shadow-lg w-full max-w-lg relative max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-6 pt-5 pb-3">
-              <h3 className="text-lg font-semibold">Nuevo satélite</h3>
+          <div className="bg-card text-card-foreground border rounded-xl shadow-lg w-full max-w-xl relative max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-6 pt-5 pb-3 sticky top-0 bg-card z-10 border-b">
+              <div className="flex items-center gap-2">
+                <UserPlus className="h-5 w-5 text-red-600" />
+                <h3 className="text-lg font-semibold">Nuevo satélite</h3>
+              </div>
               <button
                 type="button"
-                onClick={() => setIsCreateOpen(false)}
+                onClick={() => !isCreatingAll && setIsCreateOpen(false)}
                 className="p-1 hover:bg-muted rounded-md transition-colors"
                 aria-label="Cerrar"
+                disabled={isCreatingAll}
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleCreate} className="px-6 pb-6 space-y-4">
+            <form onSubmit={handleCreate} className="px-6 pb-6 pt-4 space-y-4">
+              <p className="text-xs text-muted-foreground">
+                Crea el taller y su usuario satélite en un solo paso. Área{" "}
+                <strong className="text-foreground">Producción</strong> y rol{" "}
+                <strong className="text-foreground">Satélite</strong> quedan asignados
+                automáticamente. Las capas definen en qué etapas puede trabajar.
+              </p>
+
+              {formError ? (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-md px-3 py-2">
+                  {formError}
+                </p>
+              ) : null}
+
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold text-muted-foreground">
-                  Nombre del taller *
+                  Nombre del satélite <span className="text-red-600">*</span>
                 </Label>
                 <Input
                   required
@@ -800,34 +1002,58 @@ export default function Satellites() {
                     setForm((p) => ({ ...p, name: e.target.value }));
                     setFormError("");
                   }}
-                  placeholder="Ej. Bordados Luna"
-                  className={cn(
-                    "h-10 rounded-lg bg-muted/40",
-                    formError && "border-red-500 focus-visible:ring-red-500"
-                  )}
+                  placeholder="Ej. Satélite Flor"
+                  className="h-10 rounded-lg bg-muted/40"
                 />
-                {formError ? <p className="text-xs text-red-600">{formError}</p> : null}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-muted-foreground">Contacto</Label>
-                  <Input
-                    value={form.contact_name}
-                    onChange={(e) => setForm((p) => ({ ...p, contact_name: e.target.value }))}
-                    placeholder="Nombre"
-                    className="h-10 rounded-lg bg-muted/40"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-muted-foreground">Teléfono</Label>
-                  <Input
-                    value={form.phone}
-                    onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))}
-                    placeholder="+57 ..."
-                    className="h-10 rounded-lg bg-muted/40"
-                  />
-                </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold text-muted-foreground">
+                  Nombre de la persona <span className="text-red-600">*</span>
+                </Label>
+                <Input
+                  required
+                  value={form.person_name}
+                  onChange={(e) => {
+                    setForm((p) => ({ ...p, person_name: e.target.value }));
+                    setFormError("");
+                  }}
+                  placeholder="Ej. Flor Rodríguez"
+                  className="h-10 rounded-lg bg-muted/40"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold text-muted-foreground">
+                  Correo <span className="text-red-600">*</span>
+                </Label>
+                <Input
+                  type="email"
+                  required
+                  value={form.email}
+                  onChange={(e) => {
+                    setForm((p) => ({ ...p, email: e.target.value }));
+                    setFormError("");
+                  }}
+                  placeholder="flor@gmail.com"
+                  className="h-10 rounded-lg bg-muted/40"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold text-muted-foreground">
+                  Teléfono <span className="text-red-600">*</span>
+                </Label>
+                <Input
+                  required
+                  value={form.phone}
+                  onChange={(e) => {
+                    setForm((p) => ({ ...p, phone: e.target.value }));
+                    setFormError("");
+                  }}
+                  placeholder="+57 300 000 0000"
+                  className="h-10 rounded-lg bg-muted/40"
+                />
               </div>
 
               <div className="space-y-1.5">
@@ -835,31 +1061,111 @@ export default function Satellites() {
                 <Input
                   value={form.address}
                   onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))}
+                  placeholder="Opcional"
                   className="h-10 rounded-lg bg-muted/40"
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label className="text-xs font-semibold text-muted-foreground">Especialidades</Label>
-                <div className="flex flex-wrap gap-2">
-                  {SPECIALTIES.map((sp) => {
-                    const selected = form.specialties.includes(sp);
-                    return (
-                      <button
-                        key={sp}
-                        type="button"
-                        onClick={() => toggleSpecialty(sp)}
-                        className={cn(
-                          "rounded-full px-3 py-1.5 text-xs font-medium transition-colors border",
-                          selected
-                            ? "bg-red-600 text-white border-red-600"
-                            : "bg-muted text-muted-foreground border-transparent hover:bg-muted/80"
-                        )}
-                      >
-                        {sp}
-                      </button>
-                    );
-                  })}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-muted-foreground">
+                    Área <span className="text-red-600">*</span>
+                  </Label>
+                  <Input
+                    value="Producción"
+                    readOnly
+                    disabled
+                    className="h-10 rounded-lg bg-muted/60 text-foreground"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-muted-foreground">
+                    Rol <span className="text-red-600">*</span>
+                  </Label>
+                  <Input
+                    value="Satélite"
+                    readOnly
+                    disabled
+                    className="h-10 rounded-lg bg-muted/60 text-foreground"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold text-muted-foreground">
+                  Capas <span className="text-red-600">*</span>
+                </Label>
+                {etapas.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No hay capas Kanban configuradas en Fábrica.
+                  </p>
+                ) : (
+                  <div className="rounded-lg border px-3 py-2.5 space-y-2 max-h-40 overflow-y-auto bg-muted/20">
+                    {etapas
+                      .filter((c) => c.activo !== false)
+                      .map((c) => {
+                        const checked = form.production_stage_keys.includes(c.key);
+                        return (
+                          <label
+                            key={c.id}
+                            className="flex items-center gap-2.5 cursor-pointer text-sm"
+                          >
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={() => {
+                                setForm((p) => ({
+                                  ...p,
+                                  production_stage_keys: toggleStageKey(
+                                    p.production_stage_keys,
+                                    c.key
+                                  ),
+                                }));
+                                setFormError("");
+                              }}
+                            />
+                            <KanbanStageChip stageKey={c.key} label={c.label} />
+                          </label>
+                        );
+                      })}
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Define los permisos por capa. Puede encargarse de varias; en cada una solo
+                  avanzará la tarjeta a la etapa siguiente.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold text-muted-foreground">Cargo</Label>
+                <Input
+                  value={form.cargo}
+                  onChange={(e) => setForm((p) => ({ ...p, cargo: e.target.value }))}
+                  placeholder="Ej. Satelite1"
+                  className="h-10 rounded-lg bg-muted/40"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold text-muted-foreground">
+                  Contraseña inicial
+                </Label>
+                <div className="relative">
+                  <Input
+                    type={showPassword ? "text" : "password"}
+                    value={form.password}
+                    onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
+                    placeholder="Opcional — se genera una temporal si la dejas vacía"
+                    className="h-10 rounded-lg bg-muted/40 pr-10"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 text-muted-foreground"
+                    onClick={() => setShowPassword((v) => !v)}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </Button>
                 </div>
               </div>
 
@@ -869,26 +1175,44 @@ export default function Satellites() {
                   value={form.notes}
                   onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}
                   placeholder="Tiempos de entrega, capacidad, condiciones..."
-                  rows={3}
-                  className="w-full rounded-lg border bg-muted/40 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 resize-y min-h-[80px]"
+                  rows={2}
+                  className="w-full rounded-lg border bg-muted/40 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 resize-y min-h-[64px]"
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-3">
+                <div>
+                  <p className="text-sm font-medium">Usuario activo</p>
+                  <p className="text-xs text-muted-foreground">
+                    Puede iniciar sesión y operar sus módulos.
+                  </p>
+                </div>
+                <Switch
+                  checked={form.status === "active"}
+                  onCheckedChange={(checked) =>
+                    setForm((p) => ({
+                      ...p,
+                      status: checked ? "active" : "inactive",
+                    }))
+                  }
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t">
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => setIsCreateOpen(false)}
-                  disabled={isPending}
+                  disabled={isPending || isCreatingAll}
                 >
                   Cancelar
                 </Button>
                 <Button
                   type="submit"
-                  disabled={isPending}
+                  disabled={isPending || isCreatingAll}
                   className="bg-red-600 hover:bg-red-700 text-white"
                 >
-                  {isPending ? "Creando..." : "Crear satélite"}
+                  {isPending || isCreatingAll ? "Creando..." : "Crear satélite y usuario"}
                 </Button>
               </div>
             </form>
@@ -942,9 +1266,11 @@ function SatelliteOrderCard({
         <div className="min-w-0 space-y-2">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-sm font-semibold">{detail.orderCode}</span>
-            <span className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-              {detail.stageLabel}
-            </span>
+            <KanbanStageChip
+              stageKey={detail.stageKey}
+              label={detail.stageLabel}
+              className="text-[10px] px-2 py-0.5"
+            />
             <span
               className={cn(
                 "inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium",
@@ -982,7 +1308,7 @@ function SatelliteOrderCard({
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             Costo
           </p>
-          <p className="text-lg font-semibold tabular-nums">{formatMoneyCop(displayCost)}</p>
+          <p className="text-lg tabular-nums">{formatMoneyCop(displayCost)}</p>
         </div>
       </div>
 
@@ -1010,20 +1336,16 @@ function SatelliteOrderCard({
           <>
             <div className="flex flex-wrap gap-1.5">
               {stages.map((stage) => (
-                <span
+                <KanbanStageChip
                   key={stage.stageKey}
-                  className={cn(
-                    "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-semibold border",
-                    stage.isCurrent
-                      ? "bg-red-600 text-white border-red-600"
-                      : "bg-red-50 text-red-700 border-red-200"
-                  )}
+                  stageKey={stage.stageKey}
+                  label={stage.stageLabel}
+                  className="text-[10px] font-semibold"
                 >
-                  {stage.stageLabel}
                   {stage.isCurrent ? (
-                    <span className="text-[9px] font-medium opacity-90">· actual</span>
+                    <span className="text-[9px] font-medium opacity-80">· actual</span>
                   ) : null}
-                </span>
+                </KanbanStageChip>
               ))}
             </div>
 
@@ -1034,18 +1356,24 @@ function SatelliteOrderCard({
                     key={`detail-${stage.stageKey}`}
                     className={cn(
                       "rounded-lg px-3 py-2.5 space-y-1.5 border",
-                      stage.isCurrent || stage.laborAmount > 0 || stage.actions.length > 0
-                        ? "bg-red-50/80 border-red-200"
-                        : "bg-background border-border"
+                      getKanbanStageSoftPanelClass(
+                        stage.stageKey,
+                        stage.isCurrent || stage.laborAmount > 0 || stage.actions.length > 0
+                      )
                     )}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                        <span className="text-sm font-semibold text-red-800">
+                        <span
+                          className={cn(
+                            "text-sm font-semibold",
+                            getKanbanStageSoftTextClass(stage.stageKey)
+                          )}
+                        >
                           {stage.stageLabel}
                         </span>
                         {stage.isCurrent ? (
-                          <span className="inline-flex rounded-full bg-white border border-red-300 px-2 py-0.5 text-[10px] font-medium text-red-700">
+                          <span className="inline-flex rounded-full bg-white/90 border border-current/20 px-2 py-0.5 text-[10px] font-medium">
                             Actual
                           </span>
                         ) : null}
@@ -1056,7 +1384,12 @@ function SatelliteOrderCard({
                         ) : null}
                       </div>
                       {stage.laborAmount > 0 ? (
-                        <span className="text-xs font-semibold tabular-nums text-red-800">
+                        <span
+                          className={cn(
+                            "text-xs tabular-nums",
+                            getKanbanStageSoftTextClass(stage.stageKey)
+                          )}
+                        >
                           MO {formatMoneyCop(stage.laborAmount)}
                         </span>
                       ) : null}
@@ -1065,7 +1398,14 @@ function SatelliteOrderCard({
                       <ul className="text-xs text-muted-foreground space-y-0.5">
                         {stage.actions.map((action) => (
                           <li key={action} className="flex items-start gap-1.5">
-                            <span className="text-red-600 mt-0.5">•</span>
+                            <span
+                              className={cn(
+                                "mt-0.5",
+                                getKanbanStageSoftTextClass(stage.stageKey)
+                              )}
+                            >
+                              •
+                            </span>
                             <span>{action}</span>
                           </li>
                         ))}
@@ -1145,82 +1485,107 @@ function SatelliteMetricCard({
   card,
   selected,
   onSelect,
+  canDelete,
+  deleting,
+  onDelete,
 }: {
   card: SatelliteDashboardCard;
   selected: boolean;
   onSelect: () => void;
+  canDelete: boolean;
+  deleting: boolean;
+  onDelete: () => void;
 }) {
   const hasUsers = card.userIds.length > 0;
 
   return (
-    <button
-      type="button"
-      onClick={onSelect}
+    <div
       className={cn(
         "text-left rounded-xl border bg-card p-4 shadow-sm transition-all hover:shadow-md",
         selected ? "border-red-500 ring-1 ring-red-500/30" : "border-border"
       )}
     >
-      <div className="flex items-start gap-3">
-        <div className="h-10 w-10 rounded-lg bg-red-50 text-red-600 flex items-center justify-center shrink-0">
-          <Factory className="h-5 w-5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="font-semibold text-sm text-foreground truncate">{card.name}</p>
-              <p className="text-xs text-muted-foreground truncate">{card.contactName}</p>
+      <div className="flex items-start gap-2">
+        <button type="button" onClick={onSelect} className="min-w-0 flex-1 text-left">
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-lg bg-red-50 text-red-600 flex items-center justify-center shrink-0">
+              <Factory className="h-5 w-5" />
             </div>
-            <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-semibold text-sm text-foreground truncate">{card.name}</p>
+                  <p className="text-xs text-muted-foreground truncate">{card.contactName}</p>
+                </div>
+                <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+              </div>
+            </div>
+          </div>
+        </button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className={cn(
+            "h-8 w-8 shrink-0",
+            canDelete
+              ? "text-red-600 hover:text-red-700 hover:bg-red-50"
+              : "text-muted-foreground/40 cursor-not-allowed"
+          )}
+          disabled={!canDelete || deleting}
+          title={
+            canDelete
+              ? "Eliminar satélite"
+              : "No se puede eliminar: tiene deudas pendientes"
+          }
+          onClick={onDelete}
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+
+      <button type="button" onClick={onSelect} className="w-full text-left">
+        <div className="mt-3 flex flex-wrap gap-1.5 min-h-[28px]">
+          {card.capas.length === 0 ? (
+            <span className="text-[11px] text-muted-foreground">
+              {hasUsers ? "Sin capas configuradas" : "Sin usuario satélite vinculado"}
+            </span>
+          ) : (
+            card.capas.map((c) => (
+              <KanbanStageChip key={c.key} stageKey={c.key} label={c.label} />
+            ))
+          )}
+        </div>
+
+        {!hasUsers ? (
+          <p className="mt-2 text-[11px] text-amber-700 bg-amber-50 rounded-md px-2 py-1">
+            Vincula un usuario con rol Satélite en Administración para ver métricas.
+          </p>
+        ) : null}
+
+        <div className="mt-4 pt-3 border-t grid grid-cols-3 gap-2">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Órdenes
+            </p>
+            <p className="text-xl tabular-nums text-foreground">{card.ordenes}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Pendientes
+            </p>
+            <p className="text-xl tabular-nums text-foreground">{card.pendientes}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Por pagar
+            </p>
+            <p className="text-lg tabular-nums text-emerald-600 truncate">
+              {formatMoneyCop(card.porPagar)}
+            </p>
           </div>
         </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-1.5 min-h-[28px]">
-        {card.capas.length === 0 ? (
-          <span className="text-[11px] text-muted-foreground">
-            {hasUsers ? "Sin capas configuradas" : "Sin usuario satélite vinculado"}
-          </span>
-        ) : (
-          card.capas.map((c) => (
-            <span
-              key={c.key}
-              className="inline-flex rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground"
-            >
-              {c.label}
-            </span>
-          ))
-        )}
-      </div>
-
-      {!hasUsers ? (
-        <p className="mt-2 text-[11px] text-amber-700 bg-amber-50 rounded-md px-2 py-1">
-          Vincula un usuario con rol Satélite en Administración para ver métricas.
-        </p>
-      ) : null}
-
-      <div className="mt-4 pt-3 border-t grid grid-cols-3 gap-2">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Órdenes
-          </p>
-          <p className="text-xl font-semibold tabular-nums text-foreground">{card.ordenes}</p>
-        </div>
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Pendientes
-          </p>
-          <p className="text-xl font-semibold tabular-nums text-foreground">{card.pendientes}</p>
-        </div>
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Por pagar
-          </p>
-          <p className="text-lg font-semibold tabular-nums text-emerald-600 truncate">
-            {formatMoneyCop(card.porPagar)}
-          </p>
-        </div>
-      </div>
-    </button>
+      </button>
+    </div>
   );
 }

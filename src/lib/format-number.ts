@@ -34,6 +34,19 @@ export function formatCurrency(value: string | number): string {
     });
 }
 
+/**
+ * Costo unitario de inventario: conserva decimales exactos (hasta 2),
+ * sin forzar redondeo a pesos enteros (p. ej. 0,3).
+ */
+export function formatUnitCost(value: string | number): string {
+    const num = parseApiNumber(value);
+    if (Number.isNaN(num)) return "0";
+    return num.toLocaleString("es-CO", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+    });
+}
+
 /** Medidas decimales (metros, consumo): coma decimal, sin ceros de más. */
 export function formatDecimal(value: string | number, maxFractionDigits = 3): string {
     const num = parseApiNumber(value);
