@@ -70,6 +70,8 @@ interface User {
   area: string;
   cargo: string;
   correo: string;
+  phone?: string;
+  status?: string;
   role?: string;
   productionStageKey?: string;
   productionStageKeys?: string[];
@@ -233,13 +235,75 @@ const ROLE_TO_AREA: Record<string, string> = {
   Satélite: "Producción",
 };
 
+function normalizeRoleName(raw: unknown): string {
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (!s) return "";
+    const m = s.match(/name=['"]([^'"]+)['"]/);
+    return (m?.[1] || s).trim();
+  }
+  if (raw && typeof raw === "object" && "name" in raw) {
+    return String((raw as { name?: unknown }).name || "").trim();
+  }
+  return "";
+}
+
+function normalizeRoles(raw: unknown): string[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const names = list.map(normalizeRoleName).filter(Boolean);
+  const matched = names.find((r) =>
+    (USER_ROLES as readonly string[]).includes(r)
+  );
+  return matched ? [matched] : names.slice(0, 1);
+}
+
 function resolveUserArea(area: string, roles: string[]): string {
   const raw = (area || "").trim();
-  if (raw && raw.toLowerCase() !== "administrador") return raw;
-  for (const role of roles) {
-    if (ROLE_TO_AREA[role]) return ROLE_TO_AREA[role];
+  if (raw && raw.toLowerCase() !== "administrador") {
+    const exact = (USER_AREAS as readonly string[]).find(
+      (a) => a.toLowerCase() === raw.toLowerCase()
+    );
+    if (exact) return exact;
+    return raw;
   }
-  return raw || "Sin área";
+  for (const role of roles) {
+    const mapped = ROLE_TO_AREA[role];
+    if (mapped && (USER_AREAS as readonly string[]).includes(mapped)) {
+      return mapped;
+    }
+  }
+  return "Administración";
+}
+
+function buildEditFormFromApiUser(u: Record<string, unknown>): UserFormState {
+  const roles = normalizeRoles(u.roles);
+  const first = String(u.first_name || "").trim();
+  const last = String(u.last_name || "").trim();
+  const fullFromParts = `${first} ${last}`.trim();
+  const fullName =
+    fullFromParts ||
+    String(u.full_name || "").trim() ||
+    String(u.username || "").trim();
+
+  return {
+    full_name: fullName,
+    email: String(u.email || "").trim(),
+    phone: String(u.phone || "").trim(),
+    area: resolveUserArea(String(u.area || ""), roles),
+    roles: roles.length ? roles : ["Comercial"],
+    cargo: String(u.cargo || "").trim(),
+    production_stage_keys: parseStageKeys(
+      Array.isArray(u.production_stage_keys)
+        ? u.production_stage_keys
+        : u.production_stage_key
+    ),
+    satellite_id: u.satellite_id ? String(u.satellite_id) : "",
+    password: "",
+    status:
+      String(u.status || "active").toLowerCase() === "inactive"
+        ? "inactive"
+        : "active",
+  };
 }
 
 function userBelongsToArea(user: User, areaNombre: string): boolean {
@@ -271,7 +335,7 @@ function userBelongsToArea(user: User, areaNombre: string): boolean {
 function mapApiUser(u: Record<string, unknown>): User {
   const first = String(u.first_name || "");
   const last = String(u.last_name || "");
-  const roles = Array.isArray(u.roles) ? (u.roles as string[]) : [];
+  const roles = normalizeRoles(u.roles);
   const role = roles[0] || "";
   let currentUsername = "";
   try {
@@ -285,8 +349,10 @@ function mapApiUser(u: Record<string, unknown>): User {
     id: String(u.id),
     nombre: `${first} ${last}`.trim() || String(u.username || ""),
     area: resolveUserArea(String(u.area || ""), roles),
-    cargo: String(u.cargo || "") || (u.status === "active" ? "Activo" : "Inactivo"),
+    cargo: String(u.cargo || "").trim(),
     correo: String(u.email || ""),
+    phone: String(u.phone || "").trim(),
+    status: String(u.status || "active"),
     role,
     productionStageKey: String(u.production_stage_key || ""),
     productionStageKeys: parseStageKeys(
@@ -805,48 +871,52 @@ export default function AdministrationSubmodule() {
 
   // --- HANDLER PARA OBTENER LOS DATOS ACTUALES E INYECTARLOS AL FORMULARIO DE EDICIÓN ---
   const handleOpenEditModal = async (userId: string) => {
-    try {
-      const token = localStorage.getItem("token");
-
-      const response = await apiFetch(`${BASE_URL}/api/v1/users/${userId}/`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": token ? `Bearer ${token}` : "",
-        },
-        body: JSON.stringify({}),
-      });
-
-      if (!response.ok) throw new Error("No se pudieron extraer los detalles del usuario.");
-
-      const u = await response.json();
-      const roles =
-        u.roles && u.roles.length > 0
-          ? u.roles
-          : ["Comercial"];
-
+    const cached = users.find((u) => u.id === userId);
+    if (cached) {
       setSelectedUserId(userId);
       setEditFormData({
-        full_name: `${u.first_name || ""} ${u.last_name || ""}`.trim(),
-        email: u.email || "",
-        phone: u.phone || "",
-        area: resolveUserArea(u.area || "", roles),
-        roles,
-        cargo: u.cargo || "",
-        production_stage_keys: parseStageKeys(
-          Array.isArray(u.production_stage_keys)
-            ? u.production_stage_keys
-            : u.production_stage_key
-        ),
-        satellite_id: u.satellite_id ? String(u.satellite_id) : "",
+        full_name: cached.nombre || "",
+        email: cached.correo || "",
+        phone: cached.phone || "",
+        area: resolveUserArea(cached.area || "", cached.role ? [cached.role] : []),
+        roles: cached.role ? [cached.role] : ["Comercial"],
+        cargo: cached.cargo || "",
+        production_stage_keys: cached.productionStageKeys?.length
+          ? cached.productionStageKeys
+          : parseStageKeys(cached.productionStageKey),
+        satellite_id: cached.satelliteId || "",
         password: "",
-        status: u.status || "active",
+        status: cached.status === "inactive" ? "inactive" : "active",
       });
       setEditNewSatelliteName("");
+      setIsEditModalOpen(true);
+    }
 
+    try {
+      const token = localStorage.getItem("token");
+      const response = await apiFetch(endpoints.users.detail(userId), {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: token ? `Bearer ${token}` : "",
+        },
+      });
+
+      if (!response.ok) {
+        if (!cached) {
+          throw new Error("No se pudieron extraer los detalles del usuario.");
+        }
+        return;
+      }
+
+      const u = (await response.json()) as Record<string, unknown>;
+      setSelectedUserId(userId);
+      setEditFormData(buildEditFormFromApiUser(u));
+      setEditNewSatelliteName("");
       setIsEditModalOpen(true);
     } catch (error) {
       if (error instanceof UnauthorizedError) return;
+      if (cached) return;
       console.error("Error cargando usuario para edición:", error);
       toast({
         variant: "destructive",

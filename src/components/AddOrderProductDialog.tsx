@@ -47,7 +47,8 @@ export interface OrderProductEntry {
     estampado: string;
     comentario: string;
     unit_cost: number;
-    /** Ingreso proyectado por unidad de prenda */
+    /** Precio de venta proyectado por unidad (con IVA) */
+
     ingreso_proyectado_unitario: number;
     size_lines: {
         talla_id: string;
@@ -111,7 +112,7 @@ function formatSizeRangeLabel(labels: string[]): string {
     return parsed.map((p) => p.raw).join(", ");
 }
 
-/** Ingreso proyectado configurado en la variante (precio_venta en costos por talla). */
+/** Precio de venta proyectado de la variante (precio_venta con IVA en costos por talla). */
 function resolveIngresoProyectadoFromSizes(
     sizes: VariantSizeCostSummary[]
 ): number | null {
@@ -971,7 +972,7 @@ export function AddOrderProductDialog({
                                     <div className="space-y-1.5 pt-1 border-t">
                                         <div className="flex items-center justify-between gap-2">
                                             <Label className="text-xs font-medium">
-                                                Ingreso proyectado (por unidad){" "}
+                                                Precio de venta proyectado (por unidad, con IVA){" "}
                                                 <span className="text-destructive">*</span>
                                             </Label>
                                             {!ingresoEditable && (
@@ -1015,7 +1016,7 @@ export function AddOrderProductDialog({
                                         )}
                                         {totalUnits > 0 && ingresoProyectadoUnitario > 0 && (
                                             <p className="text-[11px] text-muted-foreground">
-                                                Ingreso proyectado de este producto:{" "}
+                                                Precio de venta proyectado de este producto:{" "}
                                                 <span className="font-semibold text-foreground tabular-nums">
                                                     ${formatMoney(ingresoProyectadoTotal)}
                                                 </span>

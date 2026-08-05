@@ -1,8 +1,13 @@
+import { useMemo } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { StatCard } from "@/components/StatCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useDashboard } from "@/hooks/useDashboard";
 import type { StatusType } from "@/components/StatusBadge";
+import { SatelliteUserDashboard } from "@/components/SatelliteUserDashboard";
+import { ProductionUserDashboard } from "@/components/ProductionUserDashboard";
+import { readStoredSatelliteUser } from "@/lib/satellite-user-dashboard";
+import { readStoredProductionUser } from "@/lib/production-user-dashboard";
 import {
   Scissors,
   AlertTriangle,
@@ -22,7 +27,17 @@ function asStatus(value: string): StatusType {
 }
 
 export default function Dashboard() {
+  const isSatelliteUser = useMemo(() => Boolean(readStoredSatelliteUser()), []);
+  const isProductionUser = useMemo(() => Boolean(readStoredProductionUser()), []);
   const { loading, error, stats, trends, recentOrders, alerts } = useDashboard();
+
+  if (isSatelliteUser) {
+    return <SatelliteUserDashboard />;
+  }
+
+  if (isProductionUser) {
+    return <ProductionUserDashboard />;
+  }
 
   if (loading && !stats) {
     return (

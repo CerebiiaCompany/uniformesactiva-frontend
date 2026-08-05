@@ -166,6 +166,10 @@ export default function Login() {
                                   .filter(Boolean),
                         area: userData.area || "",
                         cargo: userData.cargo || "",
+                        phone: userData.phone || "",
+                        satellite_id: userData.satellite_id
+                            ? String(userData.satellite_id)
+                            : "",
                     };
 
                     localStorage.setItem("user", JSON.stringify(cleanUser));

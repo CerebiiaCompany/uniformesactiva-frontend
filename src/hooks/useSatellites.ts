@@ -5,6 +5,22 @@ import { endpoints } from "@/lib/api-endpoints";
 export type SatelliteStatus = "active" | "inactive";
 export type SatellitePaymentStatus = "al_dia" | "pendiente" | "no_aplica";
 
+export type SatelliteWorkStatus =
+    | "enviado"
+    | "recibido_completo"
+    | "recibido_faltantes";
+
+export type SatelliteSettlement = {
+    status: "pending" | "paid";
+    amount?: number;
+    paid_at?: string | null;
+    /** Confirmación de recepción del trabajo por la empresa */
+    work_status?: SatelliteWorkStatus;
+    observations?: string;
+    agreed_cost?: number | null;
+    confirmed_at?: string | null;
+};
+
 export interface Satellite {
     id: string;
     name: string;
@@ -15,6 +31,8 @@ export interface Satellite {
     notes: string;
     status: SatelliteStatus;
     payment_status: SatellitePaymentStatus;
+    /** Liquidaciones por orden: { [orderId]: { status, amount, paid_at } } */
+    settlements?: Record<string, SatelliteSettlement>;
     created_at: string;
     updated_at: string;
 }
@@ -39,7 +57,9 @@ export interface CreateSatellitePayload {
     payment_status?: SatellitePaymentStatus;
 }
 
-export type UpdateSatellitePayload = Partial<CreateSatellitePayload>;
+export type UpdateSatellitePayload = Partial<CreateSatellitePayload> & {
+    settlements?: Record<string, SatelliteSettlement>;
+};
 
 function buildParams(filters: SatelliteFilters = {}) {
     const params = new URLSearchParams();

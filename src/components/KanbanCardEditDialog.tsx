@@ -5,6 +5,7 @@ import {
   Factory,
   FileText,
   ImagePlus,
+  MessageSquare,
   Paperclip,
   Plus,
   Scissors,
@@ -15,6 +16,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -37,6 +39,18 @@ export type CardAttachment = {
   dataUrl: string;
 };
 
+export type CardNovedad = {
+  id: string;
+  texto: string;
+  autorNombre: string;
+  autorId?: string | null;
+  createdAt: string;
+  /** Imágenes adjuntas como evidencia de la novedad */
+  images?: CardAttachment[];
+  /** Archivos adjuntos como evidencia de la novedad */
+  files?: CardAttachment[];
+};
+
 export type KanbanCardFormValues = {
   items: string;
   assignee: string;
@@ -54,6 +68,7 @@ export type KanbanCardFormValues = {
   laborCostPerUnit: string;
   cardImages: CardAttachment[];
   cardFiles: CardAttachment[];
+  novedades: CardNovedad[];
   requestedMaterials: {
     materialId: string;
     materialName: string;
@@ -61,6 +76,26 @@ export type KanbanCardFormValues = {
     unitCost?: number;
   }[];
 };
+
+function readCurrentUserLabel(): { id: string | null; name: string } {
+  try {
+    const raw = localStorage.getItem("user");
+    if (!raw) return { id: null, name: "Usuario" };
+    const u = JSON.parse(raw) as {
+      id?: string;
+      username?: string;
+      first_name?: string;
+      last_name?: string;
+    };
+    const name =
+      [u.first_name, u.last_name].filter(Boolean).join(" ").trim() ||
+      u.username ||
+      "Usuario";
+    return { id: u.id || null, name };
+  } catch {
+    return { id: null, name: "Usuario" };
+  }
+}
 
 const MOLD_STATUS_OPTIONS: { value: MoldStatus; label: string }[] = [
   { value: "pendiente", label: "Pendiente" },
@@ -185,6 +220,10 @@ export function KanbanCardEditDialog({
   const [laborCostPerUnit, setLaborCostPerUnit] = useState("0.00");
   const [cardImages, setCardImages] = useState<CardAttachment[]>([]);
   const [cardFiles, setCardFiles] = useState<CardAttachment[]>([]);
+  const [novedades, setNovedades] = useState<CardNovedad[]>([]);
+  const [nuevaNovedad, setNuevaNovedad] = useState("");
+  const [novedadImages, setNovedadImages] = useState<CardAttachment[]>([]);
+  const [novedadFiles, setNovedadFiles] = useState<CardAttachment[]>([]);
   const [requestedMaterials, setRequestedMaterials] = useState<
     { materialId: string; materialName: string; quantity: number; unitCost?: number }[]
   >([]);
@@ -192,6 +231,8 @@ export function KanbanCardEditDialog({
   const [pickQty, setPickQty] = useState("1");
   const imagesInputRef = useRef<HTMLInputElement>(null);
   const filesInputRef = useRef<HTMLInputElement>(null);
+  const novedadImagesInputRef = useRef<HTMLInputElement>(null);
+  const novedadFilesInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -211,6 +252,10 @@ export function KanbanCardEditDialog({
     setLaborCostPerUnit(initial?.laborCostPerUnit ?? "0.00");
     setCardImages(initial?.cardImages ?? []);
     setCardFiles(initial?.cardFiles ?? []);
+    setNovedades(initial?.novedades ?? []);
+    setNuevaNovedad("");
+    setNovedadImages([]);
+    setNovedadFiles([]);
     setRequestedMaterials(initial?.requestedMaterials || []);
     setPickMaterialId("");
     setPickQty("1");
@@ -279,8 +324,43 @@ export function KanbanCardEditDialog({
     }
   };
 
+  const handleNovedadImagesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    try {
+      const next = await filesToAttachments(e.target.files);
+      if (next.length) setNovedadImages((prev) => [...prev, ...next]);
+    } finally {
+      e.target.value = "";
+    }
+  };
+
+  const handleNovedadFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    try {
+      const next = await filesToAttachments(e.target.files);
+      if (next.length) setNovedadFiles((prev) => [...prev, ...next]);
+    } finally {
+      e.target.value = "";
+    }
+  };
+
   const handleSave = async () => {
     if ((!canRequestInventory && readOnly) || !items.trim() || saving) return;
+    const trimmedNote = nuevaNovedad.trim();
+    let nextNovedades = novedades;
+    if (trimmedNote) {
+      const author = readCurrentUserLabel();
+      nextNovedades = [
+        {
+          id: `nov-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          texto: trimmedNote,
+          autorNombre: author.name,
+          autorId: author.id,
+          createdAt: new Date().toISOString(),
+          images: novedadImages,
+          files: novedadFiles,
+        },
+        ...novedades,
+      ];
+    }
     await onSave({
       items: items.trim(),
       assignee: assignee.trim(),
@@ -298,6 +378,7 @@ export function KanbanCardEditDialog({
       laborCostPerUnit,
       cardImages,
       cardFiles,
+      novedades: nextNovedades,
       requestedMaterials,
       satelliteName: selectedSatelliteName,
     });
@@ -738,6 +819,144 @@ export function KanbanCardEditDialog({
               </ul>
             )}
           </SectionCard>
+
+          <SectionCard icon={MessageSquare} title="Novedades">
+            <p className="text-xs text-muted-foreground">
+              Deja aquí cualquier novedad o nota para que el administrador la revise.
+              Puedes adjuntar imagen o archivo como evidencia.
+            </p>
+            <Textarea
+              value={nuevaNovedad}
+              onChange={(e) => setNuevaNovedad(e.target.value)}
+              placeholder="Escribe una novedad o seguimiento..."
+              className="min-h-[88px] text-sm resize-none rounded-lg"
+              disabled={saving || (readOnly && !canRequestInventory)}
+            />
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                ref={novedadImagesInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={handleNovedadImagesSelected}
+              />
+              <input
+                ref={novedadFilesInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={handleNovedadFilesSelected}
+              />
+              <button
+                type="button"
+                className="text-xs font-medium text-red-600 hover:underline inline-flex items-center gap-1"
+                onClick={() => novedadImagesInputRef.current?.click()}
+                disabled={saving || (readOnly && !canRequestInventory)}
+              >
+                <ImagePlus className="h-3.5 w-3.5" />
+                + Evidencia imagen
+              </button>
+              <button
+                type="button"
+                className="text-xs font-medium text-red-600 hover:underline inline-flex items-center gap-1"
+                onClick={() => novedadFilesInputRef.current?.click()}
+                disabled={saving || (readOnly && !canRequestInventory)}
+              >
+                <Paperclip className="h-3.5 w-3.5" />
+                + Evidencia archivo
+              </button>
+            </div>
+            {(novedadImages.length > 0 || novedadFiles.length > 0) && (
+              <div className="space-y-2 rounded-lg border bg-muted/20 p-2.5">
+                {novedadImages.length > 0 ? (
+                  <ul className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {novedadImages.map((img) => (
+                      <li
+                        key={img.id}
+                        className="relative group rounded-lg border overflow-hidden bg-muted/30"
+                      >
+                        <img
+                          src={img.dataUrl}
+                          alt={img.name}
+                          className="h-16 w-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          className="absolute top-1 right-1 h-5 w-5 rounded-full bg-black/60 text-white flex items-center justify-center"
+                          onClick={() =>
+                            setNovedadImages((prev) => prev.filter((p) => p.id !== img.id))
+                          }
+                          aria-label={`Quitar ${img.name}`}
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {novedadFiles.length > 0 ? (
+                  <ul className="space-y-1">
+                    {novedadFiles.map((file) => (
+                      <li
+                        key={file.id}
+                        className="flex items-center justify-between gap-2 text-xs"
+                      >
+                        <span className="truncate inline-flex items-center gap-1.5">
+                          <FileText className="h-3.5 w-3.5 text-red-600 shrink-0" />
+                          {file.name}
+                        </span>
+                        <button
+                          type="button"
+                          className="text-red-600 hover:underline shrink-0"
+                          onClick={() =>
+                            setNovedadFiles((prev) => prev.filter((p) => p.id !== file.id))
+                          }
+                        >
+                          Quitar
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            )}
+            {novedades.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Aún no hay novedades en esta tarjeta.</p>
+            ) : (
+              <ul className="space-y-2 max-h-40 overflow-y-auto">
+                {novedades.map((n) => (
+                  <li
+                    key={n.id}
+                    className="rounded-lg border bg-muted/20 px-2.5 py-2 space-y-1"
+                  >
+                    <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                      <span className="font-medium text-foreground/80 truncate">
+                        {n.autorNombre || "Usuario"}
+                      </span>
+                      <span className="shrink-0">
+                        {n.createdAt
+                          ? new Date(n.createdAt).toLocaleString("es-CO", {
+                              day: "2-digit",
+                              month: "short",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : ""}
+                      </span>
+                    </div>
+                    <p className="text-xs text-foreground whitespace-pre-wrap">{n.texto}</p>
+                    {((n.images || []).length > 0 || (n.files || []).length > 0) && (
+                      <p className="text-[10px] text-muted-foreground">
+                        Evidencia: {(n.images || []).length} imagen(es),{" "}
+                        {(n.files || []).length} archivo(s)
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SectionCard>
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">
@@ -785,6 +1004,7 @@ export function cardFormFromProductionOrder(card: ProductionOrder): KanbanCardFo
         : "0.00",
     cardImages: card.cardImages || [],
     cardFiles: card.cardFiles || [],
+    novedades: card.novedades || [],
     requestedMaterials: card.requestedMaterials || [],
   };
 }

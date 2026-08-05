@@ -111,6 +111,28 @@ export interface ProductionOrder {
     type: string;
     dataUrl: string;
   }[];
+  /** Novedades / notas dejadas por operadores para revisión del administrador */
+  novedades?: {
+    id: string;
+    texto: string;
+    autorNombre: string;
+    autorId?: string | null;
+    createdAt: string;
+    images?: {
+      id: string;
+      name: string;
+      size: number;
+      type: string;
+      dataUrl: string;
+    }[];
+    files?: {
+      id: string;
+      name: string;
+      size: number;
+      type: string;
+      dataUrl: string;
+    }[];
+  }[];
   requestedMaterials?: {
     materialId: string;
     materialName: string;

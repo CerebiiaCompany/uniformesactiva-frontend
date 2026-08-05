@@ -1,6 +1,7 @@
 import { Calculator, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/format-number";
+import { getKanbanStageChipClass } from "@/lib/kanban-stage-theme";
 import {
   emptyRealCost,
   type OrderRealCostBreakdown,
@@ -20,6 +21,26 @@ function money(value: number) {
   return `$${formatCurrency(value)}`;
 }
 
+function isUnassignedName(name?: string | null) {
+  if (!name) return true;
+  const n = name.trim().toLowerCase();
+  return n === "sin asignar" || n === "sin asignar (producción)";
+}
+
+function StageChip({ label, stageKey }: { label: string; stageKey?: string | null }) {
+  if (!label) return null;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+        getKanbanStageChipClass(stageKey || label)
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
 function CategoryBlock({
   title,
   amount,
@@ -31,31 +52,41 @@ function CategoryBlock({
   lines: RealCostLine[];
   defaultOpen?: boolean;
 }) {
-  if (!lines.length && amount <= 0) return null;
+  const visibleLines = lines.filter(
+    (l) => l.userId || !isUnassignedName(l.userName) || l.actorKind === "provider"
+  );
+  if (!visibleLines.length && amount <= 0) return null;
   return (
     <details open={defaultOpen} className="rounded-xl border bg-card">
       <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between gap-3">
         <span className="text-sm font-semibold text-foreground">{title}</span>
         <span className="text-sm font-semibold tabular-nums text-foreground">{money(amount)}</span>
       </summary>
-      {lines.length > 0 ? (
-        <div className="border-t px-4 py-2.5 space-y-1.5">
-          {lines.map((line, idx) => (
-            <div
-              key={`${line.label}-${idx}`}
-              className="flex items-start justify-between gap-3 text-sm"
-            >
-              <div className="min-w-0">
-                <span className="text-muted-foreground block truncate">{line.label}</span>
-                {line.userName ? (
-                  <span className="text-[11px] text-muted-foreground/80">
-                    {line.userName}
+      {visibleLines.length > 0 ? (
+        <div className="border-t px-4 py-2.5 space-y-2">
+          {visibleLines.map((line, idx) => {
+            const baseLabel = (line.label || "").replace(/^\[[^\]]+\]\s*/, "");
+            return (
+              <div
+                key={`${line.label}-${idx}`}
+                className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1 text-sm"
+              >
+                <div className="min-w-0 space-y-1">
+                  <span className="text-muted-foreground break-words leading-snug block">
+                    {baseLabel}
                   </span>
-                ) : null}
+                  {line.userName && !isUnassignedName(line.userName) ? (
+                    <span className="text-[11px] text-muted-foreground/80 block">
+                      {line.userName}
+                    </span>
+                  ) : null}
+                </div>
+                <span className="tabular-nums font-medium shrink-0 text-right">
+                  {money(line.amount)}
+                </span>
               </div>
-              <span className="tabular-nums font-medium shrink-0">{money(line.amount)}</span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : null}
     </details>
@@ -83,28 +114,30 @@ export function OrderRealCostDialog({
     { title: "Envíos y domicilios", amount: data.shipping, lines: data.shippingLines },
   ];
 
-  const byUser = data.byUser || [];
+  const byUser = (data.byUser || []).filter(
+    (u) => u.userId && !isUnassignedName(u.userName)
+  );
   const openCategory =
     categories.find((c) => c.lines.length > 0 || c.amount > 0)?.title || "Satélites";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
       <button
         type="button"
         aria-label="Cerrar"
         className="absolute inset-0 bg-black/45"
         onClick={onClose}
       />
-      <div className="relative z-10 w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border bg-background shadow-xl">
-        <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-3 sticky top-0 bg-background z-10">
+      <div className="relative z-10 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border bg-background shadow-xl">
+        <div className="flex items-start justify-between gap-3 px-5 sm:px-6 pt-5 pb-3 sticky top-0 bg-background z-10 border-b">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <Calculator className="h-5 w-5 text-red-600 shrink-0" />
-              <h2 className="text-base font-bold text-foreground truncate">
+              <h2 className="text-base font-bold text-foreground">
                 Costo real — {shortId}
               </h2>
             </div>
-            <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+            <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed max-w-xl">
               Acumulado por capa del Kanban y por usuario (producción / satélite) que cargó
               materiales, mano de obra o talleres.
             </p>
@@ -119,20 +152,20 @@ export function OrderRealCostDialog({
           </button>
         </div>
 
-        <div className="px-5 pb-5 space-y-4">
-          <div className="rounded-xl border divide-y">
+        <div className="px-5 sm:px-6 pb-6 pt-4 space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {categories.map((cat) => (
               <div
                 key={cat.title}
-                className="flex items-center justify-between gap-3 px-4 py-3 text-sm"
+                className="flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm bg-card"
               >
                 <span className="text-foreground">{cat.title}</span>
-                <span className="font-semibold tabular-nums">{money(cat.amount)}</span>
+                <span className="font-semibold tabular-nums shrink-0">{money(cat.amount)}</span>
               </div>
             ))}
           </div>
 
-          <div className="space-y-1.5 pt-1 border-t">
+          <div className="rounded-xl border bg-muted/20 px-4 py-3 space-y-2">
             <div className="flex items-center justify-between gap-3">
               <span className="text-sm font-semibold text-foreground">Costo real acumulado</span>
               <span className="text-base font-bold text-red-600 tabular-nums">
@@ -159,54 +192,78 @@ export function OrderRealCostDialog({
           </div>
 
           {byUser.length > 0 ? (
-            <div className="space-y-2">
-              <h3 className="text-sm font-semibold text-foreground">Por usuario / taller</h3>
-              <p className="text-[11px] text-muted-foreground -mt-1">
-                Quién generó cada peso en las capas del Kanban.
-              </p>
-              {byUser.map((user) => (
-                <details
-                  key={user.userId}
-                  open={byUser.length <= 3}
-                  className="rounded-xl border bg-card"
-                >
-                  <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between gap-3">
-                    <span className="text-sm font-semibold text-foreground truncate">
-                      {user.userName}
-                    </span>
-                    <span className="text-sm font-semibold tabular-nums shrink-0">
-                      {money(user.amount)}
-                    </span>
-                  </summary>
-                  <div className="border-t px-4 py-2.5 space-y-1.5">
-                    {user.lines.map((line, idx) => (
-                      <div
-                        key={`${user.userId}-${idx}`}
-                        className="flex items-center justify-between gap-3 text-sm"
-                      >
-                        <span className="text-muted-foreground truncate">{line.label}</span>
-                        <span className="tabular-nums font-medium shrink-0">
-                          {money(line.amount)}
+            <div className="space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Por usuario / taller</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Quién generó cada peso en las capas del Kanban.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-3">
+                {byUser.map((user) => (
+                  <details
+                    key={user.userId}
+                    open={byUser.length <= 3}
+                    className="rounded-xl border bg-card"
+                  >
+                    <summary className="cursor-pointer list-none px-4 py-3 flex items-start justify-between gap-4">
+                      <div className="min-w-0 space-y-1.5 flex-1">
+                        <span className="text-sm font-semibold text-foreground block">
+                          {user.userName}
                         </span>
+                        {(user.stages || []).length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {user.stages.map((stage) => (
+                              <StageChip
+                                key={`${user.userId}-${stage.key}`}
+                                label={stage.label || stage.key}
+                                stageKey={stage.key}
+                              />
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
-                    ))}
-                  </div>
-                </details>
-              ))}
+                      <span className="text-sm font-semibold tabular-nums shrink-0 pt-0.5">
+                        {money(user.amount)}
+                      </span>
+                    </summary>
+                    <div className="border-t px-4 py-3 space-y-2.5">
+                      {user.lines.map((line, idx) => {
+                        const baseLabel = (line.label || "").replace(/^\[[^\]]+\]\s*/, "");
+                        return (
+                          <div
+                            key={`${user.userId}-${idx}`}
+                            className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1 text-sm"
+                          >
+                            <span className="text-muted-foreground break-words leading-snug min-w-0">
+                              {baseLabel}
+                            </span>
+                            <span className="tabular-nums font-medium shrink-0 text-right">
+                              {money(line.amount)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </details>
+                ))}
+              </div>
             </div>
           ) : null}
 
-          <div className="space-y-2">
+          <div className="space-y-3">
             <h3 className="text-sm font-semibold text-foreground">Por categoría</h3>
-            {categories.map((cat) => (
-              <CategoryBlock
-                key={`detail-${cat.title}`}
-                title={cat.title}
-                amount={cat.amount}
-                lines={cat.lines}
-                defaultOpen={cat.title === openCategory && cat.amount > 0}
-              />
-            ))}
+            <div className="grid grid-cols-1 gap-3">
+              {categories.map((cat) => (
+                <CategoryBlock
+                  key={`detail-${cat.title}`}
+                  title={cat.title}
+                  amount={cat.amount}
+                  lines={cat.lines}
+                  defaultOpen={cat.title === openCategory && cat.amount > 0}
+                />
+              ))}
+            </div>
           </div>
         </div>
       </div>

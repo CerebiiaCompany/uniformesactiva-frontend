@@ -5,7 +5,7 @@ import { useOrders } from "@/hooks/useOrders";
 import { useKanbanEtapas } from "@/hooks/useKanbanEtapas";
 import { useRemoveMaterialStock } from "@/hooks/useRemoveMaterialStock";
 import { type ProductionOrder } from "@/data/mockData";
-import { User, Calendar, Package, ArrowLeft, ChevronRight, History, Clock, X, Plus, Pencil, Trash2, GripVertical, Check, Loader2, Boxes, Scissors, DollarSign, Factory, ImagePlus, Paperclip, FileText, UserPlus } from "lucide-react";
+import { User, Calendar, Package, ArrowLeft, ChevronRight, History, Clock, X, Plus, Pencil, Trash2, GripVertical, Check, Loader2, Boxes, Scissors, DollarSign, Factory, ImagePlus, Paperclip, FileText, UserPlus, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,7 @@ import {
   cardFormFromProductionOrder,
   type KanbanCardFormValues,
 } from "@/components/KanbanCardEditDialog";
+import { KanbanNovedadesDialog } from "@/components/KanbanNovedadesDialog";
 import { useToast } from "@/hooks/use-toast";
 import { HttpError } from "@/lib/http";
 import {
@@ -42,54 +43,20 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  KANBAN_STAGE_THEMES_BY_KEY,
+  type KanbanStageTheme,
+} from "@/lib/kanban-stage-theme";
 
-/** Paleta elegante y sin repeticiones (pastel suave, no saturado) */
-type StageTheme = { id: string; bar: string; header: string; column: string };
+/** Paleta elegante y sin repeticiones (pastel suave, no saturado) — compartida con costo real */
+type StageTheme = Pick<KanbanStageTheme, "id" | "bar" | "header" | "column">;
 
-const STAGE_THEMES_BY_KEY: Record<string, StageTheme> = {
-  design: {
-    id: "design",
-    bar: "bg-[#9EB6C8]",
-    header: "bg-[#F4F7F9]",
-    column: "bg-[#F7F9FB]",
-  },
-  cutting: {
-    id: "cutting",
-    bar: "bg-[#D4B59A]",
-    header: "bg-[#FAF6F2]",
-    column: "bg-[#FBF8F5]",
-  },
-  sewing: {
-    id: "sewing",
-    bar: "bg-[#A8BFA3]",
-    header: "bg-[#F4F7F3]",
-    column: "bg-[#F7FAF6]",
-  },
-  embroidery: {
-    id: "embroidery",
-    bar: "bg-[#B7A8C9]",
-    header: "bg-[#F6F4F9]",
-    column: "bg-[#F9F7FB]",
-  },
-  quality: {
-    id: "quality",
-    bar: "bg-[#8FBFB5]",
-    header: "bg-[#F2F8F6]",
-    column: "bg-[#F5FAF8]",
-  },
-  printing: {
-    id: "printing",
-    bar: "bg-[#C9A8A8]",
-    header: "bg-[#F9F4F4]",
-    column: "bg-[#FBF7F7]",
-  },
-  dispatch: {
-    id: "dispatch",
-    bar: "bg-[#A8B0B8]",
-    header: "bg-[#F5F6F7]",
-    column: "bg-[#F8F9FA]",
-  },
-};
+const STAGE_THEMES_BY_KEY: Record<string, StageTheme> = Object.fromEntries(
+  Object.entries(KANBAN_STAGE_THEMES_BY_KEY).map(([key, t]) => [
+    key,
+    { id: t.id, bar: t.bar, header: t.header, column: t.column },
+  ])
+);
 
 /** Temas extras para tableros personalizados (todos distintos entre sí) */
 const CUSTOM_STAGE_THEMES: StageTheme[] = [
@@ -238,6 +205,7 @@ export default function Production() {
     { id: string; name: string; stageKeys: string[] }[]
   >([]);
   const [assignOpenFor, setAssignOpenFor] = useState<string | null>(null);
+  const [novedadesCard, setNovedadesCard] = useState<ProductionOrder | null>(null);
 
   useEffect(() => {
     const sync = () => {
@@ -1014,6 +982,7 @@ export default function Production() {
       laborCostPerUnit: "0.00",
       cardImages: [],
       cardFiles: [],
+      novedades: [],
       requestedMaterials: [],
     });
     setCardDialog({ open: true, mode: "add", stageKey });
@@ -1200,6 +1169,7 @@ export default function Production() {
       laborCostPerUnit: values.laborCostEnabled ? laborCostPerUnit : null,
       cardImages: values.cardImages,
       cardFiles: values.cardFiles,
+      novedades: values.novedades || [],
     };
 
     if (mode === "add" && stageKey && selectedOrderId && selectedOrder) {
@@ -1423,74 +1393,90 @@ export default function Production() {
   if (!selectedOrderId) {
     return (
       <AppLayout title="Operativo" subtitle="Órdenes activas en planta">
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-          {activeOrders.map((order) => {
-            const factory = resolveFactoryCardInfo(order);
-            return (
-            <button
-              key={order.id}
-              onClick={() => setSelectedOrderId(order.id)}
-              className="h-full text-left bg-card border border-border rounded-xl p-3.5 hover:shadow-lg hover:border-primary/30 transition-all duration-200 group flex flex-col"
-            >
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="flex items-start gap-2.5 min-w-0">
-                  <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                    <Package className="h-4 w-4 text-primary" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-sm font-bold text-foreground">
-                        ORD-{order.id.slice(0, 3)}
-                      </span>
-                      <StatusBadge status={order.estado} />
+        {activeOrders.length === 0 ? (
+          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/20 px-6 py-16 text-center">
+            <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
+              <Package className="h-6 w-6 text-muted-foreground" />
+            </div>
+            <p className="text-sm font-semibold text-foreground">
+              En el momento no tiene pedidos asignados
+            </p>
+            <p className="text-xs text-muted-foreground mt-1.5 max-w-sm">
+              {prodSession.isKanbanOperator
+                ? "Cuando un administrador te asigne una tarjeta en Fábrica, el pedido aparecerá aquí."
+                : "No hay órdenes activas en planta por ahora."}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+            {activeOrders.map((order) => {
+              const factory = resolveFactoryCardInfo(order);
+              return (
+              <button
+                key={order.id}
+                onClick={() => setSelectedOrderId(order.id)}
+                className="h-full text-left bg-card border border-border rounded-xl p-3.5 hover:shadow-lg hover:border-primary/30 transition-all duration-200 group flex flex-col"
+              >
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                      <Package className="h-4 w-4 text-primary" />
                     </div>
-                    <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                      {order.cliente_nombre}
-                    </p>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-sm font-bold text-foreground">
+                          ORD-{order.id.slice(0, 3)}
+                        </span>
+                        <StatusBadge status={order.estado} />
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                        {order.cliente_nombre}
+                      </p>
+                    </div>
                   </div>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors shrink-0 mt-1" />
                 </div>
-                <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors shrink-0 mt-1" />
-              </div>
 
-              <div className="mb-2">
-                {factory.hasBordado ? (
-                  <span
-                    className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-800"
-                    title="Con bordado"
-                  >
-                    <Check className="h-3 w-3" strokeWidth={3} />
-                    Bordado
-                  </span>
-                ) : (
-                  <span
-                    className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800"
-                    title="Sin bordado"
-                  >
-                    <X className="h-3 w-3" strokeWidth={3} />
-                    Bordado
-                  </span>
+                <div className="mb-2">
+                  {factory.hasBordado ? (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-800"
+                      title="Con bordado"
+                    >
+                      <Check className="h-3 w-3" strokeWidth={3} />
+                      Bordado
+                    </span>
+                  ) : (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800"
+                      title="Sin bordado"
+                    >
+                      <X className="h-3 w-3" strokeWidth={3} />
+                      Bordado
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <FactoryVariantBreakdown
+                    variants={groupOrderItemsForFactory(order.items || [], {
+                      fallbackColor: order.color,
+                    })}
+                    compact
+                  />
+                </div>
+
+                {factory.hasBordado && factory.tipoBordado !== "—" && (
+                  <p className="mt-2 text-[10px] text-muted-foreground leading-snug">
+                    Tipo bordado:{" "}
+                    <span className="font-medium text-foreground">{factory.tipoBordado}</span>
+                  </p>
                 )}
-              </div>
-
-              <div className="flex-1 min-w-0">
-                <FactoryVariantBreakdown
-                  variants={groupOrderItemsForFactory(order.items || [], {
-                    fallbackColor: order.color,
-                  })}
-                  compact
-                />
-              </div>
-
-              {factory.hasBordado && factory.tipoBordado !== "—" && (
-                <p className="mt-2 text-[10px] text-muted-foreground leading-snug">
-                  Tipo bordado:{" "}
-                  <span className="font-medium text-foreground">{factory.tipoBordado}</span>
-                </p>
-              )}
-            </button>
-            );
-          })}
-        </div>
+              </button>
+              );
+            })}
+          </div>
+        )}
       </AppLayout>
     );
   }
@@ -1714,8 +1700,28 @@ export default function Production() {
                             ? `Satélite · ${order.satelliteAssignee}`
                             : "Sin asignar"}
                       </span>
-                      <span className="shrink-0">
-                        <Calendar className="h-3 w-3 inline" /> {order.dueDate.slice(5)}
+                      <span className="shrink-0 inline-flex items-center gap-1.5">
+                        {(order.novedades || []).length > 0 &&
+                        (canManageBoard ||
+                          canOperate ||
+                          (prodSession.userId &&
+                            order.novedades!.some((n) => n.autorId === prodSession.userId))) ? (
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-0.5 text-red-600 hover:text-red-700 hover:underline"
+                            title="Ver novedades"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setNovedadesCard(order);
+                            }}
+                          >
+                            <MessageSquare className="h-3 w-3" />
+                            {order.novedades!.length}
+                          </button>
+                        ) : null}
+                        <span>
+                          <Calendar className="h-3 w-3 inline" /> {order.dueDate.slice(5)}
+                        </span>
                       </span>
                     </div>
                     {canManageBoard ? (
@@ -1835,6 +1841,14 @@ export default function Production() {
         readOnly={Boolean(dialogStageKey) && !canEditOnStage(dialogStageKey)}
         canEditCoreFields={prodSession.isAdmin}
         canAssignSatellite={prodSession.isAdmin}
+      />
+
+      <KanbanNovedadesDialog
+        open={Boolean(novedadesCard)}
+        onOpenChange={(open) => {
+          if (!open) setNovedadesCard(null);
+        }}
+        card={novedadesCard}
       />
 
       {historyOpen && (
@@ -2146,6 +2160,62 @@ export default function Production() {
                                       ))}
                                     </ul>
                                   )}
+                                </div>
+
+                                <div className="rounded-lg bg-muted/40 px-3 py-2 space-y-1">
+                                  <p className="font-semibold inline-flex items-center gap-1.5">
+                                    <MessageSquare className="h-3.5 w-3.5 text-red-600" />
+                                    Novedades
+                                    {(card.novedades || []).length > 0 ? (
+                                      <span className="font-normal text-muted-foreground">
+                                        ({card.novedades!.length})
+                                      </span>
+                                    ) : null}
+                                  </p>
+                                  {(card.novedades || []).length === 0 ? (
+                                    <p className="text-muted-foreground">Sin novedades.</p>
+                                  ) : (
+                                    <ul className="space-y-2">
+                                      {card.novedades!.map((n) => (
+                                        <li key={n.id} className="space-y-0.5">
+                                          <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                                            <span className="font-medium text-foreground/80 truncate">
+                                              {n.autorNombre || "Usuario"}
+                                            </span>
+                                            <span className="shrink-0">
+                                              {n.createdAt
+                                                ? new Date(n.createdAt).toLocaleString("es-CO", {
+                                                    day: "2-digit",
+                                                    month: "short",
+                                                    hour: "2-digit",
+                                                    minute: "2-digit",
+                                                  })
+                                                : ""}
+                                            </span>
+                                          </div>
+                                          <p className="text-muted-foreground whitespace-pre-wrap">
+                                            {n.texto}
+                                          </p>
+                                          {((n.images || []).length > 0 ||
+                                            (n.files || []).length > 0) && (
+                                            <p className="text-[10px] text-muted-foreground">
+                                              Evidencia: {(n.images || []).length} imagen(es),{" "}
+                                              {(n.files || []).length} archivo(s)
+                                            </p>
+                                          )}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                  {(card.novedades || []).length > 0 ? (
+                                    <button
+                                      type="button"
+                                      className="text-[11px] font-medium text-red-600 hover:underline"
+                                      onClick={() => setNovedadesCard(card)}
+                                    >
+                                      Abrir novedades
+                                    </button>
+                                  ) : null}
                                 </div>
                               </div>
                             </div>

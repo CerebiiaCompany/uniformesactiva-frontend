@@ -93,5 +93,7 @@ export const endpoints = {
     },
     users: {
         list: () => `${base()}/api/v1/users/`,
+        detail: (id: string) => `${base()}/api/v1/users/${id}/`,
+        me: () => `${base()}/api/v1/users/me/`,
     },
 };
