@@ -172,8 +172,9 @@ export function MaterialMovementsDialog({
 
                 <div className="px-6 py-4 border-t flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <p className="text-xs text-muted-foreground leading-relaxed max-w-xl">
-                        Las salidas se registran automáticamente cuando una orden pasa a producción
-                        (Kanban), descontando metros de tela e insumos según el costeo de la variante.
+                        Las salidas se registran al pasar una orden a producción (según costeo de
+                        variante) y también al solicitar materiales adicionales desde una tarjeta
+                        Kanban.
                     </p>
                     <button
                         type="button"

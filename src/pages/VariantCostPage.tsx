@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { AppLayout } from "@/components/AppLayout";
@@ -39,6 +39,52 @@ import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { formatCurrency, formatDecimal, formatForInput } from "@/lib/format-number";
 import type { UpdateLaborPayload, UpdateSupplyPayload, UpdateExtraCostPayload } from "@/types/variant";
 import { cn } from "@/lib/utils";
+
+/** IVA Colombia (19%). */
+const IVA_RATE = 0.19;
+/** Margen sobre el costo de la prenda (como en la hoja de costeo). */
+const DEFAULT_MARGIN_ON_COST = 0.17;
+
+function roundPesos(value: number): number {
+    return Math.round(Number.isFinite(value) ? value : 0);
+}
+
+/** Precio sugerido: costo → margen 17% → sin IVA → IVA 19% → con IVA. */
+function buildSuggestedSalePricing(costoTotal: number) {
+    const costo = roundPesos(costoTotal);
+    if (costo <= 0) return null;
+    const margenMonto = roundPesos(costo * DEFAULT_MARGIN_ON_COST);
+    const precioSinIva = roundPesos(costo + margenMonto);
+    const iva = roundPesos(precioSinIva * IVA_RATE);
+    const precioConIva = roundPesos(precioSinIva + iva);
+    return {
+        costoTotal: costo,
+        margenPct: DEFAULT_MARGIN_ON_COST * 100,
+        margenMonto,
+        precioSinIva,
+        iva,
+        precioConIva,
+    };
+}
+
+/** Si el usuario edita el precio con IVA, recalcula el desglose (margen sobre costo). */
+function buildSalePricingFromPriceWithIva(precioConIvaInput: number, costoTotal: number) {
+    const costo = roundPesos(costoTotal);
+    const precioConIva = roundPesos(precioConIvaInput);
+    if (precioConIva <= 0) return null;
+    const precioSinIva = roundPesos(precioConIva / (1 + IVA_RATE));
+    const iva = roundPesos(precioConIva - precioSinIva);
+    const margenMonto = roundPesos(precioSinIva - costo);
+    const margenPct = costo > 0 ? (margenMonto / costo) * 100 : 0;
+    return {
+        costoTotal: costo,
+        margenPct,
+        margenMonto,
+        precioSinIva,
+        iva,
+        precioConIva,
+    };
+}
 
 const resolveTallaId = (value: string) => (value ? value : null);
 
@@ -98,21 +144,37 @@ export default function VariantCostPage() {
     const { data: summary, isLoading: isSummaryLoading } = useGetCostSummary(activeVariantId);
     const [selectedCostSizeId, setSelectedCostSizeId] = useState<string>("");
     const [salePriceInput, setSalePriceInput] = useState("");
+    /** true cuando el usuario editó el precio a mano (no sobrescribir con sugerencia). */
+    const salePriceManualRef = useRef(false);
 
     useEffect(() => {
         setSelectedCostSizeId("");
+        salePriceManualRef.current = false;
     }, [activeVariantId]);
 
+    // Solo auto-elegir al inicio (sin talla). No pelear si el usuario eligió una sin consumo.
     useEffect(() => {
         if (selectedCostSizeId) return;
-        const firstSize = summary?.sizes?.[0]?.talla_id;
-        if (firstSize) setSelectedCostSizeId(firstSize);
+        const firstConfigured = (summary?.sizes || []).find((s) => Boolean(s.talla_id))?.talla_id;
+        if (firstConfigured) setSelectedCostSizeId(firstConfigured);
     }, [summary?.sizes, selectedCostSizeId]);
 
     const selectedSizeCost = useMemo(
         () => summary?.sizes?.find((s) => s.talla_id === selectedCostSizeId),
         [summary?.sizes, selectedCostSizeId]
     );
+
+    const hasConfiguredConsumptions = (summary?.sizes?.length ?? 0) > 0;
+    /** Hay materiales/costos de variante aunque aún no haya consumo por talla. */
+    const hasVariantMaterialCosts =
+        Number(summary?.supplies_total ?? 0) > 0 ||
+        Number(summary?.labor_total ?? 0) > 0 ||
+        Number(summary?.extras_total ?? 0) > 0 ||
+        Number(summary?.fabric_price_per_meter ?? 0) > 0 ||
+        (fabrics?.length ?? 0) > 0 ||
+        (supplies?.length ?? 0) > 0 ||
+        (labor?.length ?? 0) > 0 ||
+        (extras?.length ?? 0) > 0;
 
     const formatMeters = (value: number) => formatDecimal(value);
 
@@ -136,27 +198,63 @@ export default function VariantCostPage() {
         return Number.isFinite(value) && value > 0 ? value : null;
     }, [salePriceInput]);
 
-    const gananciaPreview = useMemo(() => {
-        if (parsedSalePrice == null) return null;
-        return parsedSalePrice - overallTotal;
-    }, [parsedSalePrice, overallTotal]);
+    /** Sugerido desde costo talla (margen 17% + IVA 19%). */
+    const suggestedPricing = useMemo(
+        () => buildSuggestedSalePricing(overallTotal),
+        [overallTotal]
+    );
+
+    /** Desglose visible: sugerido o recalculado si el usuario cambió el precio. */
+    const salePricing = useMemo(() => {
+        if (overallTotal <= 0) return null;
+        if (parsedSalePrice != null && parsedSalePrice > 0) {
+            if (
+                suggestedPricing &&
+                Math.abs(parsedSalePrice - suggestedPricing.precioConIva) <= 1
+            ) {
+                return suggestedPricing;
+            }
+            return buildSalePricingFromPriceWithIva(parsedSalePrice, overallTotal);
+        }
+        return suggestedPricing;
+    }, [overallTotal, parsedSalePrice, suggestedPricing]);
 
     useEffect(() => {
         const fromSelected = selectedSizeCost?.precio_venta;
-        if (fromSelected != null && fromSelected !== "") {
-            setSalePriceInput(formatForInput(fromSelected));
+        const savedRaw =
+            fromSelected != null && fromSelected !== ""
+                ? fromSelected
+                : summary?.sizes?.find(
+                      (s) =>
+                          s.precio_venta != null &&
+                          s.precio_venta !== "" &&
+                          Number(s.precio_venta) > 0
+                  )?.precio_venta;
+        const saved =
+            savedRaw != null && savedRaw !== ""
+                ? Number(String(savedRaw).replace(",", "."))
+                : null;
+
+        if (saved != null && Number.isFinite(saved) && saved > 0) {
+            setSalePriceInput(formatForInput(saved));
+            salePriceManualRef.current = true;
             return;
         }
-        // Si la talla actual no tiene valor, usar el de otra talla de la misma variante
-        const fromVariant = summary?.sizes?.find(
-            (s) => s.precio_venta != null && s.precio_venta !== "" && Number(s.precio_venta) > 0
-        )?.precio_venta;
-        if (fromVariant != null && fromVariant !== "") {
-            setSalePriceInput(formatForInput(fromVariant));
+
+        if (salePriceManualRef.current) return;
+
+        if (suggestedPricing?.precioConIva) {
+            setSalePriceInput(formatForInput(suggestedPricing.precioConIva));
             return;
         }
+
         setSalePriceInput("");
-    }, [selectedCostSizeId, selectedSizeCost?.precio_venta, summary?.sizes]);
+    }, [
+        selectedCostSizeId,
+        selectedSizeCost?.precio_venta,
+        summary?.sizes,
+        suggestedPricing?.precioConIva,
+    ]);
 
     const handleSaveSalePrice = async () => {
         if (!activeVariantId) return;
@@ -165,7 +263,7 @@ export default function VariantCostPage() {
         if (configured.length === 0) {
             if (salePriceInput.trim()) {
                 toast.error(
-                    "Configura el consumo de al menos una talla antes de guardar el ingreso proyectado."
+                    "Configura el consumo de al menos una talla antes de guardar el precio de venta proyectado."
                 );
             }
             return;
@@ -196,16 +294,16 @@ export default function VariantCostPage() {
                     { skipCacheUpdate: !isLast }
                 );
                 if (result === false) {
-                    toast.error("No se pudo actualizar el ingreso proyectado");
+                    toast.error("No se pudo actualizar el precio de venta proyectado");
                     return;
                 }
             }
-            toast.success("Ingreso proyectado eliminado de la variante");
+            toast.success("Precio de venta proyectado eliminado de la variante");
             return;
         }
 
         if (nextValue == null) {
-            toast.error("Ingresa un ingreso proyectado válido.");
+            toast.error("Ingresa un precio de venta proyectado válido.");
             return;
         }
 
@@ -221,11 +319,11 @@ export default function VariantCostPage() {
                 { skipCacheUpdate: !isLast }
             );
             if (result === false) {
-                toast.error("No se pudo guardar el ingreso proyectado");
+                toast.error("No se pudo guardar el precio de venta proyectado");
                 return;
             }
         }
-        toast.success("Ingreso proyectado guardado en la variante");
+        toast.success("Precio de venta proyectado guardado (con IVA incluido)");
     };
 
     const [modalConfig, setModalConfig] = useState<{
@@ -614,7 +712,7 @@ export default function VariantCostPage() {
                                     <CardHeader className="space-y-3">
                                         <div className="space-y-1.5">
                                             <Label htmlFor="costo-venta" className="text-xs text-muted-foreground">
-                                                Ingreso proyectado (opcional)
+                                                Precio de venta IVA incluido
                                             </Label>
                                             <div className="relative">
                                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
@@ -624,10 +722,11 @@ export default function VariantCostPage() {
                                                     id="costo-venta"
                                                     type="text"
                                                     inputMode="decimal"
-                                                    placeholder="Ej. 65000"
+                                                    placeholder="Se calcula solo"
                                                     value={salePriceInput}
                                                     onChange={(e) => {
                                                         const raw = e.target.value.replace(/[^\d.,]/g, "");
+                                                        salePriceManualRef.current = Boolean(raw.trim());
                                                         setSalePriceInput(raw);
                                                     }}
                                                     onBlur={handleSaveSalePrice}
@@ -640,12 +739,14 @@ export default function VariantCostPage() {
                                                         isSalePriceSaving ||
                                                         !(sizeCons && sizeCons.length > 0)
                                                     }
-                                                    className="pl-7"
+                                                    className="pl-7 font-semibold"
                                                 />
                                             </div>
                                             <p className="text-[11px] text-muted-foreground">
-                                                Se aplica a todas las tallas de esta variante y se usa al
-                                                añadir el producto en órdenes o cotizaciones.
+                                                Autocompletado: costo + margen{" "}
+                                                {Math.round(DEFAULT_MARGIN_ON_COST * 100)}% + IVA{" "}
+                                                {Math.round(IVA_RATE * 100)}%. Editable; se aplica a
+                                                todas las tallas.
                                             </p>
                                         </div>
                                         <div>
@@ -653,7 +754,11 @@ export default function VariantCostPage() {
                                             {selectedSizeName && (
                                                 <p className="text-xs text-muted-foreground mt-1">
                                                     Talla {selectedSizeName}
-                                                    {!selectedSizeCost && " — sin consumo configurado"}
+                                                    {selectedSizeCost
+                                                        ? null
+                                                        : hasConfiguredConsumptions
+                                                          ? " — sin consumo en esta talla"
+                                                          : " — sin consumo de tela configurado"}
                                                 </p>
                                             )}
                                         </div>
@@ -664,22 +769,45 @@ export default function VariantCostPage() {
                                                 <Loader2 className="h-4 w-4 animate-spin" />
                                                 Calculando resumen...
                                             </div>
-                                        ) : selectedCostSizeId && !selectedSizeCost ? (
+                                        ) : selectedCostSizeId &&
+                                          !selectedSizeCost &&
+                                          hasConfiguredConsumptions ? (
                                             <p className="text-sm text-muted-foreground py-4">
-                                                Guarda el consumo de tela de esta talla para ver su costo de
-                                                fabricación.
+                                                Esta talla aún no tiene consumo de tela. Elige una talla con
+                                                consumo guardado o guarda los metros de{" "}
+                                                {selectedSizeName ? `la talla ${selectedSizeName}` : "esta talla"}{" "}
+                                                en la tabla de la izquierda.
+                                            </p>
+                                        ) : !hasConfiguredConsumptions && !hasVariantMaterialCosts ? (
+                                            <p className="text-sm text-muted-foreground py-4">
+                                                Configura costos de tela/insumos/mano de obra y guarda el
+                                                consumo de tela por talla para ver el resumen.
                                             </p>
                                         ) : (
                                             <>
+                                                {!hasConfiguredConsumptions ? (
+                                                    <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 leading-snug">
+                                                        Ya hay materiales/costos de variante, pero falta el{" "}
+                                                        <strong>consumo de tela por talla</strong> (metros).
+                                                        Guárdalo a la izquierda para calcular la tela y el
+                                                        costo por talla. Mientras tanto se muestran insumos,
+                                                        mano de obra y extras.
+                                                    </p>
+                                                ) : null}
                                                 <div className="flex justify-between items-start gap-3">
                                                     <div>
                                                         <span>Tela</span>
-                                                        {showFabricBreakdown && (
+                                                        {showFabricBreakdown ? (
                                                             <p className="text-xs text-muted-foreground mt-0.5">
                                                                 {formatMeters(sizeConsumption)} m × $
                                                                 {formatCurrency(fabricPricePerMeter)}/m
                                                             </p>
-                                                        )}
+                                                        ) : fabricPricePerMeter > 0 && !hasConfiguredConsumptions ? (
+                                                            <p className="text-xs text-muted-foreground mt-0.5">
+                                                                Precio tela ${formatCurrency(fabricPricePerMeter)}
+                                                                /m · falta consumo por talla
+                                                            </p>
+                                                        ) : null}
                                                     </div>
                                                     <span>${formatCurrency(fabricTotal)}</span>
                                                 </div>
@@ -705,24 +833,66 @@ export default function VariantCostPage() {
                                                             talla del resumen.
                                                         </p>
                                                     )}
-                                                {gananciaPreview != null && (
-                                                    <div className="flex justify-between font-medium text-green-600">
-                                                        <span>Ganancias</span>
-                                                        <span
-                                                            className={cn(
-                                                                gananciaPreview < 0 && "text-red-600"
-                                                            )}
-                                                        >
-                                                            ${formatCurrency(gananciaPreview)}
-                                                        </span>
-                                                    </div>
-                                                )}
-                                                <div className="border-t pt-2 font-bold flex justify-between text-base">
-                                                    <span>
-                                                        {selectedSizeCost ? "Costo talla" : "Costo base (promedio)"}
+                                                <div className="border-t pt-2 font-bold flex justify-between text-base rounded-md bg-sky-50 px-2 py-2 -mx-0.5">
+                                                    <span>Costo total prenda</span>
+                                                    <span className="tabular-nums">
+                                                        ${formatCurrency(overallTotal)}
                                                     </span>
-                                                    <span>${formatCurrency(overallTotal)}</span>
                                                 </div>
+
+                                                {salePricing ? (
+                                                    <div className="border-t pt-3 space-y-2.5">
+                                                        <div className="flex justify-between font-medium">
+                                                            <span>Margen (%)</span>
+                                                            <span
+                                                                className={cn(
+                                                                    "tabular-nums",
+                                                                    salePricing.margenPct < 0
+                                                                        ? "text-red-600"
+                                                                        : "text-emerald-600"
+                                                                )}
+                                                            >
+                                                                {salePricing.margenPct.toFixed(2)}%
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex justify-between font-medium">
+                                                            <span>Margen ($)</span>
+                                                            <span
+                                                                className={cn(
+                                                                    "tabular-nums",
+                                                                    salePricing.margenMonto < 0
+                                                                        ? "text-red-600"
+                                                                        : "text-emerald-600"
+                                                                )}
+                                                            >
+                                                                ${formatCurrency(salePricing.margenMonto)}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex justify-between">
+                                                            <span>Precio de venta sin IVA</span>
+                                                            <span className="tabular-nums">
+                                                                ${formatCurrency(salePricing.precioSinIva)}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex justify-between">
+                                                            <span>IVA ({Math.round(IVA_RATE * 100)}%)</span>
+                                                            <span className="tabular-nums">
+                                                                ${formatCurrency(salePricing.iva)}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex justify-between font-bold text-base rounded-md bg-amber-100 px-2 py-2 -mx-0.5 border border-amber-200">
+                                                            <span>Precio de venta IVA incluido</span>
+                                                            <span className="tabular-nums">
+                                                                ${formatCurrency(salePricing.precioConIva)}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-[11px] text-muted-foreground border-t pt-3">
+                                                        Completa el costo de la talla para calcular margen,
+                                                        IVA y precio de venta automáticamente.
+                                                    </p>
+                                                )}
                                             </>
                                         )}
                                     </CardContent>

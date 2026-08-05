@@ -73,6 +73,22 @@ export interface Order extends OrderLogoFields {
     fecha_entrega_real?: string | null;
     etapa_produccion?: string;
     etapa_historial?: { etapa: string; entered_at: string }[];
+    kanban_asignaciones?: Record<
+        string,
+        {
+            assigneeId?: string | null;
+            assignee?: string;
+            satelliteAssigneeId?: string | null;
+            satelliteAssignee?: string;
+            stage?: string;
+            stageAssignees?: Record<
+                string,
+                { userId: string; name: string; kind?: string }
+            >;
+        }
+    >;
+    kanban_tarjetas?: import("@/data/mockData").ProductionOrder[];
+    costo_real_desglose?: import("@/lib/order-real-cost").OrderRealCostBreakdown | Record<string, unknown>;
     items: OrderItem[];
     color?: string;
     estampado?: string;
@@ -382,10 +398,89 @@ export function useOrders() {
         }
     };
 
+    const updateKanbanAssignment = async (
+        orderId: string,
+        payload: {
+            card_id: string;
+            stage: string;
+            assignee_id?: string | null;
+            assignee_name?: string;
+            clear?: boolean;
+            /** production (default) | satellite | both (solo al limpiar) */
+            kind?: "production" | "satellite" | "both";
+        }
+    ) => {
+        try {
+            const updated = await http<{
+                id: string;
+                kanban_asignaciones: Order["kanban_asignaciones"];
+                tomado_por_id: string | null;
+            }>(endpoints.orders.kanbanAsignacion(orderId), {
+                method: "PATCH",
+                body: JSON.stringify(payload),
+            });
+            setOrders((prev) =>
+                prev.map((o) =>
+                    o.id === orderId
+                        ? {
+                              ...o,
+                              kanban_asignaciones: updated.kanban_asignaciones,
+                              tomado_por_id: updated.tomado_por_id || o.tomado_por_id,
+                          }
+                        : o
+                )
+            );
+            return { data: updated, errorMessage: null as string | null };
+        } catch (err) {
+            return {
+                data: null,
+                errorMessage: resolveHttpErrorMessage(err, "Error al guardar la asignación"),
+            };
+        }
+    };
+
+    const updateKanbanTarjetas = async (
+        orderId: string,
+        tarjetas: NonNullable<Order["kanban_tarjetas"]>,
+        costo_real_desglose: NonNullable<Order["costo_real_desglose"]>
+    ) => {
+        try {
+            const updated = await http<{
+                id: string;
+                kanban_tarjetas: Order["kanban_tarjetas"];
+                costo_real_desglose: Order["costo_real_desglose"];
+            }>(endpoints.orders.kanbanTarjetas(orderId), {
+                method: "PATCH",
+                body: JSON.stringify({ tarjetas, costo_real_desglose }),
+            });
+            setOrders((prev) =>
+                prev.map((o) =>
+                    o.id === orderId
+                        ? {
+                              ...o,
+                              kanban_tarjetas: updated.kanban_tarjetas,
+                              costo_real_desglose: updated.costo_real_desglose,
+                          }
+                        : o
+                )
+            );
+            return { data: updated, errorMessage: null as string | null };
+        } catch (err) {
+            return {
+                data: null,
+                errorMessage: resolveHttpErrorMessage(
+                    err,
+                    "Error al guardar tarjetas Kanban / costo real"
+                ),
+            };
+        }
+    };
+
     return {
         orders, totalCount, loading, updatingSalePriceId, updatingCommentsId, error,
         fetchOrders, fetchOrderById, createOrder, updateOrder, updateOrderStatus,
         updateOrderSalePrice, updateOrderComments, updateOrderPayment, updateOrderStage,
+        updateKanbanAssignment, updateKanbanTarjetas,
         mergeOrderInList, fetchOrderLogs, fetchEtapaLogs,
     };
 }

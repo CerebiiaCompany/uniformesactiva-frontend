@@ -1083,7 +1083,7 @@ export function NewOrderDialog({
                                             accent="cost"
                                         />
                                         <StatCard
-                                            label="Ingreso proyectado"
+                                            label="Precio de venta proyectado (con IVA)"
                                             value={income > 0 ? `$${formatMoney(income)}` : "$0"}
                                             accent="income"
                                         />

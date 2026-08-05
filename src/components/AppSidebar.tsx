@@ -9,6 +9,7 @@ import {
   DollarSign,
   BarChart3,
   Package,
+  Satellite,
   Globe,
   Scissors,
   Settings,
@@ -54,15 +55,23 @@ interface CustomJwtPayload {
 }
 
 const MODULE_MAPPING: Record<string, string> = {
-  "customers": "Clientes",
-  "quotes": "Cotizaciones",
-  "orders": "Órdenes",
-  "products": "Productos",
-  "factory": "Fábrica",
-  "inventory": "Inventario",
-  "costs": "Costos",
-  "reports": "Reportes",
-  "administration": "Administración"
+  dashboard: "Dashboard",
+  website: "Sitio Web",
+  customers: "Clientes",
+  clients: "Clientes",
+  quotes: "Cotizaciones",
+  quotations: "Cotizaciones",
+  orders: "Órdenes",
+  products: "Líneas",
+  factory: "Fábrica",
+  production: "Fábrica",
+  inventory: "Inventario",
+  satellites: "Satélites",
+  costs: "Costos",
+  billing: "Costos",
+  reports: "Reportes",
+  administration: "Administración",
+  users: "Administración",
 };
 
 const generalItems = [
@@ -79,6 +88,7 @@ const comercialItems = [
 const operacionItems = [
   { title: "Fábrica", url: "/production", icon: Factory },
   { title: "Inventario", url: "/inventory", icon: Package },
+  { title: "Satélites", url: "/satellites", icon: Satellite },
   { title: "Líneas", url: "/lines", icon: Layers },
   { title: "Costos", url: "/costing", icon: DollarSign },
 ];
@@ -180,9 +190,25 @@ export function AppSidebar() {
     return roleStr.toLowerCase().includes("administrador");
   });
 
+  const is_production = userRoles.some((role) => {
+    const roleStr = typeof role === "string" ? role : JSON.stringify(role);
+    return roleStr.toLowerCase().includes("producción") || roleStr.toLowerCase().includes("produccion");
+  });
+
+  const is_satellite = userRoles.some((role) => {
+    const roleStr = typeof role === "string" ? role : JSON.stringify(role);
+    return roleStr.toLowerCase().includes("satélite") || roleStr.toLowerCase().includes("satelite");
+  });
+
   const canViewModule = (title: string) => {
     if (is_admin) return true;
-    if (["Dashboard", "Sitio Web"].includes(title)) return true;
+    // Producción / Satélite: panel y Kanban (Fábrica)
+    if (
+      (is_production || is_satellite) &&
+      (title === "Dashboard" || title === "Fábrica")
+    ) {
+      return true;
+    }
 
     return userPermissions.some((perm) => {
       // 1. Si tu backend devuelve directamente el módulo legible por nombre
@@ -191,7 +217,7 @@ export function AppSidebar() {
         if (hasRead) return true;
       }
 
-      // 2. Normalización de las claves del backend para que encajen en tu MODULE_MAPPING original
+      // 2. Normalización de las claves del backend para que encajen en el menú
       let normalizedModuleKey = perm.module;
       if (normalizedModuleKey === "clients") normalizedModuleKey = "customers";
       if (normalizedModuleKey === "quotations") normalizedModuleKey = "quotes";
@@ -199,7 +225,8 @@ export function AppSidebar() {
       if (normalizedModuleKey === "billing") normalizedModuleKey = "costs";
       if (normalizedModuleKey === "users") normalizedModuleKey = "administration";
 
-      const mappedTitle = MODULE_MAPPING[normalizedModuleKey];
+      const mappedTitle =
+        MODULE_MAPPING[normalizedModuleKey] || MODULE_MAPPING[perm.module];
 
       // Valida de forma segura tanto el booleano clásico de la interfaz como el array de la API real
       const hasReadPermission = perm.can_read === true || (perm as any).actions?.includes("read");

@@ -38,10 +38,16 @@ export const endpoints = {
         create: () => `${base()}/api/v1/inventory/`,
         detail: (id: string) => `${base()}/api/v1/inventory/${id}/`,
         addStock: (id: string) => `${base()}/api/v1/inventory/${id}/add-stock/`,
+        removeStock: (id: string) => `${base()}/api/v1/inventory/${id}/remove-stock/`,
         movements: (id: string) => `${base()}/api/v1/inventory/${id}/movements/`,
         suppliers: (id: string) => `${base()}/api/v1/inventory/${id}/suppliers/`,
         supplierDetail: (id: string, offerId: string) =>
             `${base()}/api/v1/inventory/${id}/suppliers/${offerId}/`,
+    },
+    satellites: {
+        list: (params?: string) => `${base()}/api/v1/satellites/${params ? `?${params}` : ""}`,
+        create: () => `${base()}/api/v1/satellites/`,
+        detail: (id: string) => `${base()}/api/v1/satellites/${id}/`,
     },
     lineas: {
         list: () => `${base()}/api/v1/products/lineas/`,
@@ -58,6 +64,10 @@ export const endpoints = {
         uploadLogo: () => `${base()}/api/v1/orders/upload-logo/`,
         logs: (orderId: string) => `${base()}/api/v1/orders/${orderId}/logs/`,
         etapa: (orderId: string) => `${base()}/api/v1/orders/${orderId}/etapa/`,
+        kanbanAsignacion: (orderId: string) =>
+            `${base()}/api/v1/orders/${orderId}/kanban-asignacion/`,
+        kanbanTarjetas: (orderId: string) =>
+            `${base()}/api/v1/orders/${orderId}/kanban-tarjetas/`,
         etapas: (orderId: string) => `${base()}/api/v1/orders/${orderId}/etapas/`,
         kanbanEtapas: () => `${base()}/api/v1/orders/kanban-etapas/`,
         kanbanEtapa: (etapaId: string) => `${base()}/api/v1/orders/kanban-etapas/${etapaId}/`,
@@ -83,5 +93,7 @@ export const endpoints = {
     },
     users: {
         list: () => `${base()}/api/v1/users/`,
+        detail: (id: string) => `${base()}/api/v1/users/${id}/`,
+        me: () => `${base()}/api/v1/users/me/`,
     },
 };

@@ -70,6 +70,13 @@ export interface ProductionOrder {
   quantity: number;
   stage: string;
   assignee: string;
+  /** UUID del usuario de Producción asignado a la tarjeta en la capa actual */
+  assigneeId?: string | null;
+  /** UUID del usuario Satélite asignado a la tarjeta en la capa actual */
+  satelliteAssigneeId?: string | null;
+  satelliteAssignee?: string | null;
+  /** Historial de asignaciones por capa Kanban */
+  stageAssignees?: Record<string, { userId: string; name: string; kind?: string }>;
   dueDate: string;
   daysInStage: number;
   isDelayed: boolean;
@@ -78,6 +85,80 @@ export interface ProductionOrder {
   hasBordado?: boolean;
   bordadoLabel?: string;
   tipoBordado?: string;
+  /** Satélite (taller externo) asignado a la tarjeta Kanban */
+  satelliteId?: string | null;
+  satelliteName?: string | null;
+  satelliteCost?: number | null;
+  moldEnabled?: boolean;
+  moldStatus?: string;
+  moldResponsible?: string;
+  moldSizes?: string;
+  moldCost?: number | null;
+  moldNotes?: string;
+  laborCostEnabled?: boolean;
+  laborCostPerUnit?: number | null;
+  cardImages?: {
+    id: string;
+    name: string;
+    size: number;
+    type: string;
+    dataUrl: string;
+  }[];
+  cardFiles?: {
+    id: string;
+    name: string;
+    size: number;
+    type: string;
+    dataUrl: string;
+  }[];
+  /** Novedades / notas dejadas por operadores para revisión del administrador */
+  novedades?: {
+    id: string;
+    texto: string;
+    autorNombre: string;
+    autorId?: string | null;
+    createdAt: string;
+    images?: {
+      id: string;
+      name: string;
+      size: number;
+      type: string;
+      dataUrl: string;
+    }[];
+    files?: {
+      id: string;
+      name: string;
+      size: number;
+      type: string;
+      dataUrl: string;
+    }[];
+  }[];
+  requestedMaterials?: {
+    materialId: string;
+    materialName: string;
+    quantity: number;
+    unitCost?: number;
+  }[];
+  /** Cantidades ya descontadas del inventario por material (idempotencia). */
+  materialsDeducted?: { materialId: string; quantity: number }[];
+  shippingCost?: number | null;
+  /**
+   * Libro de costos por capa/usuario.
+   * Se actualiza al guardar la tarjeta y al avanzar de capa (congela la capa anterior).
+   */
+  costLedger?: {
+    id: string;
+    category: "materials" | "labor" | "mold" | "satellite" | "shipping";
+    label: string;
+    amount: number;
+    stage: string;
+    stageLabel?: string;
+    userId?: string | null;
+    userName?: string;
+    actorKind?: "production" | "satellite" | "provider" | "unassigned";
+    fingerprint: string;
+    updatedAt: string;
+  }[];
   variants?: {
     variantId: string;
     linea: string;
