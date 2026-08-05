@@ -242,7 +242,7 @@ export function ProductionUserDashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-semibold">
+              <CardTitle className="text-lg font-semibold tracking-tight">
                 Estado de pagos por capas del pedido
               </CardTitle>
               <p className="text-xs text-muted-foreground">
@@ -348,7 +348,7 @@ export function ProductionUserDashboard() {
 
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <CardTitle className="text-lg font-semibold tracking-tight flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-destructive" />
                 Alertas de producción
               </CardTitle>
@@ -388,7 +388,7 @@ export function ProductionUserDashboard() {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <CardTitle className="text-lg font-semibold tracking-tight flex items-center gap-2">
               <History className="h-4 w-4 text-red-600" />
               Historial por pedido
             </CardTitle>

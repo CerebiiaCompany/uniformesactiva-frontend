@@ -5,7 +5,7 @@ import { Check, Loader2, Save, Trash2, X, CircleDot, Square } from "lucide-react
 import { toast } from "sonner";
 import type { CatalogOption, SizeFabric, TallaGenero } from "@/types/variant";
 import { formatForInput } from "@/lib/format-number";
-import { filterTallasByGenero } from "@/lib/talla-catalog";
+import { filterTallasByGenero, groupTallasForDisplay } from "@/lib/talla-catalog";
 import { useSizeConsumption } from "@/hooks/useSizeConsumption";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +48,10 @@ export function SizeConsumptionTable({
 
     const selectedSizeId = controlledSelectedSizeId ?? internalSelectedSizeId;
     const visibleSizes = useMemo(() => filterTallasByGenero(sizes, genero), [sizes, genero]);
+    const sizeSections = useMemo(
+        () => groupTallasForDisplay(visibleSizes, genero),
+        [visibleSizes, genero]
+    );
 
     const setSelectedSizeId = (sizeId: string) => {
         if (onSelectedSizeChange) {
@@ -433,7 +437,7 @@ export function SizeConsumptionTable({
         <Card className="w-full">
             <CardHeader className="flex flex-row items-start justify-between py-4 gap-3">
                 <div className="min-w-0">
-                    <CardTitle className="text-sm font-bold flex items-center gap-2">
+                    <CardTitle className="text-lg font-bold tracking-tight flex items-center gap-2">
                         Tallas y consumo de tela
                         {busy && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
                     </CardTitle>
@@ -496,69 +500,90 @@ export function SizeConsumptionTable({
                         No hay tallas de {genero} en el catálogo. Ejecuta la migración del backend para cargarlas.
                     </div>
                 ) : (
-                    <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
-                        {visibleSizes.map((size) => {
-                            const item = localValues[size.id] || { consumption: "", dirty: false };
-                            const label = size.label || size.name || size.code || size.id;
-                            const isSelected = multiSelectMode
-                                ? selectedSizeIds.includes(size.id)
-                                : selectedSizeId === size.id;
-                            const isConfigured = Boolean(item.dbId && item.consumption);
+                    <div className="space-y-4">
+                        {sizeSections.map((section) => (
+                            <div key={section.key} className="space-y-2">
+                                {section.title ? (
+                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground px-0.5">
+                                        {section.title}
+                                    </p>
+                                ) : null}
+                                <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
+                                    {section.sizes.map((size) => {
+                                        const item = localValues[size.id] || {
+                                            consumption: "",
+                                            dirty: false,
+                                        };
+                                        const label =
+                                            size.label || size.name || size.code || size.id;
+                                        const isSelected = multiSelectMode
+                                            ? selectedSizeIds.includes(size.id)
+                                            : selectedSizeId === size.id;
+                                        const isConfigured = Boolean(
+                                            item.dbId && item.consumption
+                                        );
 
-                            return (
-                                <button
-                                    key={size.id}
-                                    type="button"
-                                    onClick={() => handleSizeCardClick(size.id)}
-                                    className={cn(
-                                        "flex flex-col items-center gap-1 rounded-lg border p-2.5 text-center transition-all",
-                                        isSelected
-                                            ? "border-primary bg-primary/10 ring-1 ring-primary"
-                                            : "border-border bg-card hover:bg-muted/40",
-                                        isConfigured && !isSelected && "border-green-200/80"
-                                    )}
-                                >
-                                    {multiSelectMode ? (
-                                        <div
-                                            className={cn(
-                                                "w-4 h-4 rounded-full border-2 flex items-center justify-center",
-                                                isSelected ? "border-primary" : "border-muted-foreground/40"
-                                            )}
-                                        >
-                                            {isSelected && (
-                                                <div className="w-2 h-2 rounded-full bg-primary" />
-                                            )}
-                                        </div>
-                                    ) : (
-                                        <div
-                                            className={cn(
-                                                "w-4 h-4 rounded-[3px] border-2 flex items-center justify-center",
-                                                isSelected
-                                                    ? "border-red-500 bg-red-50"
-                                                    : "border-muted-foreground/40 bg-background"
-                                            )}
-                                        >
-                                            {isSelected && (
-                                                <X
-                                                    className="h-2.5 w-2.5 text-red-600"
-                                                    strokeWidth={3}
-                                                />
-                                            )}
-                                        </div>
-                                    )}
-                                    <span className="font-bold text-sm">{label}</span>
-                                    {isConfigured ? (
-                                        <span className="text-[10px] text-muted-foreground">
-                                            {item.consumption} m
-                                        </span>
-                                    ) : (
-                                        <span className="text-[10px] text-muted-foreground/60">
-                                            Sin config.
-                                        </span>
-                                    )}
-                                </button>
-                            );
-                        })}
+                                        return (
+                                            <button
+                                                key={size.id}
+                                                type="button"
+                                                onClick={() => handleSizeCardClick(size.id)}
+                                                className={cn(
+                                                    "flex flex-col items-center gap-1 rounded-lg border p-2.5 text-center transition-all",
+                                                    isSelected
+                                                        ? "border-primary bg-primary/10 ring-1 ring-primary"
+                                                        : "border-border bg-card hover:bg-muted/40",
+                                                    isConfigured &&
+                                                        !isSelected &&
+                                                        "border-green-200/80"
+                                                )}
+                                            >
+                                                {multiSelectMode ? (
+                                                    <div
+                                                        className={cn(
+                                                            "w-4 h-4 rounded-full border-2 flex items-center justify-center",
+                                                            isSelected
+                                                                ? "border-primary"
+                                                                : "border-muted-foreground/40"
+                                                        )}
+                                                    >
+                                                        {isSelected && (
+                                                            <div className="w-2 h-2 rounded-full bg-primary" />
+                                                        )}
+                                                    </div>
+                                                ) : (
+                                                    <div
+                                                        className={cn(
+                                                            "w-4 h-4 rounded-[3px] border-2 flex items-center justify-center",
+                                                            isSelected
+                                                                ? "border-red-500 bg-red-50"
+                                                                : "border-muted-foreground/40 bg-background"
+                                                        )}
+                                                    >
+                                                        {isSelected && (
+                                                            <X
+                                                                className="h-2.5 w-2.5 text-red-600"
+                                                                strokeWidth={3}
+                                                            />
+                                                        )}
+                                                    </div>
+                                                )}
+                                                <span className="font-bold text-sm">{label}</span>
+                                                {isConfigured ? (
+                                                    <span className="text-[10px] text-muted-foreground">
+                                                        {item.consumption} m
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-[10px] text-muted-foreground/60">
+                                                        Sin config.
+                                                    </span>
+                                                )}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ))}
                     </div>
                 )}
 

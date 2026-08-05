@@ -7,6 +7,7 @@ import { formatCurrency, formatQuantity } from "@/lib/format-number";
 interface LaborTableProps {
     data: LaborPhase[];
     onAdd: () => void;
+    onCreateFase?: () => void;
     onEdit: (labor: LaborPhase) => void;
     onDelete: (id: string) => void;
 }
@@ -17,14 +18,21 @@ const formatTalla = (item: Pick<LaborPhase, "talla_nombre" | "talla_id">) => {
     return "Todas las tallas (compartido)";
 };
 
-export function LaborCostsTable({ data, onAdd, onEdit, onDelete }: LaborTableProps) {
+export function LaborCostsTable({ data, onAdd, onCreateFase, onEdit, onDelete }: LaborTableProps) {
     return (
         <Card className="w-full">
             <CardHeader className="flex flex-row items-center justify-between py-4">
-                <CardTitle className="text-sm font-bold">Mano de obra</CardTitle>
-                <Button variant="outline" size="sm" onClick={onAdd}>
-                    <Plus className="h-3 w-3 mr-1" /> Añadir
-                </Button>
+                <CardTitle className="text-lg font-bold tracking-tight">Mano de obra</CardTitle>
+                <div className="flex items-center gap-1">
+                    {onCreateFase && (
+                        <Button variant="ghost" size="sm" onClick={onCreateFase}>
+                            <Plus className="h-3 w-3 mr-1" /> Crear fase
+                        </Button>
+                    )}
+                    <Button variant="outline" size="sm" onClick={onAdd}>
+                        <Plus className="h-3 w-3 mr-1" /> Añadir
+                    </Button>
+                </div>
             </CardHeader>
             <CardContent>
                 {data.length > 0 ? (

@@ -212,7 +212,7 @@ export function FabricCostsTable({
         <Card className="w-full">
             <CardHeader className="flex flex-row items-center justify-between py-4">
                 <div>
-                    <CardTitle className="text-sm font-bold">Costos de tela</CardTitle>
+                    <CardTitle className="text-lg font-bold tracking-tight">Costos de tela</CardTitle>
                     <p className="text-xs text-muted-foreground mt-1">
                         Elige <strong>proveedor</strong> (trazabilidad del pedido) y la{" "}
                         <strong>referencia</strong> de inventario. El <strong>$/metro</strong> es el

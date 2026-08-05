@@ -175,7 +175,7 @@ export default function Customers() {
   const hasActiveFilters = Boolean((filters.current.search || "").trim());
 
   return (
-    <AppLayout title="Clientes" subtitle="CRM y gestión de clientes">
+    <AppLayout title="Clientes" subtitle="CRM y gestión de clientes" eyebrow="Comercial">
       <div className="space-y-4">
         {/* Barra superior de acciones */}
         <div className="flex justify-end">

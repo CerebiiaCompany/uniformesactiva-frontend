@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { Link } from "react-router-dom";
 import { AlertTriangle, Boxes, DollarSign, PackageX } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -171,14 +172,14 @@ function StatusRing({
 }: StatusRingProps) {
   const pct = total > 0 ? (count / total) * 100 : 0;
   const animatedPct = useCountUp(pct, 1000);
-  const size = 104;
-  const stroke = 9;
+  const size = 118;
+  const stroke = 10;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (animatedPct / 100) * circumference;
 
   return (
-    <div className="flex flex-col items-center gap-2.5 min-w-0">
+    <div className="flex flex-col items-center gap-3 min-w-0 w-full px-2">
       <div className="relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} className="-rotate-90" aria-hidden>
           <circle
@@ -315,6 +316,118 @@ function TopMaterialsByValueChart({ rows }: { rows: MaterialValueRow[] }) {
   );
 }
 
+type InventoryMaterialStatusRingsProps = {
+  materials: Material[];
+  isLoading?: boolean;
+  /** Enlace opcional al inventario completo */
+  showInventoryLink?: boolean;
+};
+
+/** Gráficas circulares de estado (óptimo / bajo / agotado) — reutilizable en Dashboard. */
+export function InventoryMaterialStatusRings({
+  materials,
+  isLoading,
+  showInventoryLink = false,
+}: InventoryMaterialStatusRingsProps) {
+  const stats = useMemo(() => computeInventoryStats(materials), [materials]);
+
+  if (isLoading && materials.length === 0) {
+    return (
+      <Card className="shadow-sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-lg font-semibold tracking-tight">Estado de materiales</CardTitle>
+          <p className="text-xs text-muted-foreground">Cargando inventario…</p>
+        </CardHeader>
+        <CardContent>
+          <div className="h-[160px] rounded-lg bg-muted/40 animate-pulse" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (stats.total === 0) {
+    return (
+      <Card className="shadow-sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-lg font-semibold tracking-tight">Estado de materiales</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Distribución del inventario: óptimo, stock bajo y agotados.
+          </p>
+        </CardHeader>
+        <CardContent className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+          <div className="rounded-full bg-muted p-3 text-muted-foreground">
+            <Boxes className="h-6 w-6" />
+          </div>
+          <p className="text-sm font-semibold text-foreground">Inventario vacío</p>
+          <p className="text-xs text-muted-foreground max-w-sm">
+            Agrega materiales al inventario para ver el estado de stock.
+          </p>
+          {showInventoryLink ? (
+            <Link
+              to="/inventory"
+              className="text-xs font-medium text-primary hover:underline mt-1"
+            >
+              Ir a inventario
+            </Link>
+          ) : null}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="shadow-sm">
+      <CardHeader className="pb-2 flex flex-row items-start justify-between gap-3">
+        <div>
+          <CardTitle className="text-lg font-semibold tracking-tight">Estado de materiales</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Distribución del inventario: óptimo, stock bajo y agotados.
+          </p>
+        </div>
+        {showInventoryLink ? (
+          <Link
+            to="/inventory"
+            className="text-xs font-medium text-primary hover:underline shrink-0 pt-0.5"
+          >
+            Ver inventario
+          </Link>
+        ) : null}
+      </CardHeader>
+      <CardContent className="px-4 sm:px-8 pb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-8 sm:gap-10 lg:gap-16 py-6 sm:py-8 place-items-center">
+          <StatusRing
+            label="Óptimo"
+            count={stats.optimal}
+            total={stats.total}
+            color="#10b981"
+            trackColor="rgba(16, 185, 129, 0.15)"
+            icon={Boxes}
+            iconClassName="text-emerald-600"
+          />
+          <StatusRing
+            label="Stock bajo"
+            count={stats.low}
+            total={stats.total}
+            color="#ef4444"
+            trackColor="rgba(239, 68, 68, 0.15)"
+            icon={AlertTriangle}
+            iconClassName="text-red-600"
+          />
+          <StatusRing
+            label="Agotado"
+            count={stats.out}
+            total={stats.total}
+            color="#71717a"
+            trackColor="rgba(113, 113, 122, 0.18)"
+            icon={PackageX}
+            iconClassName="text-zinc-500"
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 type InventoryOverviewProps = {
   materials: Material[];
   isLoading?: boolean;
@@ -365,49 +478,11 @@ export function InventoryOverview({ materials, isLoading }: InventoryOverviewPro
 
       {hasInventory ? (
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.18fr)] gap-4">
-          <Card className="shadow-sm">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold">Estado de materiales</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Distribución del inventario: óptimo, stock bajo y agotados.
-              </p>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap items-start justify-center gap-4 sm:gap-5 py-3">
-                <StatusRing
-                  label="Óptimo"
-                  count={stats.optimal}
-                  total={stats.total}
-                  color="#10b981"
-                  trackColor="rgba(16, 185, 129, 0.15)"
-                  icon={Boxes}
-                  iconClassName="text-emerald-600"
-                />
-                <StatusRing
-                  label="Stock bajo"
-                  count={stats.low}
-                  total={stats.total}
-                  color="#ef4444"
-                  trackColor="rgba(239, 68, 68, 0.15)"
-                  icon={AlertTriangle}
-                  iconClassName="text-red-600"
-                />
-                <StatusRing
-                  label="Agotado"
-                  count={stats.out}
-                  total={stats.total}
-                  color="#71717a"
-                  trackColor="rgba(113, 113, 122, 0.18)"
-                  icon={PackageX}
-                  iconClassName="text-zinc-500"
-                />
-              </div>
-            </CardContent>
-          </Card>
+          <InventoryMaterialStatusRings materials={materials} />
 
           <Card className="shadow-sm">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold">Top materiales por valor</CardTitle>
+              <CardTitle className="text-lg font-semibold tracking-tight">Top materiales por valor</CardTitle>
               <p className="text-xs text-muted-foreground">
                 Del mayor al menor valor en inventario (stock × costo unitario).
               </p>

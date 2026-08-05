@@ -151,7 +151,13 @@ function filterSizesByGenero(
 ): VariantSizeCostSummary[] {
     return sortSizeSummaries(
         sizes.filter(
-            (size) => resolveTallaGenero({ name: size.talla_nombre, label: size.talla_nombre }) === genero
+            (size) =>
+                resolveTallaGenero({
+                    genero: size.talla_genero,
+                    talla_genero: size.talla_genero,
+                    name: size.talla_nombre,
+                    label: size.talla_nombre,
+                }) === genero
         )
     );
 }

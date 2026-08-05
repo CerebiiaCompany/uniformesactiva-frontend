@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 
 export default function Website() {
   return (
-    <AppLayout title="Sitio Web" subtitle="Módulo de sitio corporativo">
+    <AppLayout title="Sitio Web" subtitle="Módulo de sitio corporativo" eyebrow="General">
       <div className="max-w-2xl space-y-6">
         <Card className="animate-fade-in">
           <CardContent className="p-8 text-center">
@@ -30,7 +30,7 @@ export default function Website() {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold">Solicitudes de cotización web</CardTitle>
+            <CardTitle className="text-lg font-semibold tracking-tight">Solicitudes de cotización web</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground">

@@ -7,6 +7,7 @@ import {
     type MaterialSupplierOffer,
 } from "@/hooks/useMaterialSuppliers";
 import { useCreateProveedor } from "@/hooks/useCreateProveedor";
+import { formatUnitCost } from "@/lib/format-number";
 import { cn } from "@/lib/utils";
 
 type ProveedorOption = { id: string; name: string };
@@ -25,15 +26,6 @@ const emptyForm = {
     unit_cost: "",
     code: "",
 };
-
-function formatCurrency(value: number | string | undefined) {
-    const num = typeof value === "string" ? parseFloat(value) : Number(value ?? 0);
-    if (Number.isNaN(num)) return "0";
-    return num.toLocaleString("es-CO", {
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-    });
-}
 
 function formatDate(value: string | null) {
     if (!value) return "—";
@@ -205,10 +197,10 @@ export function MaterialSuppliersDialog({
                         </h3>
                         <p className="text-sm text-muted-foreground mt-0.5">
                             {data?.material.category ? `${data.material.category} — ` : ""}
-                            Costo unitario de referencia (mayor): ${formatCurrency(maxCost)}
+                            Costo unitario de referencia (mayor): ${formatUnitCost(maxCost)}
                             {bestCost != null && (
                                 <span className="ml-2 text-emerald-700">
-                                    · Mejor: ${formatCurrency(bestCost)}
+                                    · Mejor: ${formatUnitCost(bestCost)}
                                 </span>
                             )}
                         </p>
@@ -263,7 +255,7 @@ export function MaterialSuppliersDialog({
                                     <div className="truncate text-muted-foreground">
                                         {offer.code?.trim() ? offer.code : "—"}
                                     </div>
-                                    <div className="font-semibold">${formatCurrency(offer.unit_cost)}</div>
+                                    <div className="font-semibold">${formatUnitCost(offer.unit_cost)}</div>
                                     <div className="text-muted-foreground text-xs">
                                         {formatDate(offer.last_purchase_at)}
                                     </div>

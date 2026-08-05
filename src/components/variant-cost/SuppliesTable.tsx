@@ -22,7 +22,7 @@ export function SuppliesTable({ data, onAdd, onCreateTipo, onEdit, onDelete }: S
     return (
         <Card className="w-full">
             <CardHeader className="flex flex-row items-center justify-between py-4 gap-3">
-                <CardTitle className="text-sm font-bold">Insumos</CardTitle>
+                <CardTitle className="text-lg font-bold tracking-tight">Insumos</CardTitle>
                 <div className="flex items-center gap-2 shrink-0">
                     {onCreateTipo && (
                         <Button variant="ghost" size="sm" onClick={onCreateTipo}>

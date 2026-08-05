@@ -144,7 +144,7 @@ export default function Lines() {
     };
 
     return (
-        <AppLayout title="Líneas de Producto" subtitle="Selecciona una línea para gestionar sus productos">
+        <AppLayout title="Líneas de Producto" subtitle="Selecciona una línea para gestionar sus productos" eyebrow="Operación">
             <div className="flex justify-end mb-6">
                 <Button size="sm" onClick={() => setIsCreateModalOpen(true)}>
                     <Plus className="h-4 w-4 mr-1" /> Nueva Línea

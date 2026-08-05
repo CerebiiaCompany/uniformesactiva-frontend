@@ -1097,6 +1097,7 @@ export default function AdministrationSubmodule() {
     <AppLayout
       title={`Administración · ${titles[active]}`}
       subtitle="Gestiona usuarios, áreas y roles de tu compañía."
+      eyebrow="Gerencia"
     >
       <div className="space-y-6">
         <div className="flex items-center justify-between">

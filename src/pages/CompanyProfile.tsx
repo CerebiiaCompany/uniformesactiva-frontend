@@ -49,7 +49,7 @@ export default function CompanyProfile() {
   const [phones, setPhones] = useState<string[]>([]);
 
   return (
-    <AppLayout title="Perfil de empresa" subtitle="Configuración y datos legales de la compañía">
+    <AppLayout title="Perfil de empresa" subtitle="Configuración y datos legales de la compañía" eyebrow="Gerencia">
       <div className="space-y-6 max-w-6xl">
         {/* Header */}
         <Card className="animate-fade-in">

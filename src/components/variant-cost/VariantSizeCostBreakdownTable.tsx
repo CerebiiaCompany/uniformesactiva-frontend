@@ -1,12 +1,15 @@
+import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { formatCurrency, formatDecimal } from "@/lib/format-number";
+import { formatCurrency, formatDecimal, parseApiNumber } from "@/lib/format-number";
 import type { VariantSizeCostSummary } from "@/types/variant";
 
 interface VariantSizeCostBreakdownTableProps {
     sizes: VariantSizeCostSummary[];
     selectedSizeId?: string;
     onSelectSize?: (sizeId: string) => void;
+    /** Si viene del resumen del backend, se usa; si no, se calcula en cliente. */
+    averageConsumption?: string | number | null;
 }
 
 const formatMoney = (value: string | number) => formatCurrency(value);
@@ -15,12 +18,27 @@ export function VariantSizeCostBreakdownTable({
     sizes,
     selectedSizeId,
     onSelectSize,
+    averageConsumption,
 }: VariantSizeCostBreakdownTableProps) {
+    const computedAverage = useMemo(() => {
+        let raw = 0;
+        if (averageConsumption != null && averageConsumption !== "") {
+            const fromProp = parseApiNumber(averageConsumption);
+            if (fromProp > 0) raw = fromProp;
+        }
+        if (!raw && sizes.length) {
+            const total = sizes.reduce((sum, size) => sum + parseApiNumber(size.consumption), 0);
+            raw = total / sizes.length;
+        }
+        // Solo este valor: aproximado a 1 decimal
+        return Math.round(raw * 10) / 10;
+    }, [sizes, averageConsumption]);
+
     if (!sizes.length) {
         return (
             <Card>
                 <CardHeader className="py-4">
-                    <CardTitle className="text-sm font-bold">Costo por talla</CardTitle>
+                    <CardTitle className="text-lg font-bold tracking-tight">Costo por talla</CardTitle>
                 </CardHeader>
                 <CardContent className="pb-6 text-sm text-muted-foreground">
                     Configura el consumo de tela por talla para ver el desglose completo (tela + insumos + mano
@@ -33,7 +51,7 @@ export function VariantSizeCostBreakdownTable({
     return (
         <Card>
             <CardHeader className="py-4">
-                <CardTitle className="text-sm font-bold">Costo por talla</CardTitle>
+                <CardTitle className="text-lg font-bold tracking-tight">Costo por talla</CardTitle>
                 <p className="text-xs text-muted-foreground mt-1">
                     Desglose real usado en órdenes. Haz clic en una fila para ver el detalle en el resumen.
                 </p>
@@ -80,6 +98,21 @@ export function VariantSizeCostBreakdownTable({
                             );
                         })}
                     </tbody>
+                    <tfoot>
+                        <tr className="bg-muted/40 border-t-2">
+                            <td className="px-4 py-3 font-semibold text-foreground">
+                                Consumo promedio de tallas
+                            </td>
+                            <td className="px-3 py-3 text-right font-bold text-foreground">
+                                ≈ {formatDecimal(computedAverage, 1)} m
+                            </td>
+                            <td className="px-3 py-3" />
+                            <td className="px-3 py-3" />
+                            <td className="px-3 py-3" />
+                            <td className="px-3 py-3" />
+                            <td className="px-4 py-3" />
+                        </tr>
+                    </tfoot>
                 </table>
             </CardContent>
         </Card>

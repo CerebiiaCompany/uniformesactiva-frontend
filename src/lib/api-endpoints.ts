@@ -9,6 +9,7 @@ export const endpoints = {
     },
     costos: {
         proveedores: () => `${base()}/api/v1/costos/proveedores/`,
+        proveedorDetalle: (id: string) => `${base()}/api/v1/costos/proveedores/${id}/`,
         tallas: () => `${base()}/api/v1/costos/tallas/`,
         tiposInsumo: () => `${base()}/api/v1/costos/insumos-tipo/`,
         fasesManoDeObra: () => `${base()}/api/v1/costos/fases-mano-de-obra/`,
@@ -80,6 +81,8 @@ export const endpoints = {
         list: () => `${base()}/api/v1/products/productos/`,
         detail: (id: string) => `${base()}/api/v1/products/productos/${id}/`,
         variantes: (productId: string) => `${base()}/api/v1/products/productos/${productId}/variantes/`,
+        eliminarVariante: (productId: string, variantId: string) =>
+            `${base()}/api/v1/products/productos/${productId}/eliminar_variante/?variant_id=${encodeURIComponent(variantId)}`,
     },
     quotes: {
         list: () => `${base()}/api/v1/quotes/quotes/`,

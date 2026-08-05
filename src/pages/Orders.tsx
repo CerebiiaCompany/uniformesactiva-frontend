@@ -260,7 +260,7 @@ export default function Orders() {
   };
 
   return (
-    <AppLayout title="Órdenes" subtitle="Gestión centralizada de órdenes">
+    <AppLayout title="Órdenes" subtitle="Gestión centralizada de órdenes" eyebrow="Comercial">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-3">
           <CardTitle className="text-base font-semibold">Todas las órdenes</CardTitle>

@@ -331,6 +331,7 @@ export function useQuotes() {
                 endpoints.quotes.placeOrder(id),
                 { method: "POST" }
             );
+            setQuotes((prev) => prev.filter((q) => q.id !== id));
             await fetchQuotes();
             return { success: true, data: result, errorMessage: null };
         } catch (err) {
@@ -423,6 +424,7 @@ export function useQuotes() {
                 method: "POST",
                 body: JSON.stringify(ordenId ? { orden_id: ordenId } : {}),
             });
+            setQuotes((prev) => prev.filter((q) => q.id !== id));
             await fetchQuotes();
             return { success: true, data: result, errorMessage: null };
         } catch (err) {
@@ -432,6 +434,7 @@ export function useQuotes() {
                     method: "PATCH",
                     body: JSON.stringify({ estado: "ordered" }),
                 });
+                setQuotes((prev) => prev.filter((q) => q.id !== id));
                 await fetchQuotes();
                 return { success: true, data: result, errorMessage: null };
             } catch (fallbackErr) {
@@ -454,6 +457,7 @@ export function useQuotes() {
                 endpoints.quotes.convert(id),
                 { method: "POST" }
             );
+            setQuotes((prev) => prev.filter((q) => q.id !== id));
             await fetchQuotes();
             return { success: true, data: result, errorMessage: null };
         } catch (err) {
