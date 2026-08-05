@@ -114,7 +114,7 @@ export function StatCard({
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1 min-w-0">
           <p className="text-xs font-medium text-muted-foreground">{title}</p>
-          <p className="text-2xl font-bold text-foreground tabular-nums tracking-tight">
+          <p className="text-2xl text-foreground tabular-nums tracking-tight">
             {renderedValue}
           </p>
           {subtitle && <p className="text-[11px] text-muted-foreground">{subtitle}</p>}

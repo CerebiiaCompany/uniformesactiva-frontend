@@ -179,6 +179,7 @@ export default function Products() {
         <AppLayout
             title={currentLine ? `Productos de ${currentLine.name}` : "Productos"}
             subtitle={currentLine ? `Línea: ${currentLine.code}` : "Catálogo comercial de referencias"}
+            eyebrow="Operación"
         >
             <div className="space-y-4">
                 <div className="flex justify-end">

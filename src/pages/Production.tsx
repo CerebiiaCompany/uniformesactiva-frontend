@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { resolveFactoryCardInfo, groupOrderItemsForFactory } from "@/lib/order-fields";
 import { FactoryVariantBreakdown } from "@/components/FactoryVariantBreakdown";
+import { KanbanStageChip } from "@/components/KanbanStageChip";
 import {
   KanbanCardEditDialog,
   cardFormFromProductionOrder,
@@ -43,6 +44,16 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   KANBAN_STAGE_THEMES_BY_KEY,
   type KanbanStageTheme,
@@ -187,6 +198,13 @@ export default function Production() {
   const [dragType, setDragType] = useState<"card" | "column" | null>(null);
   const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
   const [draggedColKey, setDraggedColKey] = useState<string | null>(null);
+  const [pendingCardMove, setPendingCardMove] = useState<{
+    cardId: string;
+    orderId: string | null;
+    fromStage: string;
+    toStage: string;
+  } | null>(null);
+  const [isMovingCard, setIsMovingCard] = useState(false);
   const [cardDialog, setCardDialog] = useState<{
     open: boolean;
     mode: "add" | "edit";
@@ -622,13 +640,11 @@ export default function Production() {
     e.dataTransfer.effectAllowed = "move";
   };
 
-  const handleCardDrop = async (targetStage: string) => {
+  const handleCardDrop = (targetStage: string) => {
     if (dragType !== "card" || !draggedCardId) return;
     const movedCardId = draggedCardId;
     const card = prodOrders.find((o) => o.id === movedCardId);
     const previousStage = card?.stage;
-    const orderId = card?.orderId;
-    const now = new Date().toISOString();
 
     setDraggedCardId(null);
     setDragType(null);
@@ -667,55 +683,89 @@ export default function Production() {
 
     if (previousStage === targetStage) return;
 
-    // Congela costos de la capa saliente (atribuidos al usuario actual) y limpia campos vivos
-    const prevLabel =
-      stages.find((s) => s.key === previousStage)?.label || previousStage;
-    const frozenCosts = freezeStageCostsOnMove(card, previousStage, prevLabel);
+    setPendingCardMove({
+      cardId: movedCardId,
+      orderId: card.orderId || null,
+      fromStage: previousStage,
+      toStage: targetStage,
+    });
+  };
 
-    // Al cambiar de capa se limpia Producción y Satélite: el admin reasigna
-    const movedPatch = {
-      ...frozenCosts,
-      stage: targetStage as ProductionOrder["stage"],
-      daysInStage: 0,
-      assignee: "Sin asignar",
-      assigneeId: null as string | null,
-      satelliteAssignee: "Sin asignar",
-      satelliteAssigneeId: null as string | null,
-      stageHistory: [
-        ...(card.stageHistory || []),
-        { stage: targetStage as ProductionOrder["stage"], enteredAt: now },
-      ],
-    };
+  const cancelPendingCardMove = () => {
+    if (isMovingCard) return;
+    setPendingCardMove(null);
+  };
 
-    if (orderId) {
-      commitOrderCards(orderId, (cards) =>
-        cards.map((o) => (o.id !== movedCardId ? o : { ...o, ...movedPatch }))
-      );
-      void updateKanbanAssignment(orderId, {
-        card_id: movedCardId,
-        stage: targetStage,
-        clear: true,
-        assignee_id: null,
-        kind: "both",
+  const confirmPendingCardMove = async () => {
+    if (!pendingCardMove || isMovingCard) return;
+
+    const { cardId: movedCardId, orderId, fromStage: previousStage, toStage: targetStage } =
+      pendingCardMove;
+    const card = prodOrders.find((o) => o.id === movedCardId);
+    if (!card) {
+      setPendingCardMove(null);
+      toast({
+        variant: "destructive",
+        title: "No se pudo mover",
+        description: "La tarjeta ya no está disponible.",
       });
-    } else {
-      setProdOrders((prev) =>
-        prev.map((o) => (o.id !== movedCardId ? o : { ...o, ...movedPatch }))
-      );
+      return;
     }
 
-    toast({
-      title: "Tarjeta movida",
-      description:
-        "Asigna usuarios de Producción y/o Satélite para la nueva capa.",
-    });
+    setIsMovingCard(true);
+    const now = new Date().toISOString();
 
-    if (!orderId) return;
+    try {
+      // Congela costos de la capa saliente (atribuidos al usuario actual) y limpia campos vivos
+      const prevLabel =
+        stages.find((s) => s.key === previousStage)?.label || previousStage;
+      const frozenCosts = freezeStageCostsOnMove(card, previousStage, prevLabel);
 
-    const result = await updateOrderStage(orderId, targetStage);
-    if (!result.order) {
-      // Revertir UI si falla el backend
+      // Al cambiar de capa se limpia Producción y Satélite: el admin reasigna
+      const movedPatch = {
+        ...frozenCosts,
+        stage: targetStage as ProductionOrder["stage"],
+        daysInStage: 0,
+        assignee: "Sin asignar",
+        assigneeId: null as string | null,
+        satelliteAssignee: "Sin asignar",
+        satelliteAssigneeId: null as string | null,
+        stageHistory: [
+          ...(card.stageHistory || []),
+          { stage: targetStage as ProductionOrder["stage"], enteredAt: now },
+        ],
+      };
+
       if (orderId) {
+        commitOrderCards(orderId, (cards) =>
+          cards.map((o) => (o.id !== movedCardId ? o : { ...o, ...movedPatch }))
+        );
+        void updateKanbanAssignment(orderId, {
+          card_id: movedCardId,
+          stage: targetStage,
+          clear: true,
+          assignee_id: null,
+          kind: "both",
+        });
+      } else {
+        setProdOrders((prev) =>
+          prev.map((o) => (o.id !== movedCardId ? o : { ...o, ...movedPatch }))
+        );
+      }
+
+      toast({
+        title: "Tarjeta movida",
+        description:
+          "Asigna usuarios de Producción y/o Satélite para la nueva capa.",
+      });
+
+      setPendingCardMove(null);
+
+      if (!orderId) return;
+
+      const result = await updateOrderStage(orderId, targetStage);
+      if (!result.order) {
+        // Revertir UI si falla el backend
         commitOrderCards(orderId, (cards) =>
           cards.map((o) =>
             o.id === movedCardId
@@ -723,17 +773,18 @@ export default function Production() {
               : o
           )
         );
+        await fetchOrders({ estado: "in_production" });
+      } else if (historyOpen && orderId === selectedOrderId) {
+        const hist = (result.order.etapa_historial || []).map((h) => ({
+          stage: h.etapa,
+          enteredAt: h.entered_at,
+        }));
+        if (hist.length) {
+          setTimeline(buildProductionTimeline(hist, stageLabels));
+        }
       }
-      await fetchOrders({ estado: "in_production" });
-    } else if (historyOpen && orderId === selectedOrderId) {
-      // Refrescar panel si está abierto sobre el mismo pedido
-      const hist = (result.order.etapa_historial || []).map((h) => ({
-        stage: h.etapa,
-        enteredAt: h.entered_at,
-      }));
-      if (hist.length) {
-        setTimeline(buildProductionTimeline(hist, stageLabels));
-      }
+    } finally {
+      setIsMovingCard(false);
     }
   };
 
@@ -1392,7 +1443,7 @@ export default function Production() {
 
   if (!selectedOrderId) {
     return (
-      <AppLayout title="Operativo" subtitle="Órdenes activas en planta">
+      <AppLayout title="Operativo" subtitle="Órdenes activas en planta" eyebrow="Operación">
         {activeOrders.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/20 px-6 py-16 text-center">
             <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
@@ -1482,7 +1533,7 @@ export default function Production() {
   }
 
   return (
-    <AppLayout title={`Operativo — ORD-${selectedOrderId.slice(0, 3)}`} subtitle={selectedOrder ? `${selectedOrder.cliente_nombre}` : ""}>
+    <AppLayout title={`Operativo — ORD-${selectedOrderId.slice(0, 3)}`} subtitle={selectedOrder ? `${selectedOrder.cliente_nombre}` : ""} eyebrow="Operación">
       <div className="mb-4 flex items-center justify-between flex-wrap gap-2">
         <Button variant="ghost" size="sm" onClick={() => setSelectedOrderId(null)} className="gap-2 text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" /> Volver</Button>
         <div className="flex items-center gap-2">
@@ -1676,7 +1727,7 @@ export default function Production() {
                     <div className="mb-3 space-y-1 rounded-md bg-muted/40 px-2 py-1.5 text-[10px] leading-snug">
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-muted-foreground shrink-0">Total</span>
-                        <span className="font-semibold text-foreground tabular-nums">{order.quantity} uds</span>
+                        <span className="text-foreground tabular-nums">{order.quantity} uds</span>
                       </div>
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-muted-foreground shrink-0">Bordado</span>
@@ -1908,7 +1959,7 @@ export default function Production() {
                           <p className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
                             Etapas completadas
                           </p>
-                          <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
+                          <p className="text-2xl text-foreground mt-1 tabular-nums">
                             {completedStagesCount}
                           </p>
                         </div>
@@ -2016,12 +2067,16 @@ export default function Production() {
                             >
                               <div>
                                 <p className="text-sm font-semibold text-foreground">{card.items}</p>
-                                <p className="text-xs text-muted-foreground mt-0.5">
-                                  {stageLabels[card.stage] || card.stage}
-                                  {card.assignee ? ` · ${card.assignee}` : ""}
-                                  {card.quantity ? ` · ${card.quantity} uds` : ""}
-                                  {card.dueDate ? ` · entrega ${card.dueDate}` : ""}
-                                </p>
+                                <div className="flex flex-wrap items-center gap-1.5 mt-1 text-xs text-muted-foreground">
+                                  <KanbanStageChip
+                                    stageKey={card.stage}
+                                    label={stageLabels[card.stage] || card.stage}
+                                    className="text-[10px] px-2 py-0.5"
+                                  />
+                                  {card.assignee ? <span>· {card.assignee}</span> : null}
+                                  {card.quantity ? <span>· {card.quantity} uds</span> : null}
+                                  {card.dueDate ? <span>· entrega {card.dueDate}</span> : null}
+                                </div>
                               </div>
 
                               <div className="space-y-2 text-xs">
@@ -2230,6 +2285,48 @@ export default function Production() {
           </aside>
         </div>
       )}
+
+      <AlertDialog
+        open={!!pendingCardMove}
+        onOpenChange={(open) => {
+          if (!open) cancelPendingCardMove();
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Mover tarjeta de capa?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Vas a mover esta tarjeta a{" "}
+              <span className="font-medium text-foreground">
+                {pendingCardMove
+                  ? stages.find((s) => s.key === pendingCardMove.toStage)?.label ||
+                    pendingCardMove.toStage
+                  : ""}
+              </span>
+              .
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isMovingCard}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isMovingCard}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmPendingCardMove();
+              }}
+            >
+              {isMovingCard ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Moviendo...
+                </>
+              ) : (
+                "Confirmar movimiento"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppLayout>
   );
 }

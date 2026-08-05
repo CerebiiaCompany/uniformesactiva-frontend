@@ -22,7 +22,7 @@ export function SuppliesTable({ data, onAdd, onCreateTipo, onEdit, onDelete }: S
     return (
         <Card className="w-full">
             <CardHeader className="flex flex-row items-center justify-between py-4 gap-3">
-                <CardTitle className="text-sm font-bold">Insumos</CardTitle>
+                <CardTitle className="text-lg font-bold tracking-tight">Insumos</CardTitle>
                 <div className="flex items-center gap-2 shrink-0">
                     {onCreateTipo && (
                         <Button variant="ghost" size="sm" onClick={onCreateTipo}>
@@ -58,7 +58,7 @@ export function SuppliesTable({ data, onAdd, onCreateTipo, onEdit, onDelete }: S
                                 <div>{formatQuantity(item.quantity)}</div>
                                 <div>${formatCurrency(item.unit_price)}</div>
                                 <div className="flex items-center justify-between gap-1">
-                                    <span className="font-bold">${formatCurrency(item.total)}</span>
+                                    <span>${formatCurrency(item.total)}</span>
                                     <div className="flex gap-1 shrink-0">
                                         <Pencil
                                             className="h-4 w-4 cursor-pointer text-muted-foreground hover:text-primary"

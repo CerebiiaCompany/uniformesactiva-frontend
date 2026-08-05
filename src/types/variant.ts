@@ -6,6 +6,7 @@ export interface CatalogOption {
     name: string;
     label?: string;
     genero?: TallaGenero;
+    orden?: number;
     categoria?: string;
     unidad_medida?: string;
     precio_unitario_default?: number | string | null;
@@ -80,6 +81,7 @@ export interface LaborPhase {
 export interface VariantSizeCostSummary {
     talla_id: string;
     talla_nombre: string;
+    talla_genero?: TallaGenero | string | null;
     consumption: string | number;
     fabric_total: string | number;
     supplies_total: string | number;

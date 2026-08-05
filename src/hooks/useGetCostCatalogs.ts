@@ -63,6 +63,7 @@ export function useGetCostCatalogs() {
         proveedores: proveedoresQuery.data ?? [],
         refetchProveedores: proveedoresQuery.refetch,
         refetchSupplyTypes: supplyTypesQuery.refetch,
+        refetchLaborPhases: laborPhasesQuery.refetch,
         isLoading:
             sizesQuery.isLoading ||
             supplyTypesQuery.isLoading ||

@@ -97,6 +97,7 @@ export default function Costing() {
     <AppLayout
       title="Costos"
       subtitle="Rentabilidad de órdenes y catálogos reales (tela/insumos/MO por variante en Productos)"
+      eyebrow="Operación"
     >
       <div className="space-y-6">
         <div className="rounded-lg border border-sky-200/80 bg-sky-50/50 px-3 py-2.5 flex gap-2 text-xs text-sky-900 dark:bg-sky-950/20 dark:border-sky-900/40 dark:text-sky-200">
@@ -212,7 +213,7 @@ function OrdersTab({
     <Card>
       <CardHeader className="pb-3 flex flex-row items-center justify-between gap-2">
         <div>
-          <CardTitle className="text-sm font-semibold">Costo real por orden</CardTitle>
+          <CardTitle className="text-lg font-semibold tracking-tight">Costo real por orden</CardTitle>
           <p className="text-xs text-muted-foreground mt-1">
             Valores calculados al crear/actualizar la orden (costo_total, ganancia, margen).
             {totalCount > orders.length
@@ -256,7 +257,7 @@ function OrdersTab({
                       {o.producto_nombre || "—"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{qty || "—"}</TableCell>
-                    <TableCell className="text-right tabular-nums font-medium">
+                    <TableCell className="text-right tabular-nums">
                       {fmt(unitCost(o))}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
@@ -267,7 +268,7 @@ function OrdersTab({
                     </TableCell>
                     <TableCell
                       className={cn(
-                        "text-right font-bold tabular-nums",
+                        "text-right tabular-nums",
                         m >= 25
                           ? "text-emerald-700"
                           : m >= 15
@@ -298,7 +299,7 @@ function ProductsTab({
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-sm font-semibold">Líneas y costeo por variante</CardTitle>
+        <CardTitle className="text-lg font-semibold tracking-tight">Líneas y costeo por variante</CardTitle>
         <p className="text-xs text-muted-foreground mt-1">
           El costo unitario no se define aquí: se arma por variante (tela + insumos + MO + consumo
           por talla) en la ficha del producto.
@@ -386,7 +387,7 @@ function MaterialsTab({
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-sm font-semibold">Tipos de insumo (catálogo)</CardTitle>
+        <CardTitle className="text-lg font-semibold tracking-tight">Tipos de insumo (catálogo)</CardTitle>
         <p className="text-xs text-muted-foreground mt-1">
           Catálogo maestro desde BD. El stock operativo vive en Inventario; el precio usado en
           costeo de una variante se define al asignar el insumo a esa variante.
@@ -485,7 +486,7 @@ function LaborTab({
     <div className="space-y-4">
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-semibold">Fases de mano de obra (catálogo)</CardTitle>
+          <CardTitle className="text-lg font-semibold tracking-tight">Fases de mano de obra (catálogo)</CardTitle>
           <p className="text-xs text-muted-foreground mt-1">
             Catálogo desde BD. El costo por pieza (cantidad × precio unitario) se asigna por
             variante en Productos. No hay tarifas por hora almacenadas.
@@ -522,7 +523,7 @@ function LaborTab({
       <Card>
         <CardContent className="py-4 text-sm text-muted-foreground">
           Proveedores de tela registrados:{" "}
-          <span className="font-semibold text-foreground">{proveedoresCount}</span>
+          <span className="tabular-nums text-foreground">{proveedoresCount}</span>
           . Se usan al cargar costos de tela por variante.
         </CardContent>
       </Card>
@@ -540,7 +541,7 @@ function ProfitTab({ orders, loading }: { orders: Order[]; loading: boolean }) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-sm font-semibold">Rentabilidad por orden</CardTitle>
+        <CardTitle className="text-lg font-semibold tracking-tight">Rentabilidad por orden</CardTitle>
         <p className="text-xs text-muted-foreground mt-1">
           Ordenado por margen real almacenado en cada orden.
         </p>

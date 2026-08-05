@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Loader2, X } from "lucide-react";
 import { useMaterialSuppliers } from "@/hooks/useMaterialSuppliers";
 import { useAddMaterialStock } from "@/hooks/useAddMaterialStock";
+import { formatUnitCost } from "@/lib/format-number";
 import { toast } from "sonner";
 
 interface MaterialLike {
@@ -18,15 +19,6 @@ interface AddMaterialStockDialogProps {
     material: MaterialLike | null;
     onClose: () => void;
     onSuccess?: () => void;
-}
-
-function formatCurrency(value: number | string | undefined) {
-    const num = typeof value === "string" ? parseFloat(value) : Number(value ?? 0);
-    if (Number.isNaN(num)) return "0";
-    return num.toLocaleString("es-CO", {
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-    });
 }
 
 function formatStock(value: number | string | undefined) {
@@ -165,7 +157,7 @@ export function AddMaterialStockDialog({
                             >
                                 {offers.map((o) => (
                                     <option key={o.id} value={o.id}>
-                                        {o.supplier_name} (${formatCurrency(o.unit_cost)})
+                                        {o.supplier_name} (${formatUnitCost(o.unit_cost)})
                                     </option>
                                 ))}
                             </select>

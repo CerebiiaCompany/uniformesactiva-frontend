@@ -140,7 +140,7 @@ function StatCard({
     return (
         <div className={cn("rounded-xl border px-4 py-3 space-y-1", styles[accent])}>
             <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-            <p className="text-lg font-bold tabular-nums leading-tight">{value}</p>
+            <p className="text-lg tabular-nums leading-tight">{value}</p>
             {sub && <p className="text-[11px] text-muted-foreground">{sub}</p>}
         </div>
     );
@@ -1018,7 +1018,7 @@ export function NewOrderDialog({
                                                                             className="inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium"
                                                                         >
                                                                             {l.talla_nombre}{" "}
-                                                                            <span className="ml-1 text-primary font-bold">
+                                                                            <span className="ml-1 text-primary">
                                                                                 ×{l.cantidad}
                                                                             </span>
                                                                         </span>
@@ -1177,7 +1177,7 @@ export function NewOrderDialog({
                                                     <Input
                                                         value={income > 0 ? formatMoney(income) : "—"}
                                                         readOnly
-                                                        className="h-10 bg-muted/50 font-medium"
+                                                        className="h-10 bg-muted/50 tabular-nums"
                                                     />
                                                 </div>
                                                 <div className="space-y-1.5">
@@ -1205,7 +1205,7 @@ export function NewOrderDialog({
                                                                   : "—"
                                                         }
                                                         readOnly
-                                                        className="h-10 bg-muted/50 font-medium text-amber-800 dark:text-amber-200"
+                                                        className="h-10 bg-muted/50 tabular-nums text-amber-800 dark:text-amber-200"
                                                     />
                                                 </div>
                                             </div>

@@ -620,7 +620,7 @@ export function KanbanCardEditDialog({
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground font-medium">Total estimado</Label>
-                  <p className="h-10 flex items-center text-sm font-semibold text-foreground">
+                  <p className="h-10 flex items-center text-sm tabular-nums text-foreground">
                     {formatMoney(laborTotalEstimado)}
                   </p>
                 </div>
