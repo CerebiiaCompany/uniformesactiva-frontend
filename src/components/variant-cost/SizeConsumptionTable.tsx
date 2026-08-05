@@ -711,7 +711,7 @@ export function SizeConsumptionTable({
 
                 <div className="w-full flex items-center justify-between bg-muted/40 rounded-lg p-3.5 text-sm text-muted-foreground font-medium">
                     <span>Tallas configuradas ({genero})</span>
-                    <span className="font-bold text-foreground text-base">
+                    <span className="text-foreground text-base">
                         {configuredCount} de {visibleSizes.length}
                     </span>
                 </div>

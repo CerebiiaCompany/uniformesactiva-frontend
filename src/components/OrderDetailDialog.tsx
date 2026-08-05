@@ -87,7 +87,7 @@ function FinanceTile({
     return (
         <div className={cn("rounded-xl border px-3 py-2.5", styles[accent])}>
             <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-            <p className="text-base font-bold tabular-nums mt-0.5">{value}</p>
+            <p className="text-base tabular-nums mt-0.5">{value}</p>
         </div>
     );
 }
@@ -367,13 +367,13 @@ export function OrderDetailDialog({
                                                                                 : "N/A")}
                                                                     </span>
                                                                 </td>
-                                                                <td className="px-3 py-3 text-center font-semibold tabular-nums">
+                                                                <td className="px-3 py-3 text-center tabular-nums">
                                                                     {item.cantidad}
                                                                 </td>
                                                                 <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">
                                                                     ${formatMoney(item.costo_unitario)}
                                                                 </td>
-                                                                <td className="px-4 py-3 text-right font-semibold tabular-nums">
+                                                                <td className="px-4 py-3 text-right tabular-nums">
                                                                     ${formatMoney(lineTotal)}
                                                                 </td>
                                                             </tr>
@@ -385,7 +385,7 @@ export function OrderDetailDialog({
                                                         <td colSpan={4} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground text-right">
                                                             Subtotal ítems
                                                         </td>
-                                                        <td className="px-4 py-2.5 text-right font-bold tabular-nums">
+                                                        <td className="px-4 py-2.5 text-right tabular-nums">
                                                             ${formatMoney(order.costo_total)}
                                                         </td>
                                                     </tr>

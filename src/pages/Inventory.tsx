@@ -438,7 +438,7 @@ export default function Inventory() {
                       <TableCell>{m.unit}</TableCell>
                       <TableCell
                         className={cn(
-                          "text-right font-semibold tabular-nums",
+                          "text-right tabular-nums",
                           isLow && "text-red-600",
                           isOut && "text-zinc-500",
                           !isAlert && "text-foreground"

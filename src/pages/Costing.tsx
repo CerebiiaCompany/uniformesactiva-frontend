@@ -257,7 +257,7 @@ function OrdersTab({
                       {o.producto_nombre || "—"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{qty || "—"}</TableCell>
-                    <TableCell className="text-right tabular-nums font-medium">
+                    <TableCell className="text-right tabular-nums">
                       {fmt(unitCost(o))}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
@@ -268,7 +268,7 @@ function OrdersTab({
                     </TableCell>
                     <TableCell
                       className={cn(
-                        "text-right font-bold tabular-nums",
+                        "text-right tabular-nums",
                         m >= 25
                           ? "text-emerald-700"
                           : m >= 15
@@ -523,7 +523,7 @@ function LaborTab({
       <Card>
         <CardContent className="py-4 text-sm text-muted-foreground">
           Proveedores de tela registrados:{" "}
-          <span className="font-semibold text-foreground">{proveedoresCount}</span>
+          <span className="tabular-nums text-foreground">{proveedoresCount}</span>
           . Se usan al cargar costos de tela por variante.
         </CardContent>
       </Card>

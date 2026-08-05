@@ -141,7 +141,7 @@ export function MaterialMovementsDialog({
                                                 </td>
                                                 <td
                                                     className={cn(
-                                                        "px-3 py-2.5 text-right font-semibold tabular-nums",
+                                                        "px-3 py-2.5 text-right tabular-nums",
                                                         isOut ? "text-red-600" : "text-foreground"
                                                     )}
                                                 >

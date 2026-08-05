@@ -118,7 +118,7 @@ export function EditableSalePriceCell({
                     onBlur={() => void commit()}
                     onKeyDown={(e) => void handleKeyDown(e)}
                     disabled={isSaving}
-                    className="h-8 w-[110px] text-right text-sm font-semibold"
+                    className="h-8 w-[110px] text-right text-sm tabular-nums"
                 />
                 {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />}
             </div>
@@ -132,7 +132,7 @@ export function EditableSalePriceCell({
             disabled={isSaving}
             title="Clic para editar valor de venta"
             className={cn(
-                "group inline-flex items-center justify-end gap-1.5 font-semibold text-sm text-foreground tabular-nums",
+                "group inline-flex items-center justify-end gap-1.5 text-sm text-foreground tabular-nums",
                 "hover:text-primary transition-colors disabled:opacity-60 w-full"
             )}
         >

@@ -139,7 +139,7 @@ function SummaryCard({ title, value, formatValue, icon: Icon, tone }: SummaryCar
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 space-y-2">
           <p className="text-xs font-medium text-muted-foreground leading-snug">{title}</p>
-          <p className={cn("text-2xl font-bold tabular-nums tracking-tight", styles.value)}>
+          <p className={cn("text-2xl tabular-nums tracking-tight", styles.value)}>
             {formatValue ? formatValue(animated) : Math.round(animated).toLocaleString("es-CO")}
           </p>
         </div>
@@ -205,7 +205,7 @@ function StatusRing({
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5">
           <Icon className={cn("h-5 w-5", iconClassName)} />
-          <span className="text-base font-bold tabular-nums leading-none">{count}</span>
+          <span className="text-base tabular-nums leading-none">{count}</span>
         </div>
       </div>
       <div className="text-center px-1">
@@ -293,7 +293,7 @@ function TopMaterialsByValueChart({ rows }: { rows: MaterialValueRow[] }) {
                     <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.22),transparent)] opacity-60" />
                   </div>
                   <span
-                    className="pointer-events-none absolute top-1/2 z-10 -translate-y-1/2 translate-x-2 rounded-md bg-foreground/90 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-background opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100"
+                    className="pointer-events-none absolute top-1/2 z-10 -translate-y-1/2 translate-x-2 rounded-md bg-foreground/90 px-1.5 py-0.5 text-[10px] tabular-nums text-background opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100"
                     style={{ left: `min(${Math.max(widthPct, 2)}%, calc(100% - 4.5rem))` }}
                   >
                     ${formatCurrency(Math.round(row.value))}

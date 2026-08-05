@@ -54,7 +54,7 @@ export function LaborCostsTable({ data, onAdd, onCreateFase, onEdit, onDelete }:
                                 <div>{formatQuantity(item.cantidad)}</div>
                                 <div>${formatCurrency(item.unit_price)}</div>
                                 <div className="flex items-center justify-between gap-1">
-                                    <span className="font-bold">${formatCurrency(item.total)}</span>
+                                    <span>${formatCurrency(item.total)}</span>
                                     <div className="flex gap-1 shrink-0">
                                         <Pencil
                                             className="h-4 w-4 cursor-pointer text-muted-foreground hover:text-primary"

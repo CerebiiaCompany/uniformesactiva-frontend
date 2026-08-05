@@ -718,21 +718,31 @@ export default function VariantCostPage() {
                                 return (
                                     <div
                                         key={v.id}
-                                        className={`grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto] px-6 py-3 border-b items-center text-sm hover:bg-muted/10 ${isActive ? "bg-muted/5 font-semibold" : ""
-                                            }`}
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => {
+                                            if (!isActive) navigate(variantCostingUrl(v.id));
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if ((e.key === "Enter" || e.key === " ") && !isActive) {
+                                                e.preventDefault();
+                                                navigate(variantCostingUrl(v.id));
+                                            }
+                                        }}
+                                        className={cn(
+                                            "grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto] px-6 py-3 border-b items-center text-sm cursor-pointer transition-colors hover:bg-primary/5",
+                                            isActive && "bg-primary/5"
+                                        )}
                                     >
-                                        <button
-                                            type="button"
-                                            className={`text-left truncate ${isActive ? "text-primary font-bold" : "text-foreground"}`}
-                                            onClick={() => !isActive && navigate(variantCostingUrl(v.id))}
+                                        <span
+                                            className={cn(
+                                                "truncate",
+                                                isActive ? "text-primary font-bold" : "text-foreground"
+                                            )}
                                         >
                                             {v.code}
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="min-w-0 flex items-center justify-between gap-2 text-left"
-                                            onClick={() => !isActive && navigate(variantCostingUrl(v.id))}
-                                        >
+                                        </span>
+                                        <div className="min-w-0 flex items-center justify-between gap-2 text-left">
                                             <span className="truncate">
                                                 {v.name}
                                                 {isActive && (
@@ -742,11 +752,11 @@ export default function VariantCostPage() {
                                                 )}
                                             </span>
                                             {v.estimated_cost != null && Number(v.estimated_cost) > 0 && (
-                                                <span className="text-xs text-muted-foreground shrink-0">
+                                                <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
                                                     ${formatCurrency(v.estimated_cost)}
                                                 </span>
                                             )}
-                                        </button>
+                                        </div>
                                         <Button
                                             type="button"
                                             variant="ghost"
@@ -832,7 +842,7 @@ export default function VariantCostPage() {
                                                         isSalePriceSaving ||
                                                         !(sizeCons && sizeCons.length > 0)
                                                     }
-                                                    className="pl-7 font-semibold"
+                                                    className="pl-7 tabular-nums"
                                                 />
                                             </div>
                                             <p className="text-[11px] text-muted-foreground">
@@ -926,7 +936,7 @@ export default function VariantCostPage() {
                                                             talla del resumen.
                                                         </p>
                                                     )}
-                                                <div className="border-t pt-2 font-bold flex justify-between text-base rounded-md bg-sky-50 px-2 py-2 -mx-0.5">
+                                                <div className="border-t pt-2 flex justify-between text-base rounded-md bg-sky-50 px-2 py-2 -mx-0.5">
                                                     <span>Costo total prenda</span>
                                                     <span className="tabular-nums">
                                                         ${formatCurrency(overallTotal)}
@@ -973,7 +983,7 @@ export default function VariantCostPage() {
                                                                 ${formatCurrency(salePricing.iva)}
                                                             </span>
                                                         </div>
-                                                        <div className="flex justify-between font-bold text-base rounded-md bg-amber-100 px-2 py-2 -mx-0.5 border border-amber-200">
+                                                        <div className="flex justify-between text-base rounded-md bg-amber-100 px-2 py-2 -mx-0.5 border border-amber-200">
                                                             <span>Precio de venta IVA incluido</span>
                                                             <span className="tabular-nums">
                                                                 ${formatCurrency(salePricing.precioConIva)}

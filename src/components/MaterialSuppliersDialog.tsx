@@ -255,7 +255,7 @@ export function MaterialSuppliersDialog({
                                     <div className="truncate text-muted-foreground">
                                         {offer.code?.trim() ? offer.code : "—"}
                                     </div>
-                                    <div className="font-semibold">${formatUnitCost(offer.unit_cost)}</div>
+                                    <div className="tabular-nums">${formatUnitCost(offer.unit_cost)}</div>
                                     <div className="text-muted-foreground text-xs">
                                         {formatDate(offer.last_purchase_at)}
                                     </div>

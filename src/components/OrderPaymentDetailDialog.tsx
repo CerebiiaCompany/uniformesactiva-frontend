@@ -336,7 +336,7 @@ export function OrderPaymentDetailDialog({
               </p>
               <p className="text-xs text-muted-foreground pt-2">
                 Valor de venta:{" "}
-                <span className="font-semibold text-foreground">
+                <span className="tabular-nums text-foreground">
                   {formatMoney(saleValue)}
                 </span>
               </p>
@@ -374,19 +374,19 @@ export function OrderPaymentDetailDialog({
                     </p>
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Monto total</span>
-                      <span className="font-semibold tabular-nums">
+                      <span className="tabular-nums">
                         {formatMoney(totalDeuda)}
                       </span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Monto pagado</span>
-                      <span className="font-semibold tabular-nums">
+                      <span className="tabular-nums">
                         {formatMoney(totalDeuda)}
                       </span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Saldo pendiente</span>
-                      <span className="font-semibold tabular-nums">$0</span>
+                      <span className="tabular-nums">$0</span>
                     </div>
                   </div>
                 )}
@@ -677,7 +677,7 @@ export function OrderPaymentDetailDialog({
                     <div className="grid grid-cols-1 gap-2.5">
                       <div className="space-y-1">
                         <Label className="text-[11px]">Monto total de la deuda</Label>
-                        <Input readOnly value={formatMoney(saleValue)} className="h-9 bg-muted/50 font-medium" />
+                        <Input readOnly value={formatMoney(saleValue)} className="h-9 bg-muted/50 tabular-nums" />
                       </div>
                       <div className="space-y-1">
                         <Label className="text-[11px]">
@@ -702,7 +702,7 @@ export function OrderPaymentDetailDialog({
                               ? formatMoney(saldoPendiente)
                               : formatMoney(saleValue)
                           }
-                          className="h-9 bg-muted/50 font-medium text-amber-800"
+                          className="h-9 bg-muted/50 tabular-nums text-amber-800"
                         />
                       </div>
                       <div className="space-y-1">
@@ -808,10 +808,10 @@ function DetailRow({
           multiline
             ? "text-right text-sm font-medium leading-snug"
             : emphasize
-              ? "font-semibold tabular-nums text-primary"
+              ? "tabular-nums text-primary"
               : warn
-                ? "font-semibold tabular-nums text-amber-700 dark:text-amber-400"
-                : "font-medium tabular-nums text-right"
+                ? "tabular-nums text-amber-700 dark:text-amber-400"
+                : "tabular-nums text-right"
         }
       >
         {value}

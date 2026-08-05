@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { resolveFactoryCardInfo, groupOrderItemsForFactory } from "@/lib/order-fields";
 import { FactoryVariantBreakdown } from "@/components/FactoryVariantBreakdown";
+import { KanbanStageChip } from "@/components/KanbanStageChip";
 import {
   KanbanCardEditDialog,
   cardFormFromProductionOrder,
@@ -1726,7 +1727,7 @@ export default function Production() {
                     <div className="mb-3 space-y-1 rounded-md bg-muted/40 px-2 py-1.5 text-[10px] leading-snug">
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-muted-foreground shrink-0">Total</span>
-                        <span className="font-semibold text-foreground tabular-nums">{order.quantity} uds</span>
+                        <span className="text-foreground tabular-nums">{order.quantity} uds</span>
                       </div>
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-muted-foreground shrink-0">Bordado</span>
@@ -1958,7 +1959,7 @@ export default function Production() {
                           <p className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
                             Etapas completadas
                           </p>
-                          <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
+                          <p className="text-2xl text-foreground mt-1 tabular-nums">
                             {completedStagesCount}
                           </p>
                         </div>
@@ -2066,12 +2067,16 @@ export default function Production() {
                             >
                               <div>
                                 <p className="text-sm font-semibold text-foreground">{card.items}</p>
-                                <p className="text-xs text-muted-foreground mt-0.5">
-                                  {stageLabels[card.stage] || card.stage}
-                                  {card.assignee ? ` · ${card.assignee}` : ""}
-                                  {card.quantity ? ` · ${card.quantity} uds` : ""}
-                                  {card.dueDate ? ` · entrega ${card.dueDate}` : ""}
-                                </p>
+                                <div className="flex flex-wrap items-center gap-1.5 mt-1 text-xs text-muted-foreground">
+                                  <KanbanStageChip
+                                    stageKey={card.stage}
+                                    label={stageLabels[card.stage] || card.stage}
+                                    className="text-[10px] px-2 py-0.5"
+                                  />
+                                  {card.assignee ? <span>· {card.assignee}</span> : null}
+                                  {card.quantity ? <span>· {card.quantity} uds</span> : null}
+                                  {card.dueDate ? <span>· entrega {card.dueDate}</span> : null}
+                                </div>
                               </div>
 
                               <div className="space-y-2 text-xs">

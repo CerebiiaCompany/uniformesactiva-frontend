@@ -50,7 +50,7 @@ export function FactoryVariantBreakdown({
               </p>
             </div>
             <div className="shrink-0 text-right">
-              <p className={cn("font-bold tabular-nums text-primary", compact ? "text-xs" : "text-sm")}>
+              <p className={cn("tabular-nums text-primary", compact ? "text-xs" : "text-sm")}>
                 {v.cantidad}
               </p>
               <p className="text-[9px] uppercase tracking-wide text-muted-foreground">uds</p>
@@ -64,7 +64,7 @@ export function FactoryVariantBreakdown({
                   className="inline-flex items-center rounded bg-background/80 border px-1.5 py-0.5 text-[9px] font-medium"
                 >
                   {t.nombre}
-                  <span className="ml-1 text-primary font-bold">×{t.cantidad}</span>
+                  <span className="ml-1 text-primary">×{t.cantidad}</span>
                 </span>
               ))}
             </div>

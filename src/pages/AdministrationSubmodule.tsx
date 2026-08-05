@@ -49,6 +49,7 @@ import { UnauthorizedError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 import { endpoints } from "@/lib/api-endpoints";
 import { sortModulesBySidebarOrder } from "@/lib/module-sidebar-order";
+import { KanbanStageChip } from "@/components/KanbanStageChip";
 import {
   getCapaActionsForRole,
   saveCapaActionsForRole,
@@ -1179,18 +1180,21 @@ export default function AdministrationSubmodule() {
                               <span>{u.role || "—"}</span>
                               {isKanbanOperatorRole(u.role || "") &&
                               (u.productionStageKeys?.length || u.productionStageKey) ? (
-                                <span className="text-[11px] text-muted-foreground">
-                                  Capas:{" "}
+                                <div className="flex flex-wrap gap-1 mt-1">
                                   {(u.productionStageKeys?.length
                                     ? u.productionStageKeys
                                     : parseStageKeys(u.productionStageKey)
-                                  )
-                                    .map(
-                                      (key) =>
+                                  ).map((key) => (
+                                    <KanbanStageChip
+                                      key={key}
+                                      stageKey={key}
+                                      label={
                                         kanbanCapas.find((c) => c.key === key)?.label || key
-                                    )
-                                    .join(", ")}
-                                </span>
+                                      }
+                                      className="text-[10px] px-2 py-0.5"
+                                    />
+                                  ))}
+                                </div>
                               ) : null}
                             </div>
                           </TableCell>
@@ -1371,8 +1375,12 @@ export default function AdministrationSubmodule() {
                                   return (
                                     <TableRow key={capa.id}>
                                       <TableCell>
-                                        <p className="font-medium text-sm">{capa.label}</p>
-                                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                                        <KanbanStageChip
+                                          stageKey={capa.key}
+                                          label={capa.label}
+                                          className="font-semibold"
+                                        />
+                                        <p className="text-[11px] text-muted-foreground mt-1.5">
                                           {nextLabel
                                             ? `Mueve solo a → ${nextLabel}`
                                             : "Última etapa (sin siguiente)"}
@@ -1676,7 +1684,7 @@ export default function AdministrationSubmodule() {
                                 })
                               }
                             />
-                            <span>{c.label}</span>
+                            <KanbanStageChip stageKey={c.key} label={c.label} />
                           </label>
                         );
                       })}
@@ -1970,7 +1978,7 @@ export default function AdministrationSubmodule() {
                                 })
                               }
                             />
-                            <span>{c.label}</span>
+                            <KanbanStageChip stageKey={c.key} label={c.label} />
                           </label>
                         );
                       })}

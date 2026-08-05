@@ -793,7 +793,7 @@ export function AddOrderProductDialog({
                                         >
                                             Mujer
                                             {unitsByGenero.mujer > 0 && (
-                                                <span className="rounded-full bg-primary/15 text-primary px-1.5 py-0 text-[10px] font-bold tabular-nums">
+                                                <span className="rounded-full bg-primary/15 text-primary px-1.5 py-0 text-[10px] tabular-nums">
                                                     {unitsByGenero.mujer}
                                                 </span>
                                             )}
@@ -812,7 +812,7 @@ export function AddOrderProductDialog({
                                         >
                                             Hombre
                                             {unitsByGenero.hombre > 0 && (
-                                                <span className="rounded-full bg-primary/15 text-primary px-1.5 py-0 text-[10px] font-bold tabular-nums">
+                                                <span className="rounded-full bg-primary/15 text-primary px-1.5 py-0 text-[10px] tabular-nums">
                                                     {unitsByGenero.hombre}
                                                 </span>
                                             )}
@@ -874,7 +874,7 @@ export function AddOrderProductDialog({
                                                             {group.rangeLabel}
                                                         </span>
                                                     </span>
-                                                    <span className="font-bold tabular-nums text-foreground">
+                                                    <span className="tabular-nums text-foreground">
                                                         ${formatMoney(group.cost)}
                                                     </span>
                                                 </li>
@@ -885,7 +885,7 @@ export function AddOrderProductDialog({
                                                 <span className="text-xs text-muted-foreground">
                                                     Promedio ponderado de lo pedido
                                                 </span>
-                                                <span className="font-bold tabular-nums">
+                                                <span className="tabular-nums">
                                                     ${formatMoney(weightedUnitCost)}
                                                 </span>
                                             </div>
@@ -939,7 +939,7 @@ export function AddOrderProductDialog({
                                                     <Input
                                                         type="number"
                                                         min="0"
-                                                        className="h-9 text-center font-semibold tabular-nums"
+                                                        className="h-9 text-center tabular-nums"
                                                         value={qty}
                                                         onChange={(e) =>
                                                             setSizeQuantities((prev) => ({
@@ -962,13 +962,13 @@ export function AddOrderProductDialog({
                                 <div className="space-y-2 rounded-xl border bg-muted/20 p-3">
                                     <div className="flex items-center justify-between text-xs">
                                         <span className="text-muted-foreground">Resumen</span>
-                                        <span className="font-semibold tabular-nums">
+                                        <span className="tabular-nums">
                                             {totalUnits} uds
                                         </span>
                                     </div>
                                     <div className="flex items-center justify-between text-xs">
                                         <span className="text-muted-foreground">Costo subtotal</span>
-                                        <span className="font-semibold tabular-nums">
+                                        <span className="tabular-nums">
                                             ${formatMoney(subtotal)}
                                         </span>
                                     </div>
@@ -1004,7 +1004,7 @@ export function AddOrderProductDialog({
                                             placeholder="Lo que proyectas recibir por prenda"
                                             readOnly={!ingresoEditable}
                                             className={cn(
-                                                "h-10 font-semibold tabular-nums",
+                                                "h-10 tabular-nums",
                                                 !ingresoEditable && "bg-muted/40 cursor-default"
                                             )}
                                         />
@@ -1023,7 +1023,7 @@ export function AddOrderProductDialog({
                                         {totalUnits > 0 && ingresoProyectadoUnitario > 0 && (
                                             <p className="text-[11px] text-muted-foreground">
                                                 Precio de venta proyectado de este producto:{" "}
-                                                <span className="font-semibold text-foreground tabular-nums">
+                                                <span className="text-foreground tabular-nums">
                                                     ${formatMoney(ingresoProyectadoTotal)}
                                                 </span>
                                                 {" "}({totalUnits} × ${formatMoney(ingresoProyectadoUnitario)})

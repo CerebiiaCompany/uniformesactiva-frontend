@@ -78,6 +78,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { KanbanStageChip } from "@/components/KanbanStageChip";
+import {
+  getKanbanStageSoftPanelClass,
+  getKanbanStageSoftTextClass,
+} from "@/lib/kanban-stage-theme";
 
 const EMPTY_FORM = {
   name: "",
@@ -532,12 +537,7 @@ export default function Satellites() {
               {selectedCard.capas.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
                   {selectedCard.capas.map((c) => (
-                    <span
-                      key={c.key}
-                      className="inline-flex rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground"
-                    >
-                      {c.label}
-                    </span>
+                    <KanbanStageChip key={c.key} stageKey={c.key} label={c.label} />
                   ))}
                 </div>
               ) : null}
@@ -653,7 +653,7 @@ export default function Satellites() {
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Total facturado
                   </p>
-                  <p className="text-xl font-semibold tabular-nums">
+                  <p className="text-xl tabular-nums">
                     {formatMoneyCop(detailSummary.totalFacturado)}
                   </p>
                 </div>
@@ -661,7 +661,7 @@ export default function Satellites() {
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Pagado
                   </p>
-                  <p className="text-xl font-semibold tabular-nums text-emerald-600">
+                  <p className="text-xl tabular-nums text-emerald-600">
                     {formatMoneyCop(detailSummary.pagado)}
                   </p>
                 </div>
@@ -669,7 +669,7 @@ export default function Satellites() {
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Por pagar
                   </p>
-                  <p className="text-xl font-semibold tabular-nums text-red-600">
+                  <p className="text-xl tabular-nums text-red-600">
                     {formatMoneyCop(detailSummary.porPagar)}
                   </p>
                 </div>
@@ -677,7 +677,7 @@ export default function Satellites() {
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Órdenes activas
                   </p>
-                  <p className="text-xl font-semibold tabular-nums">
+                  <p className="text-xl tabular-nums">
                     {detailSummary.ordenesActivas}
                   </p>
                 </div>
@@ -1123,7 +1123,7 @@ export default function Satellites() {
                                 setFormError("");
                               }}
                             />
-                            <span>{c.label}</span>
+                            <KanbanStageChip stageKey={c.key} label={c.label} />
                           </label>
                         );
                       })}
@@ -1266,9 +1266,11 @@ function SatelliteOrderCard({
         <div className="min-w-0 space-y-2">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-sm font-semibold">{detail.orderCode}</span>
-            <span className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-              {detail.stageLabel}
-            </span>
+            <KanbanStageChip
+              stageKey={detail.stageKey}
+              label={detail.stageLabel}
+              className="text-[10px] px-2 py-0.5"
+            />
             <span
               className={cn(
                 "inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium",
@@ -1306,7 +1308,7 @@ function SatelliteOrderCard({
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             Costo
           </p>
-          <p className="text-lg font-semibold tabular-nums">{formatMoneyCop(displayCost)}</p>
+          <p className="text-lg tabular-nums">{formatMoneyCop(displayCost)}</p>
         </div>
       </div>
 
@@ -1334,20 +1336,16 @@ function SatelliteOrderCard({
           <>
             <div className="flex flex-wrap gap-1.5">
               {stages.map((stage) => (
-                <span
+                <KanbanStageChip
                   key={stage.stageKey}
-                  className={cn(
-                    "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-semibold border",
-                    stage.isCurrent
-                      ? "bg-red-600 text-white border-red-600"
-                      : "bg-red-50 text-red-700 border-red-200"
-                  )}
+                  stageKey={stage.stageKey}
+                  label={stage.stageLabel}
+                  className="text-[10px] font-semibold"
                 >
-                  {stage.stageLabel}
                   {stage.isCurrent ? (
-                    <span className="text-[9px] font-medium opacity-90">· actual</span>
+                    <span className="text-[9px] font-medium opacity-80">· actual</span>
                   ) : null}
-                </span>
+                </KanbanStageChip>
               ))}
             </div>
 
@@ -1358,18 +1356,24 @@ function SatelliteOrderCard({
                     key={`detail-${stage.stageKey}`}
                     className={cn(
                       "rounded-lg px-3 py-2.5 space-y-1.5 border",
-                      stage.isCurrent || stage.laborAmount > 0 || stage.actions.length > 0
-                        ? "bg-red-50/80 border-red-200"
-                        : "bg-background border-border"
+                      getKanbanStageSoftPanelClass(
+                        stage.stageKey,
+                        stage.isCurrent || stage.laborAmount > 0 || stage.actions.length > 0
+                      )
                     )}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                        <span className="text-sm font-semibold text-red-800">
+                        <span
+                          className={cn(
+                            "text-sm font-semibold",
+                            getKanbanStageSoftTextClass(stage.stageKey)
+                          )}
+                        >
                           {stage.stageLabel}
                         </span>
                         {stage.isCurrent ? (
-                          <span className="inline-flex rounded-full bg-white border border-red-300 px-2 py-0.5 text-[10px] font-medium text-red-700">
+                          <span className="inline-flex rounded-full bg-white/90 border border-current/20 px-2 py-0.5 text-[10px] font-medium">
                             Actual
                           </span>
                         ) : null}
@@ -1380,7 +1384,12 @@ function SatelliteOrderCard({
                         ) : null}
                       </div>
                       {stage.laborAmount > 0 ? (
-                        <span className="text-xs font-semibold tabular-nums text-red-800">
+                        <span
+                          className={cn(
+                            "text-xs tabular-nums",
+                            getKanbanStageSoftTextClass(stage.stageKey)
+                          )}
+                        >
                           MO {formatMoneyCop(stage.laborAmount)}
                         </span>
                       ) : null}
@@ -1389,7 +1398,14 @@ function SatelliteOrderCard({
                       <ul className="text-xs text-muted-foreground space-y-0.5">
                         {stage.actions.map((action) => (
                           <li key={action} className="flex items-start gap-1.5">
-                            <span className="text-red-600 mt-0.5">•</span>
+                            <span
+                              className={cn(
+                                "mt-0.5",
+                                getKanbanStageSoftTextClass(stage.stageKey)
+                              )}
+                            >
+                              •
+                            </span>
                             <span>{action}</span>
                           </li>
                         ))}
@@ -1536,12 +1552,7 @@ function SatelliteMetricCard({
             </span>
           ) : (
             card.capas.map((c) => (
-              <span
-                key={c.key}
-                className="inline-flex rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground"
-              >
-                {c.label}
-              </span>
+              <KanbanStageChip key={c.key} stageKey={c.key} label={c.label} />
             ))
           )}
         </div>
@@ -1557,19 +1568,19 @@ function SatelliteMetricCard({
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Órdenes
             </p>
-            <p className="text-xl font-semibold tabular-nums text-foreground">{card.ordenes}</p>
+            <p className="text-xl tabular-nums text-foreground">{card.ordenes}</p>
           </div>
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Pendientes
             </p>
-            <p className="text-xl font-semibold tabular-nums text-foreground">{card.pendientes}</p>
+            <p className="text-xl tabular-nums text-foreground">{card.pendientes}</p>
           </div>
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Por pagar
             </p>
-            <p className="text-lg font-semibold tabular-nums text-emerald-600 truncate">
+            <p className="text-lg tabular-nums text-emerald-600 truncate">
               {formatMoneyCop(card.porPagar)}
             </p>
           </div>

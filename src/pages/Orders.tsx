@@ -424,7 +424,7 @@ export default function Orders() {
 
                       return (
                         <TableRow key={order.id} className="hover:bg-muted/50">
-                          <TableCell className="text-center font-semibold text-foreground text-sm tabular-nums py-2.5">
+                          <TableCell className="text-center text-foreground text-sm tabular-nums py-2.5">
                             ORD-{order.id.slice(0, 3).toUpperCase()}
                           </TableCell>
                           <TableCell className="text-center text-muted-foreground text-sm py-2.5 whitespace-nowrap">
@@ -450,7 +450,7 @@ export default function Orders() {
                               <Package className="h-4 w-4" />
                             </Button>
                           </TableCell>
-                          <TableCell className="text-right font-medium text-foreground whitespace-nowrap text-sm py-2.5 tabular-nums">
+                          <TableCell className="text-right text-foreground whitespace-nowrap text-sm py-2.5 tabular-nums">
                             ${formatMoney(order.costo_total)}
                           </TableCell>
                           <TableCell className="text-right py-2.5">
@@ -461,7 +461,7 @@ export default function Orders() {
                                 setRealCostOrder(order);
                                 setRealCostOpen(true);
                               }}
-                              className="inline-flex items-center justify-end gap-1 w-full text-sm font-semibold tabular-nums text-red-600 hover:text-red-700 hover:underline"
+                              className="inline-flex items-center justify-end gap-1 w-full text-sm tabular-nums text-red-600 hover:text-red-700 hover:underline"
                             >
                               <Calculator className="h-3.5 w-3.5 shrink-0 opacity-80" />
                               $
@@ -477,10 +477,10 @@ export default function Orders() {
                               onDraftChange={handleSalePriceDraftChange}
                             />
                           </TableCell>
-                          <TableCell className={`text-right font-semibold whitespace-nowrap text-sm py-2.5 tabular-nums ${profitColorClass}`}>
+                          <TableCell className={`text-right whitespace-nowrap text-sm py-2.5 tabular-nums ${profitColorClass}`}>
                             ${formatMoney(ganancia)}
                           </TableCell>
-                          <TableCell className={`text-center font-semibold text-sm py-2.5 tabular-nums ${profitColorClass}`}>
+                          <TableCell className={`text-center text-sm py-2.5 tabular-nums ${profitColorClass}`}>
                             {margenPorcentaje.toFixed(1)}%
                             {isPreview && (
                               <span className="block text-[11px] font-normal text-muted-foreground leading-tight">

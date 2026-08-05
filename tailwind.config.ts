@@ -15,6 +15,7 @@ export default {
     extend: {
       fontFamily: {
         sans: ['"DM Sans"', "system-ui", "sans-serif"],
+        numeric: ['"IBM Plex Sans"', '"Segoe UI"', "system-ui", "sans-serif"],
       },
       colors: {
         border: "hsl(var(--border))",

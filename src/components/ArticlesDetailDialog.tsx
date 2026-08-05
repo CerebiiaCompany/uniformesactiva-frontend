@@ -66,7 +66,7 @@ function DetailField({
         <Icon className="h-3.5 w-3.5 text-primary mt-0.5 shrink-0" />
         <div className="min-w-0">
           <p className="text-[10px] text-muted-foreground leading-none mb-1">{label}</p>
-          <p className="text-xs font-semibold text-foreground truncate">{value}</p>
+          <p className="text-xs text-foreground tabular-nums truncate">{value}</p>
         </div>
       </div>
     </div>
@@ -77,7 +77,7 @@ function CostField({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <p className="text-[10px] text-muted-foreground mb-0.5">{label}</p>
-      <p className="text-sm font-semibold text-foreground tabular-nums truncate">{value}</p>
+      <p className="text-sm text-foreground tabular-nums truncate">{value}</p>
     </div>
   );
 }
@@ -270,7 +270,7 @@ function ArticleCostStructureDialog({
                 />
                 <div className="min-w-0">
                   <p className="text-[10px] text-muted-foreground mb-0.5">Total tela</p>
-                  <p className="text-sm font-semibold text-foreground tabular-nums truncate">
+                  <p className="text-sm text-foreground tabular-nums truncate">
                     {money(fabricPerGarment)}
                   </p>
                   {consumptionMeters > 0 && fabricPricePerMeter > 0 ? (
@@ -314,13 +314,13 @@ function ArticleCostStructureDialog({
             <div className="rounded-xl bg-primary/5 border border-primary/15 px-3.5 py-3 space-y-1.5">
               <div className="flex items-center justify-between gap-3 text-sm">
                 <span className="text-muted-foreground">Costo unitario total</span>
-                <span className="font-semibold tabular-nums">{money(overallUnit)}</span>
+                <span className="tabular-nums">{money(overallUnit)}</span>
               </div>
               <div className="flex items-center justify-between gap-3 text-sm">
                 <span className="text-muted-foreground">
                   Subtotal ({qty} uds)
                 </span>
-                <span className="font-bold tabular-nums text-primary">
+                <span className="tabular-nums text-primary">
                   {money(overallUnit * qty)}
                 </span>
               </div>

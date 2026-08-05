@@ -594,7 +594,7 @@ export default function Quotations() {
                         <Package className="h-4 w-4" />
                       </Button>
                     </TableCell>
-                    <TableCell className="text-right font-medium text-foreground whitespace-nowrap text-sm">
+                    <TableCell className="text-right text-foreground whitespace-nowrap text-sm tabular-nums">
                       {formatAmount(q.totalAmount)}
                     </TableCell>
                     <TableCell>
@@ -681,7 +681,7 @@ export default function Quotations() {
                         className="inline-flex items-center gap-1 text-red-500 hover:text-red-600 hover:bg-red-50 rounded-md px-1.5 py-0.5 transition-colors"
                       >
                         <MessageSquare className="h-4 w-4" />
-                        <span className="text-sm font-medium tabular-nums">
+                        <span className="text-sm tabular-nums">
                           {q.novedadesCount ?? 0}
                         </span>
                       </button>

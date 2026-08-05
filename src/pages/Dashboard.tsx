@@ -262,7 +262,7 @@ export default function Dashboard() {
                         <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
                           Saldo
                         </p>
-                        <p className="text-sm font-bold tabular-nums text-destructive">
+                        <p className="text-sm tabular-nums text-destructive">
                           ${formatCurrency(order.saldoPendiente)}
                         </p>
                       </div>
@@ -309,7 +309,7 @@ export default function Dashboard() {
                         </p>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
-                        <span className="text-sm font-semibold text-foreground tabular-nums">
+                        <span className="text-sm text-foreground tabular-nums">
                           ${formatCurrency(order.valorVenta)}
                         </span>
                         <StatusBadge status={asStatus(order.estado)} />

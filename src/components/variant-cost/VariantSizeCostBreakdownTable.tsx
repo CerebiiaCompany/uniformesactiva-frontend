@@ -76,7 +76,7 @@ export function VariantSizeCostBreakdownTable({
                                 <tr
                                     key={size.talla_id}
                                     className={cn(
-                                        "border-b cursor-pointer transition-colors hover:bg-muted/40",
+                                        "border-b cursor-pointer transition-colors hover:bg-primary/5",
                                         isSelected && "bg-primary/5"
                                     )}
                                     onClick={() => onSelectSize?.(size.talla_id)}
@@ -91,7 +91,7 @@ export function VariantSizeCostBreakdownTable({
                                     <td className="px-3 py-2.5 text-right">
                                         ${formatMoney(size.extras_total ?? 0)}
                                     </td>
-                                    <td className="px-4 py-2.5 text-right font-bold">
+                                    <td className="px-4 py-2.5 text-right">
                                         ${formatMoney(size.overall_total)}
                                     </td>
                                 </tr>
@@ -103,7 +103,7 @@ export function VariantSizeCostBreakdownTable({
                             <td className="px-4 py-3 font-semibold text-foreground">
                                 Consumo promedio de tallas
                             </td>
-                            <td className="px-3 py-3 text-right font-bold text-foreground">
+                            <td className="px-3 py-3 text-right text-foreground">
                                 ≈ {formatDecimal(computedAverage, 1)} m
                             </td>
                             <td className="px-3 py-3" />
