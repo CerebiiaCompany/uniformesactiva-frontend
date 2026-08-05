@@ -73,14 +73,41 @@ export function SizeConsumptionTable({
             };
         });
 
-        setLocalValues(newValues);
+        setLocalValues((prev) => {
+            const prevKeys = Object.keys(prev);
+            const nextKeys = Object.keys(newValues);
+            if (prevKeys.length === nextKeys.length) {
+                const same = nextKeys.every((key) => {
+                    const a = prev[key];
+                    const b = newValues[key];
+                    return (
+                        a &&
+                        b &&
+                        a.consumption === b.consumption &&
+                        a.dbId === b.dbId &&
+                        Boolean(a.dirty) === Boolean(b.dirty)
+                    );
+                });
+                if (same) return prev;
+            }
+            return newValues;
+        });
     }, [data, sizes]);
 
     useEffect(() => {
         const visibleIds = new Set(visibleSizes.map((s) => s.id));
-        setSelectedSizeIds((prev) => prev.filter((id) => visibleIds.has(id)));
 
-        const selectedStillVisible = visibleSizes.some((s) => s.id === selectedSizeId);
+        setSelectedSizeIds((prev) => {
+            const next = prev.filter((id) => visibleIds.has(id));
+            if (next.length === prev.length && next.every((id, i) => id === prev[i])) {
+                return prev;
+            }
+            return next;
+        });
+
+        const selectedStillVisible = Boolean(
+            selectedSizeId && visibleSizes.some((s) => s.id === selectedSizeId)
+        );
         if (selectedStillVisible) return;
 
         const firstConfigured = visibleSizes.find((size) => {
@@ -88,7 +115,9 @@ export function SizeConsumptionTable({
             return Boolean(item?.dbId && item.consumption);
         })?.id;
         const fallback = firstConfigured ?? visibleSizes[0]?.id ?? "";
-        if (fallback) setSelectedSizeId(fallback);
+        if (fallback && fallback !== selectedSizeId) {
+            setSelectedSizeId(fallback);
+        }
     }, [genero, visibleSizes, selectedSizeId, localValues]);
 
     const executeSave = async (

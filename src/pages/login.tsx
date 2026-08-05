@@ -113,24 +113,63 @@ export default function Login() {
                 if (userResponse.ok) {
                     const userData = await userResponse.json();
 
-                    const rawRoleString = userData.roles?.[0] || "";
-                    let extractedRole = "Operativo";
+                    const knownRoles = [
+                        "Administrador",
+                        "Comercial",
+                        "Producción",
+                        "Satélite",
+                        "Inventario",
+                        "Despachos",
+                        "Diseño",
+                        "Operativo",
+                    ];
 
-                    if (rawRoleString.includes("name='Administrador'") || rawRoleString === "Administrador") {
-                        extractedRole = "Administrador";
-                    } else if (rawRoleString.includes("name='Comercial'") || rawRoleString === "Comercial") {
-                        extractedRole = "Comercial";
-                    } else if (rawRoleString.includes("name='Operativo'") || rawRoleString === "Operativo") {
-                        extractedRole = "Operativo";
-                    }
+                    const normalizeRole = (raw: unknown): string => {
+                        if (typeof raw !== "string") return "";
+                        const s = raw.trim();
+                        if (!s) return "";
+                        const m = s.match(/name=['"]([^'"]+)['"]/);
+                        if (m?.[1]) return m[1];
+                        return s;
+                    };
+
+                    const extractedRoles = (userData.roles || [])
+                        .map(normalizeRole)
+                        .filter(Boolean)
+                        .map((r: string) => {
+                            const hit = knownRoles.find(
+                                (k) => k === r || r.includes(k)
+                            );
+                            return hit || r;
+                        });
+
+                    const extractedRole =
+                        extractedRoles[0] ||
+                        (knownRoles.includes(userData.roles?.[0])
+                            ? userData.roles[0]
+                            : "Operativo");
 
                     const cleanUser = {
+                        id: userData.id || "",
                         username: userData.username,
                         email: userData.email,
                         first_name: userData.first_name,
                         last_name: userData.last_name,
-                        roles: [extractedRole],
-                        permissions: userData.permissions || []
+                        roles: extractedRoles.length ? extractedRoles : [extractedRole],
+                        permissions: userData.permissions || [],
+                        production_stage_key: userData.production_stage_key || "",
+                        production_stage_keys: Array.isArray(userData.production_stage_keys)
+                            ? userData.production_stage_keys
+                            : String(userData.production_stage_key || "")
+                                  .split(",")
+                                  .map((k: string) => k.trim())
+                                  .filter(Boolean),
+                        area: userData.area || "",
+                        cargo: userData.cargo || "",
+                        phone: userData.phone || "",
+                        satellite_id: userData.satellite_id
+                            ? String(userData.satellite_id)
+                            : "",
                     };
 
                     localStorage.setItem("user", JSON.stringify(cleanUser));
@@ -259,7 +298,7 @@ export default function Login() {
                                         <Input
                                             id="username"
                                             type="text"
-                                            placeholder="tu.usuario"
+                                            placeholder="usuario o correo@empresa.com"
                                             value={username}
                                             onChange={(e) => setUsername(e.target.value)}
                                             className="h-11 rounded-lg border-neutral-300 bg-white pl-10 text-black placeholder:text-neutral-400 focus-visible:ring-red-600"

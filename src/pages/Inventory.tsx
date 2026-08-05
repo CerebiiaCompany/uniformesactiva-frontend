@@ -125,6 +125,30 @@ export default function Inventory() {
     setIsEditModalOpen(true);
   };
 
+  const ensureProveedorInCatalog = async (name: string): Promise<string> => {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error("Ingresa el nombre del proveedor.");
+
+    const exists = sortedProveedores.some(
+      (p) => p.name.toLocaleLowerCase("es") === trimmed.toLocaleLowerCase("es")
+    );
+    if (exists) {
+      return (
+        sortedProveedores.find(
+          (p) => p.name.toLocaleLowerCase("es") === trimmed.toLocaleLowerCase("es")
+        )?.name ?? trimmed
+      );
+    }
+
+    const result = await createProveedor(trimmed);
+    if (!result.success) {
+      throw new Error(result.error || "No se pudo crear el proveedor.");
+    }
+    await refetchProveedores();
+    toast.success(`Proveedor «${result.data?.name || trimmed}» creado`);
+    return result.data?.name?.trim() || trimmed;
+  };
+
   const handleOpenProveedorModal = () => {
     setProveedorName("");
     setProveedorError("");
@@ -526,13 +550,14 @@ export default function Inventory() {
                   value={newMaterial.supplier}
                   proveedores={sortedProveedores}
                   onChange={(name) => setNewMaterial({ ...newMaterial, supplier: name })}
-                  placeholder="Buscar o seleccionar proveedor..."
+                  placeholder="Buscar o crear proveedor..."
+                  allowCreate
+                  onCreateNew={ensureProveedorInCatalog}
                 />
-                {sortedProveedores.length === 0 && (
-                  <p className="mt-1.5 text-xs text-muted-foreground">
-                    No hay proveedores. Usa el botón <strong>+ Proveedor</strong> para crear uno.
-                  </p>
-                )}
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Busca un proveedor existente o escribe uno nuevo y elige{" "}
+                  <strong>Crear «…»</strong>.
+                </p>
               </div>
 
               <div>
@@ -614,7 +639,7 @@ export default function Inventory() {
                 </button>
                 <button
                   type="submit"
-                  disabled={isCreating || sortedProveedores.length === 0}
+                  disabled={isCreating || isCreatingProveedor}
                   className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded text-sm transition-colors disabled:opacity-55"
                 >
                   {isCreating ? "Creando..." : "Crear Material"}
@@ -708,8 +733,14 @@ export default function Inventory() {
                   value={editMaterial.supplier}
                   proveedores={sortedProveedores}
                   onChange={(name) => setEditMaterial({ ...editMaterial, supplier: name })}
-                  placeholder="Buscar o seleccionar proveedor..."
+                  placeholder="Buscar o crear proveedor..."
+                  allowCreate
+                  onCreateNew={ensureProveedorInCatalog}
                 />
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Busca un proveedor existente o escribe uno nuevo y elige{" "}
+                  <strong>Crear «…»</strong>.
+                </p>
               </div>
 
               <div>

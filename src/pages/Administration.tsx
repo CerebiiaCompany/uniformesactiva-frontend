@@ -1,15 +1,6 @@
-import { useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Link } from "react-router-dom";
 import {
   Building2,
@@ -17,22 +8,13 @@ import {
   Users,
   Building,
   ShieldCheck,
-  UserCheck,
 } from "lucide-react";
-import { toast } from "@/hooks/use-toast";
 
 const companyFields = [
   { label: "COMPAÑÍA", value: "Sin asignar" },
   { label: "NIT", value: "Sin asignar" },
   { label: "CORREO", value: "Sin asignar" },
   { label: "TELÉFONO", value: "Sin asignar" },
-];
-
-const mockUsers = [
-  { id: "1", nombre: "Carlos Ramírez", cargo: "Gerente General" },
-  { id: "2", nombre: "María Gómez", cargo: "Ejecutiva de Ventas" },
-  { id: "3", nombre: "Andrés Torres", cargo: "Jefe de Planta" },
-  { id: "4", nombre: "Laura Pérez", cargo: "Contadora" },
 ];
 
 const quickAccess = [
