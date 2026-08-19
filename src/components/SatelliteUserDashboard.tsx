@@ -38,6 +38,8 @@ import {
   workStatusLabel,
   type SatelliteUserPanelData,
 } from "@/lib/satellite-user-dashboard";
+import { matchesSatelliteTns } from "@/lib/satellite-dashboard";
+import { getPedidosCompra } from "@/services/tnsService";
 
 async function fetchAllOrders(): Promise<Order[]> {
   const all: Order[] = [];
@@ -112,15 +114,40 @@ export function SatelliteUserDashboard() {
     setLoading(true);
     setError(null);
     try {
-      const [orders, etapasList, workshop] = await Promise.all([
+      const [ordersRes, etapasRes, workshopRes, satellitesRes, tnsRes] = await Promise.allSettled([
         fetchAllOrders(),
         fetchEtapas(),
         user.satelliteId
-          ? http<SatelliteWorkshop>(endpoints.satellites.detail(user.satelliteId)).catch(
-              () => null
-            )
+          ? http<SatelliteWorkshop>(endpoints.satellites.detail(user.satelliteId))
           : Promise.resolve(null),
+        http<SatelliteWorkshop[]>(endpoints.satellites.list()).catch(() => []),
+        getPedidosCompra(),
       ]);
+
+      const orders = ordersRes.status === "fulfilled" ? ordersRes.value : [];
+      const etapasList = etapasRes.status === "fulfilled" ? etapasRes.value : [];
+      let workshop = workshopRes.status === "fulfilled" ? workshopRes.value : null;
+      const allSatellites =
+        satellitesRes.status === "fulfilled" && Array.isArray(satellitesRes.value)
+          ? satellitesRes.value
+          : [];
+      const tnsPedidos = tnsRes.status === "fulfilled" ? tnsRes.value.items : [];
+
+      if (!workshop && allSatellites.length > 0) {
+        if (user.satelliteId) {
+          workshop = allSatellites.find((s) => s.id === user.satelliteId) || null;
+        }
+        if (!workshop && user.fullName) {
+          workshop =
+            allSatellites.find(
+              (s) =>
+                s.name.toLowerCase().includes(user.fullName.toLowerCase()) ||
+                user.fullName.toLowerCase().includes(s.name.toLowerCase()) ||
+                (s.contact_name &&
+                  s.contact_name.toLowerCase().includes(user.fullName.toLowerCase()))
+            ) || null;
+        }
+      }
 
       const stageLabels: Record<string, string> = {};
       for (const e of etapasList || []) stageLabels[e.key] = e.label;
@@ -131,6 +158,7 @@ export function SatelliteUserDashboard() {
           orders,
           stageLabels,
           workshop,
+          tnsPedidos,
         })
       );
     } catch (err) {

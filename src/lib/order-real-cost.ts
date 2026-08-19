@@ -213,18 +213,29 @@ export function buildStageCostEntries(
       });
     }
 
-    if (card.laborCostEnabled) {
+    const stageLabor = card.stageLaborConfig?.[stage];
+    const laborEnabled =
+      stageLabor !== undefined
+        ? Boolean(stageLabor.enabled)
+        : Boolean(card.laborCostEnabled);
+    const laborPerUnit =
+      stageLabor !== undefined
+        ? stageLabor.perUnit != null
+          ? Number(stageLabor.perUnit)
+          : 0
+        : Number(card.laborCostPerUnit) || 0;
+
+    if (laborEnabled) {
       const qty = Number(card.quantity) || 0;
-      const perUnit = Number(card.laborCostPerUnit) || 0;
-      const amount = money(qty * perUnit);
-      if (amount > 0 || perUnit > 0) {
+      const amount = money(qty * laborPerUnit);
+      if (amount > 0 || laborPerUnit > 0) {
         const fingerprint = `labor:${stage}:${uid}`;
         entries.push({
           id: entryId(fingerprint),
           category: "labor",
           label: card.items?.trim()
-            ? `MO · ${card.items.trim()} (${qty} × ${perUnit})`
-            : `Mano de obra (${qty} × ${perUnit})`,
+            ? `MO · ${card.items.trim()} (${qty} × ${laborPerUnit})`
+            : `Mano de obra (${qty} × ${laborPerUnit})`,
           amount,
           stage,
           stageLabel: labelStage,
@@ -564,7 +575,9 @@ export function computeRealCostFromCards(
   const satelliteLines: RealCostLine[] = [];
   const shippingLines: RealCostLine[] = [];
 
-  for (const card of cards) {
+  const safeCards = Array.isArray(cards) ? cards : [];
+  for (const card of safeCards) {
+    if (!card) continue;
     const cleanedCard: ProductionOrder = {
       ...card,
       costLedger: sanitizeCostLedger(card.costLedger || []),

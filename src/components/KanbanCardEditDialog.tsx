@@ -977,7 +977,29 @@ export function KanbanCardEditDialog({
   );
 }
 
-export function cardFormFromProductionOrder(card: ProductionOrder): KanbanCardFormValues {
+export function cardFormFromProductionOrder(
+  card: ProductionOrder,
+  stageKey?: string
+): KanbanCardFormValues {
+  const currentStage = stageKey || card.stage;
+  const stageLabor = currentStage ? card.stageLaborConfig?.[currentStage] : undefined;
+
+  const laborCostEnabled =
+    stageLabor !== undefined
+      ? Boolean(stageLabor.enabled)
+      : card.stage === currentStage
+        ? Boolean(card.laborCostEnabled)
+        : false;
+
+  const laborCostPerUnit =
+    stageLabor !== undefined
+      ? stageLabor.perUnit != null && Number.isFinite(stageLabor.perUnit)
+        ? String(stageLabor.perUnit)
+        : "0.00"
+      : card.stage === currentStage && card.laborCostPerUnit != null && Number.isFinite(card.laborCostPerUnit)
+        ? String(card.laborCostPerUnit)
+        : "0.00";
+
   return {
     items: card.items,
     assignee: card.assignee,
@@ -997,11 +1019,8 @@ export function cardFormFromProductionOrder(card: ProductionOrder): KanbanCardFo
         ? String(card.moldCost)
         : "0.00",
     moldNotes: card.moldNotes || "",
-    laborCostEnabled: Boolean(card.laborCostEnabled),
-    laborCostPerUnit:
-      card.laborCostPerUnit != null && Number.isFinite(card.laborCostPerUnit)
-        ? String(card.laborCostPerUnit)
-        : "0.00",
+    laborCostEnabled,
+    laborCostPerUnit,
     cardImages: card.cardImages || [],
     cardFiles: card.cardFiles || [],
     novedades: card.novedades || [],

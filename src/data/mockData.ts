@@ -94,9 +94,10 @@ export interface ProductionOrder {
   moldResponsible?: string;
   moldSizes?: string;
   moldCost?: number | null;
-  moldNotes?: string;
   laborCostEnabled?: boolean;
   laborCostPerUnit?: number | null;
+  /** Configuración personalizada de mano de obra por capa/etapa */
+  stageLaborConfig?: Record<string, { enabled?: boolean; perUnit?: number | null }>;
   cardImages?: {
     id: string;
     name: string;

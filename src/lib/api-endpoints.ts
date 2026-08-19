@@ -49,6 +49,8 @@ export const endpoints = {
         list: (params?: string) => `${base()}/api/v1/satellites/${params ? `?${params}` : ""}`,
         create: () => `${base()}/api/v1/satellites/`,
         detail: (id: string) => `${base()}/api/v1/satellites/${id}/`,
+        tnsPedidosCompra: (params?: string) =>
+            `${base()}/api/v1/orders/tns/pedidos-compra/${params ? `?${params}` : ''}`,
     },
     lineas: {
         list: () => `${base()}/api/v1/products/lineas/`,
@@ -73,6 +75,8 @@ export const endpoints = {
         kanbanEtapas: () => `${base()}/api/v1/orders/kanban-etapas/`,
         kanbanEtapa: (etapaId: string) => `${base()}/api/v1/orders/kanban-etapas/${etapaId}/`,
         kanbanEtapasReorder: () => `${base()}/api/v1/orders/kanban-etapas/reorder/`,
+        tnsPedidosCompra: (params?: string) =>
+            `${base()}/api/v1/orders/tns/pedidos-compra/${params ? `?${params}` : ''}`,
     },
     dashboard: {
         stats: () => `${base()}/api/v1/dashboard/`,

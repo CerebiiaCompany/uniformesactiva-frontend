@@ -24,6 +24,9 @@ export type SatelliteSettlement = {
 export interface Satellite {
     id: string;
     name: string;
+    nit?: string;
+    nit_tercero?: string;
+    cod_tercero?: string;
     contact_name: string;
     phone: string;
     address: string;
@@ -48,6 +51,9 @@ export interface SatelliteFilters {
 
 export interface CreateSatellitePayload {
     name: string;
+    nit?: string;
+    nit_tercero?: string;
+    cod_tercero?: string;
     contact_name?: string;
     phone?: string;
     address?: string;

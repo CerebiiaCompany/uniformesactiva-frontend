@@ -31,7 +31,12 @@ import {
   Eye,
   EyeOff,
   UserPlus,
+  ShoppingBag,
 } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { PedidosCompraTNSTab } from "@/components/satellites/PedidosCompraTNSTab";
+import type { PedidoCompra } from "@/types/tns";
+import { getPedidosCompra } from "@/services/tnsService";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
@@ -86,6 +91,7 @@ import {
 
 const EMPTY_FORM = {
   name: "",
+  nit: "",
   person_name: "",
   email: "",
   phone: "",
@@ -130,6 +136,7 @@ async function fetchAllOrders(): Promise<Order[]> {
 }
 
 export default function Satellites() {
+  const [mainTab, setMainTab] = useState<"satelites" | "tns">("satelites");
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState<SatelliteFilters>({ ...EMPTY_FILTERS });
   const [appliedFilters, setAppliedFilters] = useState<SatelliteFilters>({ ...EMPTY_FILTERS });
@@ -148,6 +155,7 @@ export default function Satellites() {
 
   const [satelliteUsers, setSatelliteUsers] = useState<SatelliteUserRef[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [tnsPedidos, setTnsPedidos] = useState<PedidoCompra[]>([]);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deletingSatellite, setDeletingSatellite] = useState<SatelliteDashboardCard | null>(null);
@@ -162,16 +170,23 @@ export default function Satellites() {
   const loadMetrics = useCallback(async () => {
     setMetricsLoading(true);
     try {
-      const [usersRaw, ordersRaw] = await Promise.all([
+      const [usersRes, ordersRes, etapasRes, tnsRes] = await Promise.allSettled([
         http<Record<string, unknown>[]>(endpoints.users.list()),
         fetchAllOrders(),
         fetchEtapas(),
+        getPedidosCompra(),
       ]);
+
+      const usersRaw = usersRes.status === "fulfilled" ? usersRes.value : [];
+      const ordersRaw = ordersRes.status === "fulfilled" ? ordersRes.value : [];
+      const tnsItems = tnsRes.status === "fulfilled" ? tnsRes.value.items : [];
+
       const users = (Array.isArray(usersRaw) ? usersRaw : [])
         .map(mapApiUserToSatelliteRef)
         .filter((u): u is SatelliteUserRef => Boolean(u));
       setSatelliteUsers(users);
       setOrders(ordersRaw);
+      setTnsPedidos(tnsItems);
     } catch {
       toast.error("No se pudieron cargar métricas de satélites");
     } finally {
@@ -196,13 +211,19 @@ export default function Satellites() {
         satelliteUsers,
         orders,
         stageLabels,
+        tnsPedidos,
       }),
-    [satellites, satelliteUsers, orders, stageLabels]
+    [satellites, satelliteUsers, orders, stageLabels, tnsPedidos]
   );
 
   const selectedCard = useMemo(
     () => dashboardCards.find((c) => c.id === selectedId) || null,
     [dashboardCards, selectedId]
+  );
+
+  const selectedWorkshop = useMemo(
+    () => satellites.find((s) => s.id === selectedId) || null,
+    [satellites, selectedId]
   );
 
   const selectedOrderDetails = useMemo(() => {
@@ -216,8 +237,10 @@ export default function Satellites() {
       userNamesById: Object.fromEntries(
         selectedCard.userIds.map((id, i) => [id, selectedCard.userNames[i] || ""])
       ),
+      workshop: selectedWorkshop,
+      tnsPedidos,
     });
-  }, [selectedCard, orders, stageLabels]);
+  }, [selectedCard, orders, stageLabels, selectedWorkshop, tnsPedidos]);
 
   const filteredOrderDetails = useMemo(() => {
     if (detailPagoFilter === "todos") return selectedOrderDetails;
@@ -402,6 +425,7 @@ export default function Satellites() {
 
       const created = await createSatellite({
         name,
+        nit: form.nit.trim(),
         contact_name: personName,
         phone,
         address: form.address.trim(),
@@ -623,9 +647,7 @@ export default function Satellites() {
           {filteredOrderDetails.length === 0 ? (
             <Card>
               <CardContent className="py-10 text-center text-sm text-muted-foreground">
-                {selectedCard.userIds.length === 0
-                  ? "Este taller no tiene usuario Satélite vinculado. Asígnalo en Administración."
-                  : "No hay pedidos asignados a este satélite todavía."}
+                No hay pedidos asignados ni registrados en TNS para este satélite todavía.
               </CardContent>
             </Card>
           ) : (
@@ -635,8 +657,6 @@ export default function Satellites() {
                   key={detail.orderId}
                   detail={detail}
                   busy={updatingSatellite || savingConfirm}
-                  onMarkPaid={() => markOrderPaid(detail.orderId, detail.cost)}
-                  onMarkPending={() => markOrderPending(detail.orderId, detail.cost)}
                   onConfirmEdit={() => openConfirmDialog(detail)}
                 />
               ))}
@@ -773,42 +793,60 @@ export default function Satellites() {
           </Dialog>
         </div>
       ) : (
-      <Card>
-        <CardHeader className="pb-3 flex flex-row items-center justify-between gap-3">
-          <CardTitle className="text-lg font-semibold tracking-tight flex items-center gap-2">
-            <Satellite className="h-5 w-5 text-muted-foreground" />
-            Talleres satélite
-            {metricsLoading ? (
-              <span className="text-xs font-normal text-muted-foreground">Actualizando…</span>
-            ) : null}
-          </CardTitle>
-          <div className="flex items-center gap-2 shrink-0">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setShowFilters((v) => !v)}
-              className={cn(showFilters && "bg-muted")}
-            >
-              <Filter className="h-4 w-4 mr-1" />
-              Filtros
-              {hasActiveFilters ? (
-                <span className="ml-1.5 h-1.5 w-1.5 rounded-full bg-red-600" />
-              ) : null}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={openCreate}
-              className="bg-red-600 hover:bg-red-700 text-white"
-            >
-              <Plus className="h-4 w-4 mr-1" />
-              Nuevo satélite
-            </Button>
-          </div>
-        </CardHeader>
+        <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as "satelites" | "tns")} className="space-y-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <TabsList className="bg-muted/80 p-1 border border-border">
+              <TabsTrigger value="satelites" className="gap-2 text-xs sm:text-sm font-medium">
+                <Satellite className="h-4 w-4" />
+                Talleres satélite
+              </TabsTrigger>
+              <TabsTrigger value="tns" className="gap-2 text-xs sm:text-sm font-medium">
+                <ShoppingBag className="h-4 w-4" />
+                Pedidos de Compra / Pagos TNS
+              </TabsTrigger>
+            </TabsList>
 
-        <CardContent>
+            {mainTab === "satelites" && (
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowFilters((v) => !v)}
+                  className={cn(showFilters && "bg-muted")}
+                >
+                  <Filter className="h-4 w-4 mr-1" />
+                  Filtros
+                  {hasActiveFilters ? (
+                    <span className="ml-1.5 h-1.5 w-1.5 rounded-full bg-red-600" />
+                  ) : null}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={openCreate}
+                  className="bg-red-600 hover:bg-red-700 text-white"
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  Nuevo satélite
+                </Button>
+              </div>
+            )}
+          </div>
+
+          <TabsContent value="satelites" className="m-0 space-y-4">
+            <Card>
+              <CardHeader className="pb-3 flex flex-row items-center justify-between gap-3">
+                <CardTitle className="text-lg font-semibold tracking-tight flex items-center gap-2">
+                  <Satellite className="h-5 w-5 text-muted-foreground" />
+                  Talleres satélite
+                  {metricsLoading ? (
+                    <span className="text-xs font-normal text-muted-foreground">Actualizando…</span>
+                  ) : null}
+                </CardTitle>
+              </CardHeader>
+
+              <CardContent>
           {showFilters && (
             <div className="mb-4 rounded-xl border bg-muted/20 px-4 py-3">
               <div className="flex flex-wrap items-end gap-3">
@@ -927,6 +965,12 @@ export default function Satellites() {
           )}
         </CardContent>
       </Card>
+      </TabsContent>
+
+      <TabsContent value="tns" className="m-0">
+        <PedidosCompraTNSTab />
+      </TabsContent>
+      </Tabs>
       )}
 
       <AlertDialog
@@ -991,25 +1035,42 @@ export default function Satellites() {
                 </p>
               ) : null}
 
-              <div className="space-y-1.5">
-                <Label className="text-xs font-semibold text-muted-foreground">
-                  Nombre del satélite <span className="text-red-600">*</span>
-                </Label>
-                <Input
-                  required
-                  value={form.name}
-                  onChange={(e) => {
-                    setForm((p) => ({ ...p, name: e.target.value }));
-                    setFormError("");
-                  }}
-                  placeholder="Ej. Satélite Flor"
-                  className="h-10 rounded-lg bg-muted/40"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-muted-foreground">
+                    Razón social / Nombre en TNS <span className="text-red-600">*</span>
+                  </Label>
+                  <Input
+                    required
+                    value={form.name}
+                    onChange={(e) => {
+                      setForm((p) => ({ ...p, name: e.target.value }));
+                      setFormError("");
+                    }}
+                    placeholder="Ej. CLAUDIA MARIA BOHORQUEZ / SATELITE"
+                    className="h-10 rounded-lg bg-muted/40"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-muted-foreground">
+                    NIT / Cédula del tercero (TNS)
+                  </Label>
+                  <Input
+                    value={form.nit}
+                    onChange={(e) => {
+                      setForm((p) => ({ ...p, nit: e.target.value }));
+                      setFormError("");
+                    }}
+                    placeholder="Ej. 60359318"
+                    className="h-10 rounded-lg bg-muted/40"
+                  />
+                </div>
               </div>
 
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold text-muted-foreground">
-                  Nombre de la persona <span className="text-red-600">*</span>
+                  Persona de contacto / Encargado <span className="text-red-600">*</span>
                 </Label>
                 <Input
                   required
@@ -1226,14 +1287,10 @@ export default function Satellites() {
 function SatelliteOrderCard({
   detail,
   busy,
-  onMarkPaid,
-  onMarkPending,
   onConfirmEdit,
 }: {
   detail: SatelliteOrderDetail;
   busy: boolean;
-  onMarkPaid: () => void;
-  onMarkPending: () => void;
   onConfirmEdit: () => void;
 }) {
   const [showStages, setShowStages] = useState(false);
@@ -1453,29 +1510,6 @@ function SatelliteOrderCard({
           <CheckSquare className="h-3.5 w-3.5" />
           Confirmar / Editar
         </Button>
-        {detail.paymentStatus === "paid" ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 text-xs gap-1"
-            disabled={busy}
-            onClick={onMarkPending}
-          >
-            Marcar por pagar
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            size="sm"
-            className="h-8 text-xs gap-1 bg-red-600 hover:bg-red-700 text-white"
-            disabled={busy || displayCost <= 0}
-            onClick={onMarkPaid}
-          >
-            <DollarSign className="h-3.5 w-3.5" />
-            Marcar pagado
-          </Button>
-        )}
       </div>
     </div>
   );
@@ -1557,10 +1591,15 @@ function SatelliteMetricCard({
           )}
         </div>
 
-        {!hasUsers ? (
-          <p className="mt-2 text-[11px] text-amber-700 bg-amber-50 rounded-md px-2 py-1">
-            Vincula un usuario con rol Satélite en Administración para ver métricas.
+        {!hasUsers && !card.isTnsSynced ? (
+          <p className="mt-2 text-[11px] text-amber-700 bg-amber-50 dark:bg-amber-950/40 rounded-md px-2 py-1">
+            Vincula un usuario con rol Satélite o registra el NIT/Nombre de TNS.
           </p>
+        ) : card.isTnsSynced ? (
+          <div className="mt-2 flex items-center gap-1.5 text-[11px] text-primary bg-primary/10 rounded-md px-2 py-0.5 w-fit font-medium">
+            <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+            Sincronizado con TNS
+          </div>
         ) : null}
 
         <div className="mt-4 pt-3 border-t grid grid-cols-3 gap-2">
@@ -1568,19 +1607,26 @@ function SatelliteMetricCard({
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Órdenes
             </p>
-            <p className="text-xl tabular-nums text-foreground">{card.ordenes}</p>
+            <p className="text-xl tabular-nums text-foreground font-semibold">{card.ordenes}</p>
           </div>
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Pendientes
             </p>
-            <p className="text-xl tabular-nums text-foreground">{card.pendientes}</p>
+            <p className="text-xl tabular-nums text-foreground font-semibold">{card.pendientes}</p>
           </div>
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Por pagar
             </p>
-            <p className="text-lg tabular-nums text-emerald-600 truncate">
+            <p
+              className={cn(
+                "text-lg tabular-nums truncate font-bold",
+                card.porPagar > 0
+                  ? "text-red-600 dark:text-red-400"
+                  : "text-emerald-600 dark:text-emerald-400"
+              )}
+            >
               {formatMoneyCop(card.porPagar)}
             </p>
           </div>

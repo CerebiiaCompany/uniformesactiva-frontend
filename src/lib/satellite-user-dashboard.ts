@@ -1,6 +1,7 @@
 import type { Order } from "@/hooks/useOrders";
 import type { Satellite, SatelliteSettlement } from "@/hooks/useSatellites";
 import type { ProductionOrder } from "@/data/mockData";
+import type { PedidoCompra } from "@/types/tns";
 import {
   buildSatelliteOrderDetails,
   formatMoneyCop,
@@ -8,6 +9,7 @@ import {
   summarizeSatelliteOrders,
   workStatusLabel,
   type SatelliteOrderDetail,
+  type SatelliteWorkshop,
 } from "@/lib/satellite-dashboard";
 import { parseStageKeys } from "@/lib/production-capa-permissions";
 
@@ -307,10 +309,12 @@ export function buildSatelliteOrderHistory(params: {
 
   const detailById = new Map(orderDetails.map((d) => [d.orderId, d]));
   const history: SatelliteOrderHistory[] = [];
+  const processedDetailIds = new Set<string>();
 
-  for (const order of orders) {
+  for (const order of orders || []) {
     const detail = detailById.get(order.id);
     if (!detail) continue;
+    processedDetailIds.add(detail.orderId);
 
     const cards = (
       Array.isArray(order.kanban_tarjetas) ? order.kanban_tarjetas : []
@@ -371,7 +375,7 @@ export function buildSatelliteOrderHistory(params: {
 
     const stages = [...stageMap.values()].sort((a, b) => {
       if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
-      return (b.updatedAt || "").localeCompare(a.updatedAt || "");
+      return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
     });
 
     const totalLabor =
@@ -393,6 +397,36 @@ export function buildSatelliteOrderHistory(params: {
     });
   }
 
+  // Incluir pedidos de compra TNS asignados a este satélite
+  for (const detail of orderDetails || []) {
+    if (processedDetailIds.has(detail.orderId)) continue;
+    processedDetailIds.add(detail.orderId);
+
+    const stages: SatelliteStageActivity[] = (detail.stagesWorked || []).map((s) => ({
+      stageKey: s.stageKey,
+      stageLabel: s.stageLabel,
+      actions: s.actions && s.actions.length > 0 ? s.actions : ["Mano de Obra TNS"],
+      laborAmount: s.laborAmount,
+      materials: s.materials || [],
+      novedadesCount: s.novedadesCount || 0,
+      isCurrent: s.isCurrent,
+      updatedAt: detail.dueDate || null,
+    }));
+
+    history.push({
+      orderId: detail.orderId,
+      orderCode: detail.orderCode,
+      customerName: detail.customerName,
+      description: detail.description,
+      quantity: detail.quantity,
+      orderStatus: detail.orderStatus,
+      paymentStatus: detail.paymentStatus,
+      workStatus: detail.workStatus,
+      totalLabor: detail.cost,
+      stages,
+    });
+  }
+
   return history;
 }
 
@@ -400,18 +434,48 @@ export function buildSatelliteUserPanel(params: {
   user: StoredSatelliteUser;
   orders: Order[];
   stageLabels: Record<string, string>;
-  workshop: Satellite | null;
+  workshop: Satellite | SatelliteWorkshop | null;
+  tnsPedidos?: PedidoCompra[];
 }): SatelliteUserPanelData {
-  const { user, orders, stageLabels, workshop } = params;
+  const { user, orders, stageLabels, workshop, tnsPedidos = [] } = params;
   const settlements: Record<string, SatelliteSettlement> = workshop?.settlements || {};
+
+  const workshopRef: SatelliteWorkshop = workshop
+    ? {
+        id: workshop.id,
+        name: workshop.name,
+        nit: (workshop as Record<string, unknown>).nit as string || (workshop as Record<string, unknown>).nit_tercero as string || "",
+        contact_name: workshop.contact_name || user.fullName,
+        phone: workshop.phone || user.phone || "",
+        address: workshop.address || "",
+        specialties: workshop.specialties || user.stageKeys || [],
+        notes: workshop.notes || "",
+        status: workshop.status || "active",
+        payment_status: workshop.payment_status || "al_dia",
+        settlements,
+      }
+    : {
+        id: user.satelliteId || user.id,
+        name: user.fullName,
+        contact_name: user.fullName,
+        phone: user.phone || "",
+        address: "",
+        specialties: user.stageKeys || [],
+        notes: "",
+        status: "active",
+        payment_status: "al_dia",
+        settlements,
+      };
 
   const orderDetails = buildSatelliteOrderDetails({
     userIds: user.id ? [user.id] : [],
     orders,
     stageLabels,
     settlements,
-    workshopId: workshop?.id || user.satelliteId || null,
+    workshopId: workshopRef.id,
     userNamesById: user.id ? { [user.id]: user.fullName } : {},
+    workshop: workshopRef,
+    tnsPedidos,
   });
 
   const summary = summarizeSatelliteOrders(orderDetails);
@@ -450,7 +514,7 @@ export function buildSatelliteUserPanel(params: {
 
   return {
     user,
-    workshopName: workshop?.name || null,
+    workshopName: workshop?.name || workshopRef.name || null,
     assignedOrders: orderDetails.length,
     pendingOrders: orderDetails.filter((d) => d.orderStatus !== "delivered").length,
     debtPending: summary.porPagar,

@@ -18,6 +18,7 @@ import {
   type KanbanCardFormValues,
 } from "@/components/KanbanCardEditDialog";
 import { KanbanNovedadesDialog } from "@/components/KanbanNovedadesDialog";
+import { StageLaborCostDialog } from "@/components/StageLaborCostDialog";
 import { useToast } from "@/hooks/use-toast";
 import { HttpError } from "@/lib/http";
 import {
@@ -171,6 +172,67 @@ function deductedMap(list?: { materialId: string; quantity: number }[]) {
   return map;
 }
 
+function getCardLaborInfoForStage(card: ProductionOrder, stageKey: string) {
+  const isCurrentStage = card.stage === stageKey;
+  const stageConfig = card.stageLaborConfig?.[stageKey];
+
+  let unitLabor = 0;
+  let liveLaborTotal = 0;
+
+  if (stageConfig !== undefined) {
+    if (stageConfig.enabled && stageConfig.perUnit != null && Number(stageConfig.perUnit) > 0) {
+      unitLabor = Number(stageConfig.perUnit);
+      liveLaborTotal = (Number(card.quantity) || 0) * unitLabor;
+    }
+  } else if (isCurrentStage && card.laborCostEnabled && card.laborCostPerUnit != null) {
+    unitLabor = Number(card.laborCostPerUnit) || 0;
+    liveLaborTotal = unitLabor > 0 ? (Number(card.quantity) || 0) * unitLabor : 0;
+  }
+
+  // 1. Entradas en costLedger para esta etapa/capa con categoría "labor"
+  const ledgerLaborEntries = (card.costLedger || []).filter(
+    (e) =>
+      e.stage === stageKey &&
+      (e.category === "labor" || (e.actorKind === "satellite" && e.category === "labor"))
+  );
+  const ledgerLaborTotal = ledgerLaborEntries.reduce(
+    (sum, e) => sum + (Number(e.amount) || 0),
+    0
+  );
+
+  // 3. Costo de satélite / taller si aplica
+  const satEntries = (card.costLedger || []).filter(
+    (e) => e.stage === stageKey && e.category === "satellite"
+  );
+  const ledgerSatTotal = satEntries.reduce(
+    (sum, e) => sum + (Number(e.amount) || 0),
+    0
+  );
+  const liveSatTotal =
+    isCurrentStage && card.satelliteCost != null && Number(card.satelliteCost) > 0
+      ? Number(card.satelliteCost)
+      : 0;
+  const satelliteTotal = ledgerSatTotal > 0 ? ledgerSatTotal : liveSatTotal;
+
+  // Total de mano de obra
+  const totalLabor = liveLaborTotal > 0 ? liveLaborTotal : ledgerLaborTotal;
+  const finalUnitLabor =
+    unitLabor > 0
+      ? unitLabor
+      : totalLabor > 0 && Number(card.quantity) > 0
+        ? totalLabor / Number(card.quantity)
+        : 0;
+
+  return {
+    totalLabor,
+    unitLabor: finalUnitLabor,
+    satelliteTotal,
+    hasLabor: totalLabor > 0,
+    hasSatellite: satelliteTotal > 0,
+    hasCost: totalLabor > 0 || satelliteTotal > 0,
+  };
+}
+
 export default function Production() {
   const { toast } = useToast();
   const { orders: rawOrders, fetchOrders, updateOrderStage, fetchEtapaLogs, updateKanbanAssignment, updateKanbanTarjetas } = useOrders();
@@ -224,6 +286,61 @@ export default function Production() {
   >([]);
   const [assignOpenFor, setAssignOpenFor] = useState<string | null>(null);
   const [novedadesCard, setNovedadesCard] = useState<ProductionOrder | null>(null);
+  const [laborDialog, setLaborDialog] = useState<{
+    open: boolean;
+    card: ProductionOrder | null;
+    stageKey: string;
+    stageLabel: string;
+  }>({ open: false, card: null, stageKey: "", stageLabel: "" });
+
+  const openLaborCostModal = (card: ProductionOrder, stageKey: string) => {
+    const label = stages.find((s) => s.key === stageKey)?.label || stageKey;
+    setLaborDialog({
+      open: true,
+      card,
+      stageKey,
+      stageLabel: label,
+    });
+  };
+
+  const saveLaborCostForStage = (data: { enabled: boolean; perUnit: number | null }) => {
+    if (!laborDialog.card || !laborDialog.stageKey) return;
+    const { card, stageKey } = laborDialog;
+
+    const stageLaborConfig = {
+      ...(card.stageLaborConfig || {}),
+      [stageKey]: {
+        enabled: data.enabled,
+        perUnit: data.enabled && data.perUnit != null ? data.perUnit : null,
+      },
+    };
+
+    const isCurrentStage = card.stage === stageKey;
+    const patch: Partial<ProductionOrder> = {
+      stageLaborConfig,
+      ...(isCurrentStage
+        ? {
+            laborCostEnabled: data.enabled,
+            laborCostPerUnit: data.enabled && data.perUnit != null ? data.perUnit : null,
+          }
+        : {}),
+    };
+
+    if (card.orderId) {
+      commitOrderCards(card.orderId, (cards) =>
+        cards.map((c) => (c.id === card.id ? { ...c, ...patch } : c))
+      );
+    } else {
+      setProdOrders((prev) =>
+        prev.map((c) => (c.id === card.id ? { ...c, ...patch } : c))
+      );
+    }
+
+    toast({
+      title: "Mano de obra guardada",
+      description: `Tarifa actualizada para la capa ${laborDialog.stageLabel}.`,
+    });
+  };
 
   useEffect(() => {
     const sync = () => {
@@ -721,6 +838,23 @@ export default function Production() {
         stages.find((s) => s.key === previousStage)?.label || previousStage;
       const frozenCosts = freezeStageCostsOnMove(card, previousStage, prevLabel);
 
+      const stageLaborConfig = {
+        ...(card.stageLaborConfig || {}),
+        ...(previousStage
+          ? {
+              [previousStage]: {
+                enabled: Boolean(card.laborCostEnabled),
+                perUnit: card.laborCostPerUnit != null ? Number(card.laborCostPerUnit) : null,
+              },
+            }
+          : {}),
+      };
+
+      const targetLaborConfig = targetStage ? stageLaborConfig[targetStage] : undefined;
+      const targetLaborEnabled = targetLaborConfig ? Boolean(targetLaborConfig.enabled) : false;
+      const targetLaborPerUnit =
+        targetLaborConfig && targetLaborConfig.perUnit != null ? Number(targetLaborConfig.perUnit) : null;
+
       // Al cambiar de capa se limpia Producción y Satélite: el admin reasigna
       const movedPatch = {
         ...frozenCosts,
@@ -730,6 +864,9 @@ export default function Production() {
         assigneeId: null as string | null,
         satelliteAssignee: "Sin asignar",
         satelliteAssigneeId: null as string | null,
+        stageLaborConfig,
+        laborCostEnabled: targetLaborEnabled,
+        laborCostPerUnit: targetLaborPerUnit,
         stageHistory: [
           ...(card.stageHistory || []),
           { stage: targetStage as ProductionOrder["stage"], enteredAt: now },
@@ -1060,7 +1197,7 @@ export default function Production() {
       });
       return;
     }
-    setCardFormInitial(cardFormFromProductionOrder(card));
+    setCardFormInitial(cardFormFromProductionOrder(card, card.stage));
     setCardDialog({ open: true, mode: "edit", cardId: card.id, stageKey: card.stage });
   };
 
@@ -1215,9 +1352,23 @@ export default function Production() {
         ? Number(laborCostRaw)
         : null;
 
+    const currentStage = stageKey || existingCard?.stage;
+    const stageLaborConfig = {
+      ...(existingCard?.stageLaborConfig || {}),
+      ...(currentStage
+        ? {
+            [currentStage]: {
+              enabled: values.laborCostEnabled,
+              perUnit: values.laborCostEnabled && laborCostPerUnit != null ? laborCostPerUnit : null,
+            },
+          }
+        : {}),
+    };
+
     const laborAndFiles = {
       laborCostEnabled: values.laborCostEnabled,
       laborCostPerUnit: values.laborCostEnabled ? laborCostPerUnit : null,
+      stageLaborConfig,
       cardImages: values.cardImages,
       cardFiles: values.cardFiles,
       novedades: values.novedades || [],
@@ -1688,6 +1839,7 @@ export default function Production() {
                   const needsAssign = !order.assigneeId && !order.satelliteAssigneeId;
                   const hasProductionAssignee = Boolean(order.assigneeId);
                   const hasSatelliteAssignee = Boolean(order.satelliteAssigneeId);
+                  const stageLabor = getCardLaborInfoForStage(order, stage.key);
                   return (
                   <div
                     key={order.id}
@@ -1740,6 +1892,53 @@ export default function Production() {
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-muted-foreground shrink-0">Tipo</span>
                         <span className="font-medium text-foreground text-right">{order.tipoBordado || "—"}</span>
+                      </div>
+                      <div className="flex items-start justify-between gap-2 border-t border-border/50 pt-1 mt-1">
+                        <span className="text-muted-foreground shrink-0 inline-flex items-center gap-1 font-medium">
+                          <DollarSign className="h-3 w-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                          Mano de obra
+                        </span>
+                        <div className="text-right leading-tight">
+                          {stageLabor.hasLabor ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openLaborCostModal(order, stage.key);
+                              }}
+                              className="group/labor text-right hover:opacity-85 transition-opacity"
+                              title="Haz clic para editar el costo de mano de obra en esta capa"
+                            >
+                              <span className="font-semibold text-emerald-700 dark:text-emerald-400 tabular-nums group-hover/labor:underline">
+                                {formatMoneyCop(stageLabor.totalLabor)}
+                              </span>
+                              {stageLabor.unitLabor > 0 && (
+                                <span className="block text-[9px] text-muted-foreground tabular-nums">
+                                  {formatMoneyCop(stageLabor.unitLabor)}/ud
+                                </span>
+                              )}
+                            </button>
+                          ) : stageLabor.hasSatellite ? (
+                            <span className="font-semibold text-emerald-700 dark:text-emerald-400 tabular-nums">
+                              {formatMoneyCop(stageLabor.satelliteTotal)}
+                            </span>
+                          ) : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openLaborCostModal(order, stage.key);
+                              }}
+                              className="h-5 px-2 text-[10px] font-medium border-emerald-600/30 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40 gap-0.5 rounded shadow-none"
+                              title="Asignar costo de mano de obra para esta capa"
+                            >
+                              <DollarSign className="h-2.5 w-2.5" />
+                              Valor
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground mb-2">
@@ -1900,6 +2099,15 @@ export default function Production() {
           if (!open) setNovedadesCard(null);
         }}
         card={novedadesCard}
+      />
+
+      <StageLaborCostDialog
+        open={laborDialog.open}
+        onOpenChange={(open) => setLaborDialog((d) => ({ ...d, open }))}
+        card={laborDialog.card}
+        stageKey={laborDialog.stageKey}
+        stageLabel={laborDialog.stageLabel}
+        onSave={saveLaborCostForStage}
       />
 
       {historyOpen && (
