@@ -1,6 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type { PedidoCompra, PedidosCompraFilters } from "@/types/tns";
-import { getPedidosCompra, getPedidoNumDoc } from "@/services/tnsService";
+import {
+  getPedidosCompra,
+  getPedidoNumDoc,
+  filterPedidosCompraList,
+} from "@/services/tnsService";
 import { HttpError } from "@/lib/http";
 
 function resolveHttpErrorMessage(err: unknown, fallback: string): string {
@@ -17,46 +21,45 @@ const INITIAL_FILTERS: PedidosCompraFilters = {
   estado: "todos",
   search: "",
   page: 1,
-  page_size: 20,
+  page_size: 50,
 };
 
 export function usePedidosCompraTNS(autoFetch = true) {
-  const [pedidos, setPedidos] = useState<PedidoCompra[]>([]);
+  const [allPedidos, setAllPedidos] = useState<PedidoCompra[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [totalCount, setTotalCount] = useState<number>(0);
+  const [serverTotalCount, setServerTotalCount] = useState<number>(0);
   const [filters, setFilters] = useState<PedidosCompraFilters>(INITIAL_FILTERS);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
 
   const fetchPedidos = useCallback(
-    async (appliedFilters?: PedidosCompraFilters) => {
+    async (queryFilters: PedidosCompraFilters) => {
       setLoading(true);
       setError(null);
       try {
-        const queryFilters = appliedFilters ?? filters;
         const res = await getPedidosCompra(queryFilters);
-        setPedidos(res.items);
-        setTotalCount(res.total_count);
+        setAllPedidos(res.items);
+        setServerTotalCount(res.total_count);
       } catch (err) {
         const msg = resolveHttpErrorMessage(
           err,
           "No se pudieron cargar los pedidos de compra desde TNS."
         );
         setError(msg);
-        setPedidos([]);
-        setTotalCount(0);
+        setAllPedidos([]);
+        setServerTotalCount(0);
       } finally {
         setLoading(false);
       }
     },
-    [filters]
+    []
   );
 
   const updateFilters = useCallback((partial: Partial<PedidosCompraFilters>) => {
     setFilters((prev) => ({
       ...prev,
       ...partial,
-      page: partial.page !== undefined ? partial.page : 1, // Reset page on filter change unless specified
+      page: partial.page !== undefined ? partial.page : 1,
     }));
   }, []);
 
@@ -84,26 +87,46 @@ export function usePedidosCompraTNS(autoFetch = true) {
     setExpandedRows({});
   }, []);
 
+  // Filtrado reactivo completo en cliente inmediato
+  const filteredPedidos = useMemo(() => {
+    return filterPedidosCompraList(allPedidos, filters);
+  }, [allPedidos, filters]);
+
+  // Consulta automática reactiva a la API cuando cambian las fechas, estado o filtros
   useEffect(() => {
-    if (autoFetch) {
+    if (!autoFetch) return;
+
+    const timer = setTimeout(() => {
       void fetchPedidos(filters);
-    }
-  }, [filters, autoFetch]); // Refetch when filters change
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [
+    autoFetch,
+    fetchPedidos,
+    filters.fecha_inicio,
+    filters.fecha_fin,
+    filters.estado,
+    filters.proveedor,
+    filters.numero_documento,
+    filters.search,
+  ]);
 
   return {
-    pedidos,
+    pedidos: filteredPedidos,
+    rawPedidos: allPedidos,
     loading,
     error,
-    totalCount,
+    totalCount: filteredPedidos.length || serverTotalCount,
     filters,
     setFilters,
     updateFilters,
     clearFilters,
-    fetchPedidos,
+    fetchPedidos: (f?: PedidosCompraFilters) => fetchPedidos(f ?? filters),
     refresh: () => fetchPedidos(filters),
     expandedRows,
     toggleRow,
-    expandAll: () => expandAll(pedidos),
+    expandAll: () => expandAll(filteredPedidos),
     collapseAll,
   };
 }

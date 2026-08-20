@@ -63,6 +63,7 @@ import {
   isKanbanOperatorRole,
   type CapaActionsMap,
 } from "@/lib/production-capa-permissions";
+import { DEFAULT_KANBAN_ETAPAS } from "@/hooks/useKanbanEtapas";
 
 // Interfaz corregida con los datos reales que usamos de la API
 interface User {
@@ -390,7 +391,9 @@ export default function AdministrationSubmodule() {
   const [isEditing, setIsEditing] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [editFormData, setEditFormData] = useState<UserFormState>(emptyUserForm);
-  const [kanbanCapas, setKanbanCapas] = useState<KanbanCapa[]>([]);
+  const [kanbanCapas, setKanbanCapas] = useState<KanbanCapa[]>(
+    DEFAULT_KANBAN_ETAPAS.map(({ id, key, label }) => ({ id, key, label }))
+  );
   const [capaActions, setCapaActions] = useState<CapaActionsMap>({});
   const [newSatelliteName, setNewSatelliteName] = useState("");
   const [editNewSatelliteName, setEditNewSatelliteName] = useState("");
@@ -414,9 +417,19 @@ export default function AdministrationSubmodule() {
       const response = await apiFetch(endpoints.orders.kanbanEtapas(), {
         headers: { Authorization: token ? `Bearer ${token}` : "" },
       });
-      if (!response.ok) return;
+      if (!response.ok) {
+        setKanbanCapas(DEFAULT_KANBAN_ETAPAS.map(({ id, key, label }) => ({ id, key, label })));
+        return;
+      }
       const data = await response.json();
-      const list = Array.isArray(data) ? data : [];
+      let list = Array.isArray(data) && data.length > 0 ? data : DEFAULT_KANBAN_ETAPAS;
+      const existingKeys = new Set(list.map((e: any) => e.key?.toLowerCase()));
+      const missingDefaults = DEFAULT_KANBAN_ETAPAS.filter(
+        (def) => !existingKeys.has(def.key.toLowerCase())
+      );
+      if (missingDefaults.length > 0) {
+        list = [...list, ...missingDefaults].sort((a: any, b: any) => (a.orden ?? 0) - (b.orden ?? 0));
+      }
       setKanbanCapas(
         list
           .map((e: { id: string; key: string; label: string; orden?: number }) => ({
@@ -429,7 +442,7 @@ export default function AdministrationSubmodule() {
           .map(({ id, key, label }) => ({ id, key, label }))
       );
     } catch {
-      // silenciosamente: el select de capa quedará vacío si falla
+      setKanbanCapas(DEFAULT_KANBAN_ETAPAS.map(({ id, key, label }) => ({ id, key, label })));
     }
   }, []);
 

@@ -32,11 +32,25 @@ import {
   EyeOff,
   UserPlus,
   ShoppingBag,
+  Sparkles,
+  Search,
+  Building2,
+  Users,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PedidosCompraTNSTab } from "@/components/satellites/PedidosCompraTNSTab";
 import type { PedidoCompra } from "@/types/tns";
 import { getPedidosCompra } from "@/services/tnsService";
+import { parseStageKeys } from "@/lib/production-capa-permissions";
+import {
+  extractTnsSatelliteData,
+  getDefaultSatelliteStageKeys,
+  getUniqueTnsTerceros,
+  inferStagesFromTns,
+  cleanContactName,
+  normalizeText,
+  type UniqueTnsTercero,
+} from "@/lib/satellite-tns-stage-detector";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
@@ -136,7 +150,7 @@ async function fetchAllOrders(): Promise<Order[]> {
 }
 
 export default function Satellites() {
-  const [mainTab, setMainTab] = useState<"satelites" | "tns">("satelites");
+  const [mainTab, setMainTab] = useState<"satelites" | "produccion" | "tns">("satelites");
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState<SatelliteFilters>({ ...EMPTY_FILTERS });
   const [appliedFilters, setAppliedFilters] = useState<SatelliteFilters>({ ...EMPTY_FILTERS });
@@ -153,6 +167,7 @@ export default function Satellites() {
   const { deleteSatellite, isPending: isDeletingSatellite } = useDeleteSatellite();
   const { etapas, fetchEtapas } = useKanbanEtapas();
 
+  const [rawUsers, setRawUsers] = useState<Record<string, unknown>[]>([]);
   const [satelliteUsers, setSatelliteUsers] = useState<SatelliteUserRef[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [tnsPedidos, setTnsPedidos] = useState<PedidoCompra[]>([]);
@@ -166,6 +181,15 @@ export default function Satellites() {
   const [confirmObservations, setConfirmObservations] = useState("");
   const [confirmAgreedCost, setConfirmAgreedCost] = useState("");
   const [savingConfirm, setSavingConfirm] = useState(false);
+
+  // Estados para autocompletar satélite desde TNS
+  const [tnsAutoFilledInfo, setTnsAutoFilledInfo] = useState<{
+    sourceItem?: string | null;
+    stageLabels: string[];
+    tnsName: string;
+    tnsNit: string;
+  } | null>(null);
+  const [selectedTnsKey, setSelectedTnsKey] = useState<string>("");
 
   const loadMetrics = useCallback(async () => {
     setMetricsLoading(true);
@@ -181,6 +205,7 @@ export default function Satellites() {
       const ordersRaw = ordersRes.status === "fulfilled" ? ordersRes.value : [];
       const tnsItems = tnsRes.status === "fulfilled" ? tnsRes.value.items : [];
 
+      setRawUsers(Array.isArray(usersRaw) ? usersRaw : []);
       const users = (Array.isArray(usersRaw) ? usersRaw : [])
         .map(mapApiUserToSatelliteRef)
         .filter((u): u is SatelliteUserRef => Boolean(u));
@@ -216,10 +241,98 @@ export default function Satellites() {
     [satellites, satelliteUsers, orders, stageLabels, tnsPedidos]
   );
 
-  const selectedCard = useMemo(
-    () => dashboardCards.find((c) => c.id === selectedId) || null,
-    [dashboardCards, selectedId]
-  );
+  const productionUsers = useMemo(() => {
+    return rawUsers
+      .filter((u) => {
+        const roles = (Array.isArray(u.roles) ? u.roles : []).map((r) => {
+          if (typeof r === "string") {
+            const m = r.match(/name=['"]([^'"]+)['"]/);
+            return (m?.[1] || r).trim();
+          }
+          return "";
+        });
+        const isSat = roles.includes("Satélite") || Boolean(u.satellite_id);
+        if (isSat) return false;
+        const isProd =
+          roles.includes("Producción") ||
+          roles.includes("Operario") ||
+          roles.includes("Operador") ||
+          String(u.area || "").toLowerCase().includes("producci") ||
+          Boolean(u.production_stage_key) ||
+          (Array.isArray(u.production_stage_keys) && u.production_stage_keys.length > 0);
+        return isProd;
+      })
+      .map((u) => {
+        const firstName = String(u.first_name || "").trim();
+        const lastName = String(u.last_name || "").trim();
+        const fullName =
+          `${firstName} ${lastName}`.trim() || String(u.username || "Operario Producción");
+        const stageKeys = parseStageKeys(
+          (u.production_stage_keys as string[] | string) ?? (u.production_stage_key as string)
+        );
+        return {
+          id: String(u.id || "").trim(),
+          name: fullName,
+          fullName,
+          email: String(u.email || ""),
+          phone: String(u.phone || ""),
+          cargo: String(u.cargo || "Operario de Producción"),
+          area: String(u.area || "Producción"),
+          stageKeys,
+          settlements: (u.settlements as Record<string, SatelliteSettlement>) || {},
+        };
+      });
+  }, [rawUsers]);
+
+  const productionCards = useMemo(() => {
+    return productionUsers.map((user) => {
+      const details = buildSatelliteOrderDetails({
+        userIds: [user.id],
+        orders,
+        stageLabels,
+        settlements: user.settlements,
+        workshopId: null,
+        userNamesById: { [user.id]: user.fullName },
+      });
+      const summary = summarizeSatelliteOrders(details);
+      const capas = user.stageKeys
+        .map((k) => ({ key: k, label: stageLabels[k] || k }))
+        .filter((c) => Boolean(c.label));
+
+      const card: SatelliteDashboardCard = {
+        id: `prod-${user.id}`,
+        name: user.fullName,
+        contactName: user.cargo || user.area || "Producción",
+        phone: user.phone,
+        address: user.area,
+        notes: user.email ? `Correo: ${user.email}` : "",
+        status: "active",
+        paymentStatus: summary.porPagar > 0 ? "pendiente" : "al_dia",
+        settlements: user.settlements,
+        capas,
+        userIds: [user.id],
+        userNames: [user.fullName],
+        ordenes: details.length,
+        pendientes: summary.ordenesActivas,
+        pagado: summary.pagado,
+        porPagar: summary.porPagar,
+      };
+      return {
+        card,
+        user,
+        details,
+        summary,
+      };
+    });
+  }, [productionUsers, orders, stageLabels]);
+
+  const selectedCard = useMemo(() => {
+    const fromSat = dashboardCards.find((c) => c.id === selectedId);
+    if (fromSat) return fromSat;
+    const fromProd = productionCards.find((p) => p.card.id === selectedId);
+    if (fromProd) return fromProd.card;
+    return null;
+  }, [dashboardCards, productionCards, selectedId]);
 
   const selectedWorkshop = useMemo(
     () => satellites.find((s) => s.id === selectedId) || null,
@@ -228,6 +341,9 @@ export default function Satellites() {
 
   const selectedOrderDetails = useMemo(() => {
     if (!selectedCard) return [] as SatelliteOrderDetail[];
+    const fromProd = productionCards.find((p) => p.card.id === selectedId);
+    if (fromProd) return fromProd.details;
+
     return buildSatelliteOrderDetails({
       userIds: selectedCard.userIds,
       orders,
@@ -240,7 +356,7 @@ export default function Satellites() {
       workshop: selectedWorkshop,
       tnsPedidos,
     });
-  }, [selectedCard, orders, stageLabels, selectedWorkshop, tnsPedidos]);
+  }, [selectedCard, productionCards, selectedId, orders, stageLabels, selectedWorkshop, tnsPedidos]);
 
   const filteredOrderDetails = useMemo(() => {
     if (detailPagoFilter === "todos") return selectedOrderDetails;
@@ -273,28 +389,45 @@ export default function Satellites() {
 
     setSavingConfirm(true);
     try {
-      const prev = selectedCard.settlements?.[confirmDetail.orderId] || {
+      const rawId = String(confirmDetail.orderId).replace(/^PO-/, "").replace(/^tns-/, "");
+      const cardId = confirmDetail.orderId || `PO-${rawId}`;
+      const prev = selectedCard.settlements?.[cardId] || selectedCard.settlements?.[rawId] || {
         status: confirmDetail.paymentStatus,
+      };
+      const settlementEntry = {
+        ...prev,
+        status: prev.status || confirmDetail.paymentStatus,
+        amount: agreedCost ?? confirmDetail.cost,
+        work_status: confirmWorkStatus,
+        observations: confirmObservations.trim(),
+        agreed_cost: agreedCost,
+        confirmed_at: new Date().toISOString(),
       };
       const nextSettlements = {
         ...(selectedCard.settlements || {}),
-        [confirmDetail.orderId]: {
-          ...prev,
-          status: prev.status || confirmDetail.paymentStatus,
-          amount: agreedCost ?? confirmDetail.cost,
-          work_status: confirmWorkStatus,
-          observations: confirmObservations.trim(),
-          agreed_cost: agreedCost,
-          confirmed_at: new Date().toISOString(),
-        },
+        [cardId]: settlementEntry,
+        [rawId]: settlementEntry,
       };
-      await updateSatellite({
-        id: selectedCard.id,
-        payload: { settlements: nextSettlements },
-      });
+      if (selectedCard.id.startsWith("prod-") && selectedCard.userIds[0]) {
+        const uId = selectedCard.userIds[0];
+        try {
+          await http(endpoints.users.detail(uId), {
+            method: "PATCH",
+            body: JSON.stringify({ settlements: nextSettlements }),
+          });
+        } catch {
+          /* fallback silent */
+        }
+      } else {
+        await updateSatellite({
+          id: selectedCard.id,
+          payload: { settlements: nextSettlements },
+        });
+      }
       toast.success("Confirmación de trabajo guardada");
       setConfirmDetail(null);
-      refetch();
+      await refetch();
+      await loadMetrics();
     } catch (err: any) {
       toast.error(err?.message || "No se pudo guardar la confirmación");
     } finally {
@@ -305,29 +438,45 @@ export default function Satellites() {
   const markOrderPaid = async (orderId: string, amount: number) => {
     if (!selectedCard) return;
     try {
-      const prev = selectedCard.settlements?.[orderId] || {};
+      const rawId = String(orderId).replace(/^PO-/, "").replace(/^tns-/, "");
+      const prev = selectedCard.settlements?.[orderId] || selectedCard.settlements?.[rawId] || {};
+      const paidEntry = {
+        ...prev,
+        status: "paid" as const,
+        amount,
+        paid_at: new Date().toISOString(),
+      };
       const nextSettlements = {
         ...(selectedCard.settlements || {}),
-        [orderId]: {
-          ...prev,
-          status: "paid" as const,
-          amount,
-          paid_at: new Date().toISOString(),
-        },
+        [orderId]: paidEntry,
+        [rawId]: paidEntry,
       };
-      await updateSatellite({
-        id: selectedCard.id,
-        payload: {
-          settlements: nextSettlements,
-          payment_status:
-            Object.values(nextSettlements).every((s) => s.status === "paid") &&
-            selectedOrderDetails.length > 0
-              ? "al_dia"
-              : "pendiente",
-        },
-      });
+      if (selectedCard.id.startsWith("prod-") && selectedCard.userIds[0]) {
+        const uId = selectedCard.userIds[0];
+        try {
+          await http(endpoints.users.detail(uId), {
+            method: "PATCH",
+            body: JSON.stringify({ settlements: nextSettlements }),
+          });
+        } catch {
+          /* fallback silent */
+        }
+      } else {
+        await updateSatellite({
+          id: selectedCard.id,
+          payload: {
+            settlements: nextSettlements,
+            payment_status:
+              Object.values(nextSettlements).every((s) => s.status === "paid") &&
+                selectedOrderDetails.length > 0
+                ? "al_dia"
+                : "pendiente",
+          },
+        });
+      }
       toast.success("Pedido marcado como pagado");
-      refetch();
+      await refetch();
+      await loadMetrics();
     } catch (err: any) {
       toast.error(err?.message || "No se pudo marcar el pago");
     }
@@ -360,21 +509,121 @@ export default function Satellites() {
     }
   };
 
+  const tnsTerceros = useMemo(() => {
+    return getUniqueTnsTerceros(tnsPedidos, etapas);
+  }, [tnsPedidos, etapas]);
+
+  const matchingTnsSuggestion = useMemo(() => {
+    const nName = normalizeText(form.name);
+    const nNit = normalizeText(form.nit);
+    if (!nName && !nNit) return null;
+    if (
+      tnsAutoFilledInfo &&
+      (normalizeText(tnsAutoFilledInfo.tnsName) === nName ||
+        (nNit && normalizeText(tnsAutoFilledInfo.tnsNit) === nNit))
+    ) {
+      return null;
+    }
+    return (
+      tnsTerceros.find((t) => {
+        if (nNit && t.nit && normalizeText(t.nit) === nNit) return true;
+        if (
+          nName &&
+          t.name &&
+          (normalizeText(t.name) === nName ||
+            normalizeText(t.name).includes(nName) ||
+            nName.includes(normalizeText(t.name)))
+        ) {
+          return true;
+        }
+        return false;
+      }) || null
+    );
+  }, [form.name, form.nit, tnsTerceros, tnsAutoFilledInfo]);
+
+  const handleSelectTnsTercero = (tercero: UniqueTnsTercero) => {
+    const extracted = extractTnsSatelliteData(tercero.latestPedido, etapas);
+    setSelectedTnsKey(tercero.nit || tercero.name);
+    setForm((p) => ({
+      ...p,
+      name: extracted.name || tercero.name,
+      nit: extracted.nit || tercero.nit,
+      person_name:
+        p.person_name && p.person_name !== p.name
+          ? p.person_name
+          : extracted.person_name || tercero.contactName || p.person_name,
+      phone: extracted.phone || tercero.phone || p.phone,
+      address: extracted.address || tercero.address || p.address,
+      cargo:
+        extracted.cargo ||
+        (extracted.stageLabels.length > 0
+          ? `Satélite ${extracted.stageLabels.join(" / ")}`
+          : "Satélite"),
+      production_stage_keys:
+        extracted.production_stage_keys.length > 0
+          ? extracted.production_stage_keys
+          : tercero.stageKeys.length > 0
+            ? tercero.stageKeys
+            : p.production_stage_keys,
+    }));
+    setTnsAutoFilledInfo({
+      sourceItem: extracted.detectedFrom || tercero.detectedFrom,
+      stageLabels:
+        extracted.stageLabels.length > 0
+          ? extracted.stageLabels
+          : tercero.stageLabels,
+      tnsName: extracted.name || tercero.name,
+      tnsNit: extracted.nit || tercero.nit,
+    });
+    setFormError("");
+    toast.success("Datos autocompletados correctamente.");
+  };
+
   const hasActiveFilters = useMemo(() => {
     return Boolean(
       appliedFilters.desde ||
-        appliedFilters.hasta ||
-        (appliedFilters.estado && appliedFilters.estado !== "todos") ||
-        (appliedFilters.pago && appliedFilters.pago !== "todos")
+      appliedFilters.hasta ||
+      (appliedFilters.estado && appliedFilters.estado !== "todos") ||
+      (appliedFilters.pago && appliedFilters.pago !== "todos")
     );
   }, [appliedFilters]);
 
   const openCreate = () => {
-    setForm({ ...EMPTY_FORM, production_stage_keys: [] });
+    const defaultStages = getDefaultSatelliteStageKeys(etapas);
+    setForm({ ...EMPTY_FORM, production_stage_keys: defaultStages });
     setFormError("");
+    setTnsAutoFilledInfo(null);
+    setSelectedTnsKey("");
     setShowPassword(false);
     setIsCreateOpen(true);
     void fetchEtapas();
+  };
+
+  const openCreateWithTns = (pedido: PedidoCompra) => {
+    const extracted = extractTnsSatelliteData(pedido, etapas);
+    setForm({
+      ...EMPTY_FORM,
+      name: extracted.name,
+      nit: extracted.nit,
+      person_name: extracted.person_name,
+      phone: extracted.phone,
+      address: extracted.address,
+      cargo: extracted.cargo,
+      production_stage_keys: extracted.production_stage_keys,
+    });
+    setTnsAutoFilledInfo({
+      sourceItem: extracted.detectedFrom,
+      stageLabels: extracted.stageLabels,
+      tnsName: extracted.name,
+      tnsNit: extracted.nit,
+    });
+    setSelectedTnsKey(extracted.nit || extracted.name);
+    setFormError("");
+    setShowPassword(false);
+    setMainTab("satelites");
+    setIsCreateOpen(true);
+    void fetchEtapas();
+    toast.success(`Datos de «${extracted.name}» autocompletados.`);
   };
 
   const applyFilters = () => {
@@ -480,6 +729,8 @@ export default function Satellites() {
 
       setIsCreateOpen(false);
       setForm({ ...EMPTY_FORM, production_stage_keys: [] });
+      setTnsAutoFilledInfo(null);
+      setSelectedTnsKey("");
       await refetch();
       await loadMetrics();
     } catch (err: any) {
@@ -793,12 +1044,16 @@ export default function Satellites() {
           </Dialog>
         </div>
       ) : (
-        <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as "satelites" | "tns")} className="space-y-4">
+        <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as "satelites" | "produccion" | "tns")} className="space-y-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <TabsList className="bg-muted/80 p-1 border border-border">
               <TabsTrigger value="satelites" className="gap-2 text-xs sm:text-sm font-medium">
                 <Satellite className="h-4 w-4" />
                 Talleres satélite
+              </TabsTrigger>
+              <TabsTrigger value="produccion" className="gap-2 text-xs sm:text-sm font-medium">
+                <Users className="h-4 w-4" />
+                Usuarios producción
               </TabsTrigger>
               <TabsTrigger value="tns" className="gap-2 text-xs sm:text-sm font-medium">
                 <ShoppingBag className="h-4 w-4" />
@@ -847,130 +1102,170 @@ export default function Satellites() {
               </CardHeader>
 
               <CardContent>
-          {showFilters && (
-            <div className="mb-4 rounded-xl border bg-muted/20 px-4 py-3">
-              <div className="flex flex-wrap items-end gap-3">
-                <div className="space-y-1 min-w-[140px]">
-                  <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                    Desde
-                  </Label>
-                  <Input
-                    type="date"
-                    className="h-9 bg-background"
-                    value={filters.desde || ""}
-                    onChange={(e) => setFilters((p) => ({ ...p, desde: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-1 min-w-[140px]">
-                  <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                    Hasta
-                  </Label>
-                  <Input
-                    type="date"
-                    className="h-9 bg-background"
-                    value={filters.hasta || ""}
-                    onChange={(e) => setFilters((p) => ({ ...p, hasta: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-1 min-w-[140px]">
-                  <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                    Estado
-                  </Label>
-                  <Select
-                    value={filters.estado || "todos"}
-                    onValueChange={(v) => setFilters((p) => ({ ...p, estado: v }))}
-                  >
-                    <SelectTrigger className="h-9 bg-background">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="todos">Todos</SelectItem>
-                      <SelectItem value="active">Activo</SelectItem>
-                      <SelectItem value="inactive">Inactivo</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1 min-w-[140px]">
-                  <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                    Pago
-                  </Label>
-                  <Select
-                    value={filters.pago || "todos"}
-                    onValueChange={(v) => setFilters((p) => ({ ...p, pago: v }))}
-                  >
-                    <SelectTrigger className="h-9 bg-background">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="todos">Todos</SelectItem>
-                      <SelectItem value="al_dia">Al día</SelectItem>
-                      <SelectItem value="pendiente">Pendiente</SelectItem>
-                      <SelectItem value="no_aplica">No aplica</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-center gap-2 pb-0.5 ml-auto">
-                  <button
-                    type="button"
-                    onClick={clearFilters}
-                    className="text-sm text-muted-foreground hover:text-foreground px-2 py-1.5"
-                  >
-                    Limpiar
-                  </button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="h-9 bg-red-600 hover:bg-red-700 text-white"
-                    onClick={applyFilters}
-                  >
-                    Aplicar
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
+                {showFilters && (
+                  <div className="mb-4 rounded-xl border bg-muted/20 px-4 py-3">
+                    <div className="flex flex-wrap items-end gap-3">
+                      <div className="space-y-1 min-w-[140px]">
+                        <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          Desde
+                        </Label>
+                        <Input
+                          type="date"
+                          className="h-9 bg-background"
+                          value={filters.desde || ""}
+                          onChange={(e) => setFilters((p) => ({ ...p, desde: e.target.value }))}
+                        />
+                      </div>
+                      <div className="space-y-1 min-w-[140px]">
+                        <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          Hasta
+                        </Label>
+                        <Input
+                          type="date"
+                          className="h-9 bg-background"
+                          value={filters.hasta || ""}
+                          onChange={(e) => setFilters((p) => ({ ...p, hasta: e.target.value }))}
+                        />
+                      </div>
+                      <div className="space-y-1 min-w-[140px]">
+                        <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          Estado
+                        </Label>
+                        <Select
+                          value={filters.estado || "todos"}
+                          onValueChange={(v) => setFilters((p) => ({ ...p, estado: v }))}
+                        >
+                          <SelectTrigger className="h-9 bg-background">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="todos">Todos</SelectItem>
+                            <SelectItem value="active">Activo</SelectItem>
+                            <SelectItem value="inactive">Inactivo</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1 min-w-[140px]">
+                        <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          Pago
+                        </Label>
+                        <Select
+                          value={filters.pago || "todos"}
+                          onValueChange={(v) => setFilters((p) => ({ ...p, pago: v }))}
+                        >
+                          <SelectTrigger className="h-9 bg-background">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="todos">Todos</SelectItem>
+                            <SelectItem value="al_dia">Al día</SelectItem>
+                            <SelectItem value="pendiente">Pendiente</SelectItem>
+                            <SelectItem value="no_aplica">No aplica</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-center gap-2 pb-0.5 ml-auto">
+                        <button
+                          type="button"
+                          onClick={clearFilters}
+                          className="text-sm text-muted-foreground hover:text-foreground px-2 py-1.5"
+                        >
+                          Limpiar
+                        </button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-9 bg-red-600 hover:bg-red-700 text-white"
+                          onClick={applyFilters}
+                        >
+                          Aplicar
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
-          {isLoading ? (
-            <div className="p-8 text-center text-muted-foreground">Cargando satélites...</div>
-          ) : dashboardCards.length === 0 ? (
-            <div className="p-10 text-center space-y-2">
-              <p className="text-sm text-muted-foreground">No hay satélites registrados.</p>
-              <p className="text-xs text-muted-foreground">
-                Créalos aquí o al crear un usuario con rol Satélite en Administración.
-              </p>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={openCreate}
-                className="mt-1"
-              >
-                <Plus className="h-4 w-4 mr-1" /> Crear el primero
-              </Button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {dashboardCards.map((card) => (
-                <SatelliteMetricCard
-                  key={card.id}
-                  card={card}
-                  selected={selectedId === card.id}
-                  onSelect={() => setSelectedId(card.id)}
-                  canDelete={canDeleteSatellite(card)}
-                  deleting={isDeletingSatellite && deletingSatellite?.id === card.id}
-                  onDelete={() => requestDeleteSatellite(card)}
-                />
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-      </TabsContent>
+                {isLoading ? (
+                  <div className="p-8 text-center text-muted-foreground">Cargando satélites...</div>
+                ) : dashboardCards.length === 0 ? (
+                  <div className="p-10 text-center space-y-2">
+                    <p className="text-sm text-muted-foreground">No hay satélites registrados.</p>
+                    <p className="text-xs text-muted-foreground">
+                      Créalos aquí o al crear un usuario con rol Satélite en Administración.
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={openCreate}
+                      className="mt-1"
+                    >
+                      <Plus className="h-4 w-4 mr-1" /> Crear el primero
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {dashboardCards.map((card) => (
+                      <SatelliteMetricCard
+                        key={card.id}
+                        card={card}
+                        selected={selectedId === card.id}
+                        onSelect={() => setSelectedId(card.id)}
+                        canDelete={canDeleteSatellite(card)}
+                        deleting={isDeletingSatellite && deletingSatellite?.id === card.id}
+                        onDelete={() => requestDeleteSatellite(card)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-      <TabsContent value="tns" className="m-0">
-        <PedidosCompraTNSTab />
-      </TabsContent>
-      </Tabs>
+          <TabsContent value="produccion" className="m-0 space-y-4">
+            <Card>
+              <CardHeader className="pb-3 flex flex-row items-center justify-between gap-3">
+                <CardTitle className="text-lg font-semibold tracking-tight flex items-center gap-2">
+                  <Users className="h-5 w-5 text-muted-foreground" />
+                  Usuarios de producción y fábrica
+                  {metricsLoading ? (
+                    <span className="text-xs font-normal text-muted-foreground">Actualizando…</span>
+                  ) : null}
+                </CardTitle>
+              </CardHeader>
+
+              <CardContent>
+                {productionCards.length === 0 ? (
+                  <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+                    No se encontraron usuarios de producción con capas o asignaciones configuradas.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {productionCards.map(({ card }) => (
+                      <SatelliteMetricCard
+                        key={card.id}
+                        card={card}
+                        selected={selectedId === card.id}
+                        onSelect={() => {
+                          setSelectedId(card.id);
+                          setDetailPagoFilter("todos");
+                          setShowDetailFilters(false);
+                        }}
+                        canDelete={false}
+                        deleting={false}
+                        onDelete={() => {}}
+                      />
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="tns" className="m-0">
+            <PedidosCompraTNSTab onRegisterSatellite={openCreateWithTns} />
+          </TabsContent>
+        </Tabs>
       )}
 
       <AlertDialog
@@ -1029,6 +1324,88 @@ export default function Satellites() {
                 automáticamente. Las capas definen en qué etapas puede trabajar.
               </p>
 
+              {/* Selector de autocompletado rápido desde TNS */}
+              {tnsTerceros.length > 0 && (
+                <div className="bg-muted/40 border border-border/80 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
+                      <Sparkles className="h-4 w-4" />
+                      <span>Autocompletar desde TNS (ERP)</span>
+                    </div>
+                    <span className="text-[11px] text-muted-foreground">
+                      {tnsTerceros.length} {tnsTerceros.length === 1 ? "tercero disponible" : "terceros disponibles"}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Selecciona un tercero para cargar automáticamente sus datos y preseleccionar la capa asignada por artículos (<strong>nomMat</strong>).
+                  </p>
+                  <Select
+                    value={selectedTnsKey}
+                    onValueChange={(val) => {
+                      setSelectedTnsKey(val);
+                      const found = tnsTerceros.find((t) => (t.nit ? t.nit : t.name) === val);
+                      if (found) {
+                        handleSelectTnsTercero(found);
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-9 text-xs bg-background">
+                      <SelectValue placeholder="— Seleccionar satélite/tercero desde TNS —" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-64">
+                      {tnsTerceros.map((t) => (
+                        <SelectItem
+                          key={t.nit || t.name}
+                          value={t.nit || t.name}
+                          className="text-xs"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Building2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                            <span className="font-medium truncate max-w-[280px]">{t.name}</span>
+                            {t.nit && (
+                              <span className="text-muted-foreground font-mono text-[11px]">
+                                ({t.nit})
+                              </span>
+                            )}
+                            {t.stageLabels.length > 0 && (
+                              <span className="ml-auto text-[10px] bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-300 font-semibold px-2 py-0.5 rounded-full shrink-0">
+                                {t.stageLabels.join(" / ")}
+                              </span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {/* Sugerencia de autocompletado si el usuario escribe nombre o NIT */}
+              {matchingTnsSuggestion && !tnsAutoFilledInfo && (
+                <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs">
+                  <div className="space-y-0.5 text-amber-900 dark:text-amber-200">
+                    <p className="font-medium flex items-center gap-1">
+                      <Sparkles className="h-3.5 w-3.5 text-amber-600" />
+                      Coincidencia encontrada en TNS:
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      <strong>{matchingTnsSuggestion.name}</strong>{" "}
+                      {matchingTnsSuggestion.nit ? `(${matchingTnsSuggestion.nit})` : ""} — Capa:{" "}
+                      <strong>{matchingTnsSuggestion.stageLabels.join(", ") || "General"}</strong>
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs bg-background border-amber-300 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40 shrink-0"
+                    onClick={() => handleSelectTnsTercero(matchingTnsSuggestion)}
+                  >
+                    Autocompletar
+                  </Button>
+                </div>
+              )}
+
               {formError ? (
                 <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-md px-3 py-2">
                   {formError}
@@ -1044,7 +1421,16 @@ export default function Satellites() {
                     required
                     value={form.name}
                     onChange={(e) => {
-                      setForm((p) => ({ ...p, name: e.target.value }));
+                      const val = e.target.value;
+                      setForm((p) => {
+                        // Si el usuario cambia el nombre y el contacto era igual o estaba vacío, actualizarlo
+                        const shouldUpdateContact = !p.person_name || p.person_name === cleanContactName(p.name);
+                        return {
+                          ...p,
+                          name: val,
+                          person_name: shouldUpdateContact ? cleanContactName(val) : p.person_name,
+                        };
+                      });
                       setFormError("");
                     }}
                     placeholder="Ej. CLAUDIA MARIA BOHORQUEZ / SATELITE"
@@ -1153,46 +1539,69 @@ export default function Satellites() {
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-semibold text-muted-foreground">
-                  Capas <span className="text-red-600">*</span>
-                </Label>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold text-muted-foreground">
+                    Capas <span className="text-red-600">*</span>
+                  </Label>
+                  {tnsAutoFilledInfo && tnsAutoFilledInfo.stageLabels.length > 0 && (
+                    <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                      <Sparkles className="h-3 w-3 text-red-600" />
+                      Auto-seleccionado por TNS (editable)
+                    </span>
+                  )}
+                </div>
+
                 {etapas.length === 0 ? (
                   <p className="text-xs text-muted-foreground">
                     No hay capas Kanban configuradas en Fábrica.
                   </p>
                 ) : (
-                  <div className="rounded-lg border px-3 py-2.5 space-y-2 max-h-40 overflow-y-auto bg-muted/20">
+                  <div className="rounded-lg border px-3 py-2.5 space-y-2 max-h-48 overflow-y-auto bg-muted/20">
                     {etapas
                       .filter((c) => c.activo !== false)
                       .map((c) => {
                         const checked = form.production_stage_keys.includes(c.key);
+                        const isAutoSuggested = tnsAutoFilledInfo?.stageLabels.some(
+                          (l) => l.toLowerCase() === c.label.toLowerCase() || c.key.toLowerCase().includes(l.toLowerCase())
+                        );
+
                         return (
                           <label
                             key={c.id}
-                            className="flex items-center gap-2.5 cursor-pointer text-sm"
+                            className={cn(
+                              "flex items-center justify-between gap-2.5 cursor-pointer text-sm p-1.5 rounded-md hover:bg-muted/40 transition-colors",
+                              checked && "bg-muted/60"
+                            )}
                           >
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={() => {
-                                setForm((p) => ({
-                                  ...p,
-                                  production_stage_keys: toggleStageKey(
-                                    p.production_stage_keys,
-                                    c.key
-                                  ),
-                                }));
-                                setFormError("");
-                              }}
-                            />
-                            <KanbanStageChip stageKey={c.key} label={c.label} />
+                            <div className="flex items-center gap-2.5">
+                              <Checkbox
+                                checked={checked}
+                                onCheckedChange={() => {
+                                  setForm((p) => ({
+                                    ...p,
+                                    production_stage_keys: toggleStageKey(
+                                      p.production_stage_keys,
+                                      c.key
+                                    ),
+                                  }));
+                                  setFormError("");
+                                }}
+                              />
+                              <KanbanStageChip stageKey={c.key} label={c.label} />
+                            </div>
+                            {isAutoSuggested && (
+                              <span className="text-[10px] bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-300 font-medium px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <Sparkles className="h-2.5 w-2.5" />
+                                Sugerido por TNS
+                              </span>
+                            )}
                           </label>
                         );
                       })}
                   </div>
                 )}
                 <p className="text-xs text-muted-foreground">
-                  Define los permisos por capa. Puede encargarse de varias; en cada una solo
-                  avanzará la tarjeta a la etapa siguiente.
+                  Define los permisos por capa. Puede encargarse de varias; puedes marcar o desmarcar libremente las opciones.
                 </p>
               </div>
 
@@ -1297,18 +1706,18 @@ function SatelliteOrderCard({
   const workBadge =
     detail.workStatus === "recibido_completo"
       ? {
-          label: "Recibido completo",
-          className: "bg-emerald-100 text-emerald-800",
-        }
+        label: "Recibido completo",
+        className: "bg-emerald-100 text-emerald-800",
+      }
       : detail.workStatus === "recibido_faltantes"
         ? {
-            label: "Recibido con faltantes",
-            className: "bg-amber-100 text-amber-900",
-          }
+          label: "Recibido con faltantes",
+          className: "bg-amber-100 text-amber-900",
+        }
         : {
-            label: "Enviado",
-            className: "bg-sky-100 text-sky-800",
-          };
+          label: "Enviado",
+          className: "bg-sky-100 text-sky-800",
+        };
 
   const displayCost =
     detail.agreedCost != null && Number.isFinite(detail.agreedCost)
@@ -1602,18 +2011,26 @@ function SatelliteMetricCard({
           </div>
         ) : null}
 
-        <div className="mt-4 pt-3 border-t grid grid-cols-3 gap-2">
+        <div className="mt-4 pt-3 border-t grid grid-cols-4 gap-2">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Órdenes
             </p>
-            <p className="text-xl tabular-nums text-foreground font-semibold">{card.ordenes}</p>
+            <p className="text-lg tabular-nums text-foreground font-semibold">{card.ordenes}</p>
           </div>
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Pendientes
             </p>
-            <p className="text-xl tabular-nums text-foreground font-semibold">{card.pendientes}</p>
+            <p className="text-lg tabular-nums text-foreground font-semibold">{card.pendientes}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Pagado
+            </p>
+            <p className="text-base tabular-nums truncate font-bold text-emerald-600 dark:text-emerald-400">
+              {formatMoneyCop(card.pagado)}
+            </p>
           </div>
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1621,10 +2038,10 @@ function SatelliteMetricCard({
             </p>
             <p
               className={cn(
-                "text-lg tabular-nums truncate font-bold",
+                "text-base tabular-nums truncate font-bold",
                 card.porPagar > 0
                   ? "text-red-600 dark:text-red-400"
-                  : "text-emerald-600 dark:text-emerald-400"
+                  : "text-muted-foreground"
               )}
             >
               {formatMoneyCop(card.porPagar)}

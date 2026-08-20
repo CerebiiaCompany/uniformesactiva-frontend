@@ -216,7 +216,11 @@ export function summarizeOrderArticles(
         if (!omitSizes) {
             const sizes = g.tallas
                 .filter((t) => t.nombre && t.nombre !== "—")
-                .map((t) => `${t.nombre}×${t.cantidad}`)
+                .map((t) => {
+                    const clean = t.nombre.trim();
+                    const label = /^talla\b/i.test(clean) ? clean : `Talla ${clean}`;
+                    return `${label}: ${t.cantidad}`;
+                })
                 .join(", ");
             if (sizes) parts.push(sizes);
         }

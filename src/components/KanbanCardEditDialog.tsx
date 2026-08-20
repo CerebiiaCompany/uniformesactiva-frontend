@@ -108,6 +108,7 @@ type KanbanCardEditDialogProps = {
   open: boolean;
   mode: "add" | "edit";
   initial?: Partial<KanbanCardFormValues> | null;
+  stageKey?: string;
   onOpenChange: (open: boolean) => void;
   onSave: (values: KanbanCardFormValues & { satelliteName: string | null }) => void | Promise<void>;
   saving?: boolean;
@@ -119,6 +120,18 @@ type KanbanCardEditDialogProps = {
   canEditCoreFields?: boolean;
   /** Admin: asignar satélite externo. */
   canAssignSatellite?: boolean;
+};
+
+const isDesignOrCuttingStage = (k?: string) => {
+  if (!k) return true;
+  const norm = k.toLowerCase().trim();
+  return (
+    norm === "design" ||
+    norm === "diseno" ||
+    norm === "diseño" ||
+    norm === "corte" ||
+    norm === "cutting"
+  );
 };
 
 const NONE_SATELLITE = "__none__";
@@ -191,6 +204,7 @@ export function KanbanCardEditDialog({
   open,
   mode,
   initial,
+  stageKey,
   onOpenChange,
   onSave,
   saving = false,
@@ -398,8 +412,12 @@ export function KanbanCardEditDialog({
               value={items}
               onChange={(e) => setItems(e.target.value)}
               placeholder="Descripción"
-              className={cn("h-10 rounded-lg", !canEditCoreFields && "bg-muted/40")}
+              className={cn(
+                "h-10 rounded-lg",
+                !canEditCoreFields && "bg-muted/50 text-muted-foreground cursor-not-allowed"
+              )}
               disabled={readOnly || !canEditCoreFields}
+              readOnly={readOnly || !canEditCoreFields}
             />
           </div>
 
@@ -409,9 +427,13 @@ export function KanbanCardEditDialog({
               <Input
                 value={assignee}
                 onChange={(e) => setAssignee(e.target.value)}
-                placeholder="Nombre"
-                className={cn("h-10 rounded-lg", !canEditCoreFields && "bg-muted/40")}
+                placeholder="Sin asignar"
+                className={cn(
+                  "h-10 rounded-lg",
+                  !canEditCoreFields && "bg-muted/50 text-muted-foreground cursor-not-allowed"
+                )}
                 disabled={readOnly || !canEditCoreFields}
+                readOnly={readOnly || !canEditCoreFields}
               />
             </div>
             <div className="space-y-1.5">
@@ -421,8 +443,12 @@ export function KanbanCardEditDialog({
                 min={0}
                 value={quantity}
                 onChange={(e) => setQuantity(Number(e.target.value))}
-                className={cn("h-10 rounded-lg", !canEditCoreFields && "bg-muted/40")}
+                className={cn(
+                  "h-10 rounded-lg",
+                  !canEditCoreFields && "bg-muted/50 text-muted-foreground cursor-not-allowed"
+                )}
                 disabled={readOnly || !canEditCoreFields}
+                readOnly={readOnly || !canEditCoreFields}
               />
             </div>
           </div>
@@ -433,8 +459,12 @@ export function KanbanCardEditDialog({
               type="date"
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
-              className={cn("h-10 rounded-lg", !canEditCoreFields && "bg-muted/40")}
+              className={cn(
+                "h-10 rounded-lg",
+                !canEditCoreFields && "bg-muted/50 text-muted-foreground cursor-not-allowed"
+              )}
               disabled={readOnly || !canEditCoreFields}
+              readOnly={readOnly || !canEditCoreFields}
             />
             {!canEditCoreFields ? (
               <p className="text-[11px] text-muted-foreground">
@@ -443,157 +473,162 @@ export function KanbanCardEditDialog({
             ) : null}
           </div>
 
-          {canRequestInventory ? (
-          <SectionCard icon={Boxes} title="Solicitar materiales del inventario">
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="flex-1 min-w-[160px] space-y-1">
-                <Label className="text-[10px] text-muted-foreground">Material</Label>
-                <Select value={pickMaterialId} onValueChange={setPickMaterialId}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue
-                      placeholder={loadingMaterials ? "Cargando..." : "Selecciona material"}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {materials.map((m) => (
-                      <SelectItem key={m.id} value={m.id}>
-                        {m.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="w-20 space-y-1">
-                <Label className="text-[10px] text-muted-foreground">Cant.</Label>
-                <Input
-                  value={pickQty}
-                  onChange={(e) => setPickQty(e.target.value)}
-                  className="h-9"
-                  inputMode="decimal"
-                />
-              </div>
-              <Button
-                type="button"
-                size="icon"
-                className="h-9 w-9 bg-red-600 hover:bg-red-700 text-white shrink-0"
-                onClick={addMaterialRequest}
-                disabled={!pickMaterialId}
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            </div>
-            {requestedMaterials.length === 0 ? (
-              <p className="text-xs text-muted-foreground">
-                Sin materiales solicitados. Al guardar la tarjeta se descuenta del inventario solo
-                la cantidad nueva (o el incremento si ya habías solicitado antes).
-              </p>
-            ) : (
-              <ul className="space-y-1.5">
-                {requestedMaterials.map((m) => (
-                  <li
-                    key={m.materialId}
-                    className="flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs"
-                  >
-                    <span className="truncate font-medium">
-                      {m.materialName}{" "}
-                      <span className="text-muted-foreground font-normal">× {m.quantity}</span>
-                    </span>
-                    <button
-                      type="button"
-                      className="text-red-600 hover:underline shrink-0"
-                      onClick={() => removeMaterialRequest(m.materialId)}
-                    >
-                      Quitar
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </SectionCard>
-          ) : null}
-
-          <SectionCard
-            icon={Scissors}
-            title="Moldería (patronaje)"
-            action={<Switch checked={moldEnabled} onCheckedChange={setMoldEnabled} disabled={readOnly} />}
-          >
-            {!moldEnabled ? (
-              <p className="text-xs text-muted-foreground">
-                Actívalo en las tarjetas de Diseño para registrar el molde, las tallas escaladas y
-                su costo.
-              </p>
-            ) : (
-              <div className="space-y-3 pt-1 animate-in fade-in-0 slide-in-from-top-1 duration-200">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium">Estado del molde</Label>
-                    <Select
-                      value={moldStatus}
-                      onValueChange={(v) => setMoldStatus(v as MoldStatus)}
-                    >
-                      <SelectTrigger className="h-10">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {MOLD_STATUS_OPTIONS.map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium">Patronista / responsable</Label>
-                    <Input
-                      value={moldResponsible}
-                      onChange={(e) => setMoldResponsible(e.target.value)}
-                      placeholder="Ej. Diego R. o satélite"
-                      className="h-10"
-                    />
-                  </div>
+          {/* Solicitar materiales del inventario: Solo en Diseño y Corte */}
+          {isDesignOrCuttingStage(stageKey) && canRequestInventory ? (
+            <SectionCard icon={Boxes} title="Solicitar materiales del inventario">
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="flex-1 min-w-[160px] space-y-1">
+                  <Label className="text-[10px] text-muted-foreground">Material</Label>
+                  <Select value={pickMaterialId} onValueChange={setPickMaterialId}>
+                    <SelectTrigger className="h-9">
+                      <SelectValue
+                        placeholder={loadingMaterials ? "Cargando..." : "Selecciona material"}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {materials.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {m.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium">Tallas escaladas</Label>
-                    <Input
-                      value={moldSizes}
-                      onChange={(e) => setMoldSizes(e.target.value)}
-                      placeholder="Ej. S, M, L, XL / 8-16"
-                      className="h-10"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium">Costo de moldería</Label>
-                    <Input
-                      value={moldCost}
-                      onChange={(e) => setMoldCost(e.target.value)}
-                      placeholder="0.00"
-                      inputMode="decimal"
-                      className="h-10"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium">Observaciones de moldería</Label>
+                <div className="w-20 space-y-1">
+                  <Label className="text-[10px] text-muted-foreground">Cant.</Label>
                   <Input
-                    value={moldNotes}
-                    onChange={(e) => setMoldNotes(e.target.value)}
-                    placeholder="Ej. Ajustar sisa, molde base v2"
-                    className="h-10"
+                    value={pickQty}
+                    onChange={(e) => setPickQty(e.target.value)}
+                    className="h-9"
+                    inputMode="decimal"
                   />
                 </div>
-
-                <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  El costo de moldería suma al <strong>costo real</strong> de la orden y aparece
-                  en Reportes &gt; Costos.
-                </p>
+                <Button
+                  type="button"
+                  size="icon"
+                  className="h-9 w-9 bg-red-600 hover:bg-red-700 text-white shrink-0"
+                  onClick={addMaterialRequest}
+                  disabled={!pickMaterialId}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
               </div>
-            )}
-          </SectionCard>
+              {requestedMaterials.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  Sin materiales solicitados. Al guardar la tarjeta se descuenta del inventario solo
+                  la cantidad nueva (o el incremento si ya habías solicitado antes).
+                </p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {requestedMaterials.map((m) => (
+                    <li
+                      key={m.materialId}
+                      className="flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs"
+                    >
+                      <span className="truncate font-medium">
+                        {m.materialName}{" "}
+                        <span className="text-muted-foreground font-normal">× {m.quantity}</span>
+                      </span>
+                      <button
+                        type="button"
+                        className="text-red-600 hover:underline shrink-0"
+                        onClick={() => removeMaterialRequest(m.materialId)}
+                      >
+                        Quitar
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </SectionCard>
+          ) : null}
 
+          {/* Moldería (patronaje): Solo en Diseño y Corte */}
+          {isDesignOrCuttingStage(stageKey) ? (
+            <SectionCard
+              icon={Scissors}
+              title="Moldería (patronaje)"
+              action={<Switch checked={moldEnabled} onCheckedChange={setMoldEnabled} disabled={readOnly} />}
+            >
+              {!moldEnabled ? (
+                <p className="text-xs text-muted-foreground">
+                  Actívalo en las tarjetas de Diseño para registrar el molde, las tallas escaladas y
+                  su costo.
+                </p>
+              ) : (
+                <div className="space-y-3 pt-1 animate-in fade-in-0 slide-in-from-top-1 duration-200">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium">Estado del molde</Label>
+                      <Select
+                        value={moldStatus}
+                        onValueChange={(v) => setMoldStatus(v as MoldStatus)}
+                      >
+                        <SelectTrigger className="h-10">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {MOLD_STATUS_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium">Patronista / responsable</Label>
+                      <Input
+                        value={moldResponsible}
+                        onChange={(e) => setMoldResponsible(e.target.value)}
+                        placeholder="Ej. Diego R. o satélite"
+                        className="h-10"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium">Tallas escaladas</Label>
+                      <Input
+                        value={moldSizes}
+                        onChange={(e) => setMoldSizes(e.target.value)}
+                        placeholder="Ej. S, M, L, XL / 8-16"
+                        className="h-10"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium">Costo de moldería</Label>
+                      <Input
+                        value={moldCost}
+                        onChange={(e) => setMoldCost(e.target.value)}
+                        placeholder="0.00"
+                        inputMode="decimal"
+                        className="h-10"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-medium">Observaciones de moldería</Label>
+                    <Input
+                      value={moldNotes}
+                      onChange={(e) => setMoldNotes(e.target.value)}
+                      placeholder="Ej. Ajustar sisa, molde base v2"
+                      className="h-10"
+                    />
+                  </div>
+
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    El costo de moldería suma al <strong>costo real</strong> de la orden y aparece
+                    en Reportes &gt; Costos.
+                  </p>
+                </div>
+              )}
+            </SectionCard>
+          ) : null}
+
+          {/* Costo de mano de obra */}
           <SectionCard
             icon={DollarSign}
             title="Costo de mano de obra"
@@ -628,198 +663,7 @@ export function KanbanCardEditDialog({
             )}
           </SectionCard>
 
-          <SectionCard icon={Factory} title="Asignar a satélite (proveedor externo)">
-            {canAssignSatellite ? (
-              <>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <Select
-                    value={satelliteId}
-                    onValueChange={setSatelliteId}
-                    disabled={readOnly}
-                  >
-                    <SelectTrigger
-                      className={cn(
-                        "h-10 flex-1",
-                        satelliteId !== NONE_SATELLITE && "border-red-500 focus:ring-red-500"
-                      )}
-                    >
-                      <SelectValue
-                        placeholder={
-                          loadingSatellites ? "Cargando satélites..." : "— Sin satélite —"
-                        }
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NONE_SATELLITE}>— Sin satélite —</SelectItem>
-                      {activeSatellites.map((s) => (
-                        <SelectItem key={s.id} value={s.id}>
-                          {s.name}
-                          {s.specialties?.length
-                            ? ` · ${s.specialties.slice(0, 2).join(", ")}`
-                            : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    value={satelliteCost}
-                    onChange={(e) => setSatelliteCost(e.target.value)}
-                    placeholder="Costo total"
-                    className="h-10 sm:w-36"
-                    inputMode="decimal"
-                    disabled={readOnly || satelliteId === NONE_SATELLITE}
-                  />
-                </div>
-                {!loadingSatellites && activeSatellites.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    No hay satélites activos. Créalos en el módulo Satélites.
-                  </p>
-                ) : null}
-              </>
-            ) : (
-              <div className="space-y-1.5">
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <Input
-                    value={
-                      satelliteId !== NONE_SATELLITE && selectedSatelliteName
-                        ? selectedSatelliteName
-                        : "Sin satélite"
-                    }
-                    className="h-10 flex-1 bg-muted/40"
-                    disabled
-                    readOnly
-                  />
-                  <Input
-                    value={satelliteCost || "—"}
-                    className="h-10 sm:w-36 bg-muted/40"
-                    disabled
-                    readOnly
-                  />
-                </div>
-                <p className="text-[11px] text-muted-foreground">
-                  Solo un administrador puede modificar la asignación a satélite.
-                </p>
-              </div>
-            )}
-          </SectionCard>
-
-          <SectionCard
-            icon={ImagePlus}
-            title="Imágenes"
-            action={
-              <>
-                <input
-                  ref={imagesInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={handleImagesSelected}
-                />
-                <button
-                  type="button"
-                  className="text-xs font-medium text-red-600 hover:underline"
-                  onClick={() => imagesInputRef.current?.click()}
-                >
-                  + Subir imágenes
-                </button>
-              </>
-            }
-          >
-            {cardImages.length === 0 ? (
-              <p className="text-xs text-muted-foreground">
-                Sin imágenes. Sube fotos de referencia o avance.
-              </p>
-            ) : (
-              <ul className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {cardImages.map((img) => (
-                  <li
-                    key={img.id}
-                    className="relative group rounded-lg border overflow-hidden bg-muted/30"
-                  >
-                    <img
-                      src={img.dataUrl}
-                      alt={img.name}
-                      className="h-20 w-full object-cover"
-                    />
-                    <button
-                      type="button"
-                      className="absolute top-1 right-1 h-5 w-5 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() =>
-                        setCardImages((prev) => prev.filter((p) => p.id !== img.id))
-                      }
-                      aria-label={`Quitar ${img.name}`}
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                    <p className="truncate px-1.5 py-1 text-[10px] text-muted-foreground">
-                      {img.name}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </SectionCard>
-
-          <SectionCard
-            icon={Paperclip}
-            title="Archivos adjuntos"
-            action={
-              <>
-                <input
-                  ref={filesInputRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={handleFilesSelected}
-                />
-                <button
-                  type="button"
-                  className="text-xs font-medium text-red-600 hover:underline"
-                  onClick={() => filesInputRef.current?.click()}
-                >
-                  + Adjuntar archivo
-                </button>
-              </>
-            }
-          >
-            {cardFiles.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Sin archivos adjuntos.</p>
-            ) : (
-              <ul className="space-y-1.5">
-                {cardFiles.map((file) => (
-                  <li
-                    key={file.id}
-                    className="flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <FileText className="h-3.5 w-3.5 text-red-600 shrink-0" />
-                      <div className="min-w-0">
-                        <a
-                          href={file.dataUrl}
-                          download={file.name}
-                          className="font-medium truncate block hover:underline"
-                        >
-                          {file.name}
-                        </a>
-                        <span className="text-muted-foreground">{formatBytes(file.size)}</span>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="text-red-600 hover:underline shrink-0"
-                      onClick={() =>
-                        setCardFiles((prev) => prev.filter((p) => p.id !== file.id))
-                      }
-                    >
-                      Quitar
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </SectionCard>
-
+          {/* Novedades */}
           <SectionCard icon={MessageSquare} title="Novedades">
             <p className="text-xs text-muted-foreground">
               Deja aquí cualquier novedad o nota para que el administrador la revise.
@@ -1000,11 +844,24 @@ export function cardFormFromProductionOrder(
         ? String(card.laborCostPerUnit)
         : "0.00";
 
+  // Resolver nombre de responsable asignado (si tiene responsable de producción, satélite, o stageAssignees)
+  const resolvedAssignee =
+    card.assignee?.trim() && card.assignee.trim().toLowerCase() !== "sin asignar"
+      ? card.assignee.trim()
+      : card.satelliteAssignee?.trim() && card.satelliteAssignee.trim().toLowerCase() !== "sin asignar"
+        ? card.satelliteAssignee.trim()
+        : card.satelliteName?.trim()
+          ? card.satelliteName.trim()
+          : card.stageAssignees?.[currentStage]?.name?.trim() &&
+            card.stageAssignees[currentStage].name.trim().toLowerCase() !== "sin asignar"
+            ? card.stageAssignees[currentStage].name.trim()
+            : "";
+
   return {
-    items: card.items,
-    assignee: card.assignee,
+    items: card.items || "",
+    assignee: resolvedAssignee,
     quantity: card.quantity,
-    dueDate: card.dueDate,
+    dueDate: card.dueDate || "",
     satelliteId: card.satelliteId || "",
     satelliteCost:
       card.satelliteCost != null && Number.isFinite(card.satelliteCost)

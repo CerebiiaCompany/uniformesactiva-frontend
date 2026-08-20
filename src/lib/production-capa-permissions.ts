@@ -237,9 +237,16 @@ export function readProductionSession(): ProductionSession {
     const roles = (user.roles || [])
       .map(normalizeRoleName)
       .filter(Boolean);
-    const isAdmin = roles.some(
-      (r) => r === "Administrador" || r.toLowerCase() === "admin"
-    );
+    const isAdmin =
+      roles.some((r) => {
+        const lower = r.toLowerCase().trim();
+        return (
+          lower === "administrador" ||
+          lower === "admin" ||
+          lower === "superadmin" ||
+          lower === "administrador general"
+        );
+      }) || Boolean((user as Record<string, unknown>).is_superuser);
     const isProduction = roles.includes("Producción");
     const isSatellite = roles.includes("Satélite");
     const isKanbanOperator = isProduction || isSatellite;

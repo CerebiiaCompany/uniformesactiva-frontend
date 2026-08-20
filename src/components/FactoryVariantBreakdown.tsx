@@ -8,6 +8,13 @@ interface FactoryVariantBreakdownProps {
   className?: string;
 }
 
+function formatTallaLabel(nombre: string): string {
+  const clean = nombre.trim();
+  if (!clean || clean === "—") return "Talla";
+  if (/^talla\b/i.test(clean)) return clean;
+  return `Talla ${clean}`;
+}
+
 export function FactoryVariantBreakdown({
   variants,
   compact = false,
@@ -58,15 +65,18 @@ export function FactoryVariantBreakdown({
           </div>
           {v.tallas.length > 0 && (
             <div className="mt-1.5 flex flex-wrap gap-1">
-              {v.tallas.map((t) => (
-                <span
-                  key={`${v.variantId}-${t.nombre}`}
-                  className="inline-flex items-center rounded bg-background/80 border px-1.5 py-0.5 text-[9px] font-medium"
-                >
-                  {t.nombre}
-                  <span className="ml-1 text-primary">×{t.cantidad}</span>
-                </span>
-              ))}
+              {v.tallas.map((t) => {
+                const label = formatTallaLabel(t.nombre);
+                return (
+                  <span
+                    key={`${v.variantId}-${t.nombre}`}
+                    className="inline-flex items-center rounded bg-background/90 border border-border/80 px-1.5 py-0.5 text-[9px] font-medium"
+                  >
+                    <span>{label}</span>
+                    <span className="ml-1 text-primary font-semibold">: {t.cantidad}</span>
+                  </span>
+                );
+              })}
             </div>
           )}
         </div>

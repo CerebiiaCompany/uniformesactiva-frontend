@@ -15,10 +15,6 @@ import {
 import { useQuotes, type Quote, type QuoteOrderPayload } from "@/hooks/useQuotes";
 import { NewOrderDialog } from "@/components/NewOrderDialog";
 import { QuoteNovedadesDialog } from "@/components/QuoteNovedadesDialog";
-import {
-  OrderPaymentDetailDialog,
-  type PaymentDetailSubject,
-} from "@/components/OrderPaymentDetailDialog";
 import { ArticlesDetailDialog } from "@/components/ArticlesDetailDialog";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -30,6 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
 import { quotePayloadToArticleLines } from "@/lib/order-fields";
@@ -40,24 +37,73 @@ interface FilterUserOption {
   label: string;
 }
 
-function quoteToPaymentSubject(quote: Quote): PaymentDetailSubject {
-  const payload = (quote.orderPayload || {}) as QuoteOrderPayload;
-  const estado =
-    quote.paymentStatus ||
-    (payload.estado_pago === "parcial" ||
-    payload.estado_pago === "pagado" ||
-    payload.estado_pago === "no_pagado"
-      ? payload.estado_pago
-      : "no_pagado");
+const QUOTE_STATUS_CONFIG: Record<
+  string,
+  { label: string; triggerClass: string; badgeClass: string }
+> = {
+  draft: {
+    label: "Borrador",
+    triggerClass: "bg-muted text-muted-foreground border-muted-foreground/20 hover:bg-muted/80",
+    badgeClass: "bg-muted text-muted-foreground border-border",
+  },
+  sent: {
+    label: "Enviada",
+    triggerClass: "bg-blue-100/80 text-blue-800 border-blue-200/80 hover:bg-blue-100",
+    badgeClass: "bg-blue-100 text-blue-800 border-blue-200",
+  },
+  in_review: {
+    label: "En revisión",
+    triggerClass: "bg-amber-100/90 text-amber-900 border-amber-300/70 hover:bg-amber-100",
+    badgeClass: "bg-amber-100 text-amber-800 border-amber-200",
+  },
+  approved: {
+    label: "Aprobada",
+    triggerClass: "bg-emerald-100/85 text-emerald-900 border-emerald-300/70 hover:bg-emerald-100",
+    badgeClass: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  },
+  rejected: {
+    label: "Rechazada",
+    triggerClass: "bg-red-100/85 text-red-900 border-red-300/70 hover:bg-red-100",
+    badgeClass: "bg-red-100 text-red-800 border-red-200",
+  },
+  ordered: {
+    label: "Ordenado",
+    triggerClass: "bg-green-100/85 text-green-900 border-green-300/70 hover:bg-green-100",
+    badgeClass: "bg-green-100 text-green-800 border-green-200",
+  },
+  inactive: {
+    label: "Inactiva",
+    triggerClass: "bg-slate-100 text-slate-700 border-slate-300/70 hover:bg-slate-200/70",
+    badgeClass: "bg-slate-100 text-slate-600 border-slate-200",
+  },
+};
 
-  return {
-    id: quote.id,
-    cliente_nombre: quote.customerName,
-    estado_pago: estado,
-    pagado: estado === "pagado",
-    detalle_abono: payload.detalle_abono || null,
-    valor_venta_proyectado: payload.valor_venta_proyectado ?? quote.totalAmount,
-  };
+function getQuoteStatusInfo(status: string) {
+  return (
+    QUOTE_STATUS_CONFIG[status] ?? {
+      label: status,
+      triggerClass: "bg-muted text-muted-foreground border-border",
+      badgeClass: "bg-muted text-muted-foreground border-border",
+    }
+  );
+}
+
+function formatDateTimeShort(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return (
+    d.toLocaleDateString("es-CO", {
+      day: "2-digit",
+      month: "short",
+    }) +
+    " · " +
+    d.toLocaleTimeString("es-CO", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    })
+  );
 }
 
 export default function Quotations() {
@@ -65,6 +111,7 @@ export default function Quotations() {
   const navigate = useNavigate();
   const {
     quotes,
+    setQuotes,
     loading,
     error,
     fetchQuotes,
@@ -79,26 +126,12 @@ export default function Quotations() {
   // Estado del modal nueva / editar cotización
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editQuote, setEditQuote] = useState<Quote | null>(null);
-
-  // Estado para el modal de cambio de estado (solo roles no-admin con permiso update)
-  const [statusModalOpen, setStatusModalOpen] = useState(false);
-  const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
-  const [newStatus, setNewStatus] = useState<string>("");
-  const [isStatusUpdating, setIsStatusUpdating] = useState(false);
   const [isPlacingOrderId, setIsPlacingOrderId] = useState<string | null>(null);
   const [printingQuoteId, setPrintingQuoteId] = useState<string | null>(null);
 
   // Modal de novedades
   const [novedadesOpen, setNovedadesOpen] = useState(false);
   const [novedadesQuote, setNovedadesQuote] = useState<Quote | null>(null);
-
-  // Modal detalle / edición de pago
-  const [paymentDetailQuote, setPaymentDetailQuote] = useState<Quote | null>(null);
-  const [paymentDetailOpen, setPaymentDetailOpen] = useState(false);
-  const paymentSubject = useMemo(
-    () => (paymentDetailQuote ? quoteToPaymentSubject(paymentDetailQuote) : null),
-    [paymentDetailQuote]
-  );
 
   const [articlesQuote, setArticlesQuote] = useState<Quote | null>(null);
   const [articlesOpen, setArticlesOpen] = useState(false);
@@ -140,8 +173,18 @@ export default function Quotations() {
   // Verificar si el usuario es admin
   const userStr = localStorage.getItem("user");
   const user = userStr ? JSON.parse(userStr) : null;
-  const isAdmin = user?.roles?.some((r: string) =>
-    r === "Administrador" || r === "admin"
+  const isAdmin = Boolean(
+    user?.is_superuser ||
+    user?.roles?.some((r: any) => {
+      const name = typeof r === "string" ? r : r?.name;
+      const lower = String(name || "").toLowerCase().trim();
+      return (
+        lower === "administrador" ||
+        lower === "admin" ||
+        lower === "superadmin" ||
+        lower === "administrador general"
+      );
+    })
   );
 
   // Obtener permisos del usuario desde localStorage
@@ -152,13 +195,44 @@ export default function Quotations() {
     (perm: any) => perm.module === "quotations" && perm.actions?.includes("create")
   );
 
-  // Admin solo visualiza el avance; no cambia estado con el botón dedicado.
-  // Otros roles con update sí pueden (sin auto-crear orden).
-  const canChangeQuoteStatus =
-    !isAdmin &&
-    userPermissions.some(
-      (perm: any) => perm.module === "quotations" && perm.actions?.includes("update")
+  const [updatingStatusQuoteId, setUpdatingStatusQuoteId] = useState<string | null>(null);
+
+  const handleAdminChangeStatus = async (quoteId: string, nextStatus: string) => {
+    // Actualización optimista inmediata en memoria (sin recargar la pestaña)
+    setQuotes((prev) =>
+      prev.map((item) =>
+        item.id === quoteId ? { ...item, status: nextStatus as any } : item
+      )
     );
+    setUpdatingStatusQuoteId(quoteId);
+
+    try {
+      const res = await updateQuoteStatus(quoteId, nextStatus);
+      if (!res.success) {
+        toast({
+          variant: "destructive",
+          title: "Error al actualizar estado",
+          description: res.errorMessage || "No se pudo cambiar el estado de la cotización.",
+        });
+        await fetchQuotes();
+        return;
+      }
+      const label = getQuoteStatusInfo(nextStatus).label;
+      toast({
+        title: "Estado actualizado",
+        description: `Estado cambiado a: ${label}`,
+      });
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "Error al actualizar estado",
+        description: err?.message || "No se pudo cambiar el estado.",
+      });
+      await fetchQuotes();
+    } finally {
+      setUpdatingStatusQuoteId(null);
+    }
+  };
 
   const canCreateOrderFromQuote =
     isAdmin ||
@@ -188,20 +262,6 @@ export default function Quotations() {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(amount).replace('CLP', '').trim();
-  };
-
-  // Abrir modal de cambio de estado
-  const openStatusModal = (quoteId: string) => {
-    setSelectedQuoteId(quoteId);
-    setNewStatus("");
-    setStatusModalOpen(true);
-  };
-
-  // Cerrar modal de cambio de estado
-  const closeStatusModal = () => {
-    setSelectedQuoteId(null);
-    setNewStatus("");
-    setStatusModalOpen(false);
   };
 
   // Debounce para searchTerm
@@ -264,20 +324,68 @@ export default function Quotations() {
     });
   };
 
-  // Cargar usuarios para el filtro "Tomada por"
+function isUserAllowedForTomadaPor(u: any): boolean {
+  if (!u) return false;
+  if (u.is_superuser) return true;
+
+  const roles: string[] = [];
+  if (Array.isArray(u.roles)) {
+    for (const r of u.roles) {
+      if (typeof r === "string") roles.push(r);
+      else if (r && typeof r === "object" && r.name) roles.push(String(r.name));
+    }
+  } else if (typeof u.roles === "string") {
+    roles.push(u.roles);
+  }
+
+  if (typeof u.role === "string") {
+    roles.push(u.role);
+  } else if (u.role && typeof u.role === "object" && u.role.name) {
+    roles.push(String(u.role.name));
+  }
+
+  const hasAllowedRole = roles.some((r) => {
+    const lower = r.toLowerCase().trim();
+    return (
+      lower === "administrador" ||
+      lower === "admin" ||
+      lower === "superadmin" ||
+      lower === "administrador general" ||
+      lower === "comercial" ||
+      lower === "asesor comercial" ||
+      lower === "ventas"
+    );
+  });
+
+  if (hasAllowedRole) return true;
+
+  const areaLower = String(u.area || "").toLowerCase().trim();
+  if (
+    areaLower === "comercial" ||
+    areaLower === "administración" ||
+    areaLower === "administracion"
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+  // Cargar usuarios para el filtro "Tomada por" (Solo Administrador y Comercial)
   useEffect(() => {
     const loadUsers = async () => {
       try {
         const usersData = await http<any[]>(endpoints.users.list()).catch(() => []);
-        const mapped: FilterUserOption[] = Array.isArray(usersData)
-          ? usersData.map((u) => ({
-              id: String(u.id),
-              label:
-                `${u.first_name || ""} ${u.last_name || ""}`.trim() ||
-                u.username ||
-                String(u.id),
-            }))
+        const filtered = Array.isArray(usersData)
+          ? usersData.filter(isUserAllowedForTomadaPor)
           : [];
+        const mapped: FilterUserOption[] = filtered.map((u) => ({
+          id: String(u.id),
+          label:
+            `${u.first_name || ""} ${u.last_name || ""}`.trim() ||
+            u.username ||
+            String(u.id),
+        }));
         setFilterUsers(mapped);
       } catch {
         setFilterUsers([]);
@@ -403,7 +511,7 @@ export default function Quotations() {
     );
   }
 
-  if (error) {
+  if (error && quotes.length === 0) {
     return (
       <AppLayout title="Cotizaciones" subtitle="Gestión de cotizaciones y propuestas" eyebrow="Comercial">
         <Card>
@@ -549,7 +657,6 @@ export default function Quotations() {
                 <TableHead className="w-[88px] text-center text-xs">Artículos</TableHead>
                 <TableHead className="w-[90px] text-right text-xs">Monto</TableHead>
                 <TableHead className="w-[110px] text-xs">Estado</TableHead>
-                <TableHead className="w-[90px] text-center text-xs">Estado pago</TableHead>
                 <TableHead className="w-[100px] text-xs">Tomada por</TableHead>
                 <TableHead className="w-[80px] text-center text-xs">Intención</TableHead>
                 <TableHead className="w-[85px] text-center text-xs">Envío</TableHead>
@@ -561,7 +668,7 @@ export default function Quotations() {
             <TableBody>
               {filteredQuotes.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={12} className="text-center py-8 text-muted-foreground text-sm">
+                  <TableCell colSpan={11} className="text-center py-8 text-muted-foreground text-sm">
                     {quotes.length === 0 ? "No hay cotizaciones disponibles" : "No hay resultados para los filtros aplicados"}
                   </TableCell>
                 </TableRow>
@@ -589,7 +696,7 @@ export default function Quotations() {
                           setArticlesQuote(q);
                           setArticlesOpen(true);
                         }}
-                        className="h-8 w-8 text-violet-600 hover:text-violet-700 hover:bg-violet-50"
+                        className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
                       >
                         <Package className="h-4 w-4" />
                       </Button>
@@ -597,61 +704,43 @@ export default function Quotations() {
                     <TableCell className="text-right text-foreground whitespace-nowrap text-sm tabular-nums">
                       {formatAmount(q.totalAmount)}
                     </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col items-start gap-1">
-                        <StatusBadge status={q.status} compact />
-                        {canChangeQuoteStatus &&
-                          q.status !== "inactive" &&
-                          q.status !== "ordered" && (
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            className="h-6 px-2 text-[11px] font-normal"
-                            onClick={() => openStatusModal(q.id)}
-                          >
-                            Cambiar estado
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        {q.paymentStatus === "pagado" ? (
-                          <span
-                            title="Pago cerrado — no se puede modificar"
-                            className="inline-flex items-center gap-0.5 bg-emerald-100/50 border border-emerald-200/40 px-2 py-0.5 rounded text-xs font-medium text-emerald-800/55 cursor-default select-none"
-                          >
-                            SI
-                          </span>
-                        ) : (
-                          <span
-                            className={
-                              q.paymentStatus === "parcial"
-                                ? "bg-blue-100 px-2 py-0.5 rounded text-xs font-bold text-blue-800"
-                                : q.paymentStatus === "no_pagado"
-                                  ? "bg-red-100 px-2 py-0.5 rounded text-xs font-bold text-red-800"
-                                  : "bg-slate-100 px-2 py-0.5 rounded text-xs font-bold text-slate-600"
-                            }
-                          >
-                            {q.paymentStatus === "parcial"
-                              ? "PARCIAL"
-                              : q.paymentStatus === "no_pagado"
-                                ? "NO"
-                                : "—"}
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          title="Ver detalle de pago"
-                          onClick={() => {
-                            setPaymentDetailQuote(q);
-                            setPaymentDetailOpen(true);
-                          }}
-                          className="inline-flex p-0.5 rounded hover:bg-muted transition-colors"
+                    <TableCell className="min-w-[125px]">
+                      {isAdmin ? (
+                        <Select
+                          value={q.status}
+                          disabled={updatingStatusQuoteId === q.id}
+                          onValueChange={(nextVal) => handleAdminChangeStatus(q.id, nextVal)}
                         >
-                          <FileText className="h-4 w-4 text-muted-foreground hover:text-primary" />
-                        </button>
-                      </div>
+                          <SelectTrigger
+                            className={cn(
+                              "h-7 w-auto min-w-[95px] rounded-full px-3 py-0 text-xs font-semibold border shadow-2xs transition-all justify-between gap-1.5 focus:ring-1 focus:ring-ring cursor-pointer select-none",
+                              getQuoteStatusInfo(q.status).triggerClass
+                            )}
+                          >
+                            <span className="text-xs font-semibold leading-none">
+                              {getQuoteStatusInfo(q.status).label}
+                            </span>
+                          </SelectTrigger>
+                          <SelectContent align="start" className="min-w-[130px]">
+                            {Object.entries(QUOTE_STATUS_CONFIG).map(([key, cfg]) => (
+                              <SelectItem key={key} value={key} className="text-xs cursor-pointer py-1.5">
+                                <span
+                                  className={cn(
+                                    "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border",
+                                    cfg.badgeClass
+                                  )}
+                                >
+                                  {cfg.label}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <div className="flex items-center">
+                          <StatusBadge status={q.status} compact />
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="text-muted-foreground text-sm truncate max-w-[120px]">
                       {q.takenBy || "-"}
@@ -769,47 +858,6 @@ export default function Quotations() {
         createNovedad={createQuoteNovedad}
       />
 
-      <OrderPaymentDetailDialog
-        open={paymentDetailOpen}
-        onOpenChange={(open) => {
-          setPaymentDetailOpen(open);
-          if (!open) setPaymentDetailQuote(null);
-        }}
-        subject={paymentSubject}
-        entityNoun="cotización"
-        idPrefix="COT"
-        onUpdatePayment={async (id, payload) => {
-          const result = await updateQuotePayment(id, payload);
-          return {
-            subject: result.quote ? quoteToPaymentSubject(result.quote) : null,
-            errorMessage: result.errorMessage,
-          };
-        }}
-        onUpdated={(updated) => {
-          setPaymentDetailQuote((prev) =>
-            prev && prev.id === updated.id
-              ? {
-                  ...prev,
-                  paymentStatus: updated.estado_pago,
-                  orderPayload: {
-                    ...(prev.orderPayload || {}),
-                    estado_pago: updated.estado_pago,
-                    detalle_abono: updated.detalle_abono ?? null,
-                    valor_venta_proyectado:
-                      Number(updated.valor_venta_proyectado) ||
-                      (prev.orderPayload as QuoteOrderPayload | undefined)?.valor_venta_proyectado ||
-                      prev.totalAmount,
-                  },
-                }
-              : prev
-          );
-          toast({
-            title: "Pago actualizado",
-            description: "El estado de pago se sincronizó en cotizaciones y órdenes.",
-          });
-        }}
-      />
-
       <ArticlesDetailDialog
         open={articlesOpen}
         onOpenChange={(open) => {
@@ -821,83 +869,6 @@ export default function Quotations() {
         lines={articlesLines}
         fallbackLines={articlesFallback}
       />
-
-      {/* Modal de cambio de estado */}
-      <Dialog open={statusModalOpen} onOpenChange={closeStatusModal}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Cambiar estado de cotización</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Selecciona el nuevo estado para esta cotización.
-            </p>
-
-            <Select
-              value={newStatus}
-              onValueChange={setNewStatus}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Selecciona un estado" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="rejected">DESCARTADO</SelectItem>
-                <SelectItem value="in_review">EN REVISIÓN</SelectItem>
-                <SelectItem value="approved">APROBADO</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <div className="flex justify-end gap-2 mt-4">
-              <Button
-                variant="outline"
-                onClick={closeStatusModal}
-                disabled={isStatusUpdating}
-              >
-                Cancelar
-              </Button>
-              <Button
-                disabled={!newStatus || isStatusUpdating}
-                onClick={async () => {
-                  if (!selectedQuoteId) return;
-                  setIsStatusUpdating(true);
-
-                  try {
-                    const statusResult = await updateQuoteStatus(selectedQuoteId, newStatus);
-
-                    if (!statusResult.success) {
-                      throw new Error(statusResult.errorMessage || "Error al actualizar el estado");
-                    }
-
-                    const statusLabels: Record<string, string> = {
-                      rejected: "Descartado",
-                      in_review: "En Revisión",
-                      approved: "Aprobado",
-                    };
-                    toast({
-                      title: "Estado actualizado",
-                      description: `Nuevo estado: ${statusLabels[newStatus] || newStatus}`,
-                    });
-                    await fetchQuotes();
-                    closeStatusModal();
-                  } catch (err: any) {
-                    const errorMessage = err?.message || "Error al actualizar el estado";
-                    toast({
-                      variant: "destructive",
-                      title: "Error",
-                      description: errorMessage,
-                    });
-                  } finally {
-                    setIsStatusUpdating(false);
-                  }
-                }}
-              >
-                {isStatusUpdating ? "Guardando..." : "Guardar"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </AppLayout>
   );
 }

@@ -445,7 +445,7 @@ export default function Orders() {
                                 setArticlesOrder(order);
                                 setArticlesOpen(true);
                               }}
-                              className="h-8 w-8 text-violet-600 hover:text-violet-700 hover:bg-violet-50"
+                              className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
                             >
                               <Package className="h-4 w-4" />
                             </Button>
@@ -516,36 +516,58 @@ export default function Orders() {
                             )}
                           </TableCell>
                           <TableCell className="text-center py-2.5">
-                            <div className="flex items-center justify-center gap-1">
-                              {order.pagado || order.estado_pago === "pagado" ? (
-                                <span
-                                  title="Pago cerrado — no se puede modificar"
-                                  className="inline-flex items-center gap-0.5 bg-emerald-100/50 border border-emerald-200/40 px-1.5 py-0.5 rounded text-xs font-medium text-emerald-800/55 cursor-default select-none"
+                            <div className="flex flex-col items-center justify-center gap-0.5">
+                              <div className="flex items-center justify-center gap-1">
+                                {order.pagado || order.estado_pago === "pagado" ? (
+                                  <span
+                                    title="Pago cerrado — no se puede modificar"
+                                    className="inline-flex items-center gap-0.5 bg-emerald-100/50 border border-emerald-200/40 px-1.5 py-0.5 rounded text-xs font-medium text-emerald-800/55 cursor-default select-none"
+                                  >
+                                    SI
+                                  </span>
+                                ) : (
+                                  <span
+                                    className={
+                                      order.estado_pago === "parcial"
+                                        ? "bg-blue-100 px-1.5 py-0.5 rounded text-xs font-bold text-blue-800"
+                                        : "bg-red-100 px-1.5 py-0.5 rounded text-xs font-bold text-red-800"
+                                    }
+                                  >
+                                    {order.estado_pago === "parcial" ? "PARCIAL" : "NO"}
+                                  </span>
+                                )}
+                                <button
+                                  type="button"
+                                  title="Ver detalle de pago"
+                                  onClick={() => {
+                                    setPaymentDetailOrder(order);
+                                    setPaymentDetailOpen(true);
+                                  }}
+                                  className="inline-flex p-0.5 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-primary"
                                 >
-                                  SI
-                                </span>
-                              ) : (
-                                <span
-                                  className={
-                                    order.estado_pago === "parcial"
-                                      ? "bg-blue-100 px-1.5 py-0.5 rounded text-xs font-bold text-blue-800"
-                                      : "bg-red-100 px-1.5 py-0.5 rounded text-xs font-bold text-red-800"
-                                  }
+                                  <FileText className="h-4 w-4" />
+                                </button>
+                              </div>
+                              {order.estado_pago === "parcial" && order.detalle_abono?.fecha_registro && (
+                                <div
+                                  className="text-[10px] text-muted-foreground leading-tight text-center max-w-[130px]"
+                                  title={`Fecha y hora de abono: ${new Date(order.detalle_abono.fecha_registro).toLocaleString("es-CO")}`}
                                 >
-                                  {order.estado_pago === "parcial" ? "PARCIAL" : "NO"}
-                                </span>
+                                  <span className="block text-primary/80 font-mono text-[9px]">
+                                    {new Date(order.detalle_abono.fecha_registro).toLocaleDateString("es-CO", { day: "2-digit", month: "short" }) + " · " + new Date(order.detalle_abono.fecha_registro).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", hour12: true })}
+                                  </span>
+                                </div>
                               )}
-                              <button
-                                type="button"
-                                title="Ver detalle de pago"
-                                onClick={() => {
-                                  setPaymentDetailOrder(order);
-                                  setPaymentDetailOpen(true);
-                                }}
-                                className="inline-flex p-0.5 rounded hover:bg-muted transition-colors"
-                              >
-                                <FileText className="h-4 w-4 text-muted-foreground hover:text-primary" />
-                              </button>
+                              {order.estado_pago === "pagado" && order.detalle_abono?.fecha_registro && (
+                                <div
+                                  className="text-[10px] text-muted-foreground leading-tight text-center max-w-[130px]"
+                                  title={`Fecha y hora de pago: ${new Date(order.detalle_abono.fecha_registro).toLocaleString("es-CO")}`}
+                                >
+                                  <span className="block text-emerald-800/80 font-mono text-[9px]">
+                                    {new Date(order.detalle_abono.fecha_registro).toLocaleDateString("es-CO", { day: "2-digit", month: "short" }) + " · " + new Date(order.detalle_abono.fecha_registro).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", hour12: true })}
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           </TableCell>
                           <TableCell className="text-center text-muted-foreground text-sm py-2.5 whitespace-nowrap">

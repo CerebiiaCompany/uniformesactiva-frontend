@@ -5,22 +5,19 @@ import { useOrders } from "@/hooks/useOrders";
 import { useKanbanEtapas } from "@/hooks/useKanbanEtapas";
 import { useRemoveMaterialStock } from "@/hooks/useRemoveMaterialStock";
 import { type ProductionOrder } from "@/data/mockData";
-import { User, Calendar, Package, ArrowLeft, ChevronRight, History, Clock, X, Plus, Pencil, Trash2, GripVertical, Check, Loader2, Boxes, Scissors, DollarSign, Factory, ImagePlus, Paperclip, FileText, UserPlus, MessageSquare } from "lucide-react";
+import { User, Calendar, Package, ArrowLeft, ChevronRight, History, Clock, X, Plus, Pencil, Trash2, GripVertical, Check, Loader2, Boxes, Scissors, DollarSign, Factory, ImagePlus, Paperclip, FileText, UserPlus, MessageSquare, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { resolveFactoryCardInfo, groupOrderItemsForFactory } from "@/lib/order-fields";
 import { FactoryVariantBreakdown } from "@/components/FactoryVariantBreakdown";
 import { KanbanStageChip } from "@/components/KanbanStageChip";
-import {
-  KanbanCardEditDialog,
-  cardFormFromProductionOrder,
-  type KanbanCardFormValues,
-} from "@/components/KanbanCardEditDialog";
+import { KanbanCardEditDialog, cardFormFromProductionOrder, type KanbanCardFormValues } from "@/components/KanbanCardEditDialog";
 import { KanbanNovedadesDialog } from "@/components/KanbanNovedadesDialog";
 import { StageLaborCostDialog } from "@/components/StageLaborCostDialog";
+import { KanbanStageSummaryDialog } from "@/components/KanbanStageSummaryDialog";
 import { useToast } from "@/hooks/use-toast";
-import { HttpError } from "@/lib/http";
+import { http, HttpError } from "@/lib/http";
 import {
   prepareCardsWithLedger,
   computeRealCostFromCards,
@@ -40,6 +37,23 @@ import {
   parseStageKeys,
 } from "@/lib/production-capa-permissions";
 import { endpoints } from "@/lib/api-endpoints";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Popover,
   PopoverContent,
@@ -114,6 +128,50 @@ function calcDuration(from: string, to: string) {
   return `${minutes}m`;
 }
 
+function isStageRequiredForCard(stageKey: string, card: ProductionOrder | null): boolean {
+  if (!card) return true;
+  const k = stageKey.toLowerCase();
+
+  // Bordado
+  if (k === "embroidery" || k === "bordado" || k.includes("bordado")) {
+    if (card.hasBordado === false) return false;
+    if (card.tipoBordado === "—" && !card.hasBordado) return false;
+  }
+
+  // Estampado
+  if (k === "printing" || k === "estampado" || k.includes("estampado")) {
+    if ((card as any).hasEstampado === false) return false;
+    const est = ((card as any).estampado || "").trim().toLowerCase();
+    if (!est || est === "—" || est === "sin" || est.includes("sin estampado") || est.includes("sin estampa")) return false;
+  }
+
+  return true;
+}
+
+function resolveValidStageForCard(
+  targetStage: string,
+  card: ProductionOrder | null,
+  allStages: { key: string }[]
+): string {
+  if (!targetStage || !card) return targetStage || "design";
+  if (isStageRequiredForCard(targetStage, card)) return targetStage;
+
+  // Si la etapa actual no es requerida (ej. Bordado cuando no lleva bordado),
+  // buscar la siguiente etapa en allStages que SÍ sea requerida.
+  const currentIndex = allStages.findIndex((s) => s.key === targetStage);
+  if (currentIndex >= 0) {
+    for (let i = currentIndex + 1; i < allStages.length; i++) {
+      if (isStageRequiredForCard(allStages[i].key, card)) {
+        return allStages[i].key;
+      }
+    }
+  }
+
+  // Fallback: primera etapa requerida
+  const firstReq = allStages.find((s) => isStageRequiredForCard(s.key, card));
+  return firstReq ? firstReq.key : targetStage;
+}
+
 interface ProductionTimelineEntry {
   stage: string;
   label: string;
@@ -179,14 +237,9 @@ function getCardLaborInfoForStage(card: ProductionOrder, stageKey: string) {
   let unitLabor = 0;
   let liveLaborTotal = 0;
 
-  if (stageConfig !== undefined) {
-    if (stageConfig.enabled && stageConfig.perUnit != null && Number(stageConfig.perUnit) > 0) {
-      unitLabor = Number(stageConfig.perUnit);
-      liveLaborTotal = (Number(card.quantity) || 0) * unitLabor;
-    }
-  } else if (isCurrentStage && card.laborCostEnabled && card.laborCostPerUnit != null) {
-    unitLabor = Number(card.laborCostPerUnit) || 0;
-    liveLaborTotal = unitLabor > 0 ? (Number(card.quantity) || 0) * unitLabor : 0;
+  if (stageConfig && stageConfig.enabled && stageConfig.perUnit != null && Number(stageConfig.perUnit) > 0) {
+    unitLabor = Number(stageConfig.perUnit);
+    liveLaborTotal = (Number(card.quantity) || 0) * unitLabor;
   }
 
   // 1. Entradas en costLedger para esta etapa/capa con categoría "labor"
@@ -200,7 +253,7 @@ function getCardLaborInfoForStage(card: ProductionOrder, stageKey: string) {
     0
   );
 
-  // 3. Costo de satélite / taller si aplica
+  // 2. Costo de satélite / taller si aplica
   const satEntries = (card.costLedger || []).filter(
     (e) => e.stage === stageKey && e.category === "satellite"
   );
@@ -212,10 +265,16 @@ function getCardLaborInfoForStage(card: ProductionOrder, stageKey: string) {
     isCurrentStage && card.satelliteCost != null && Number(card.satelliteCost) > 0
       ? Number(card.satelliteCost)
       : 0;
-  const satelliteTotal = ledgerSatTotal > 0 ? ledgerSatTotal : liveSatTotal;
 
-  // Total de mano de obra
-  const totalLabor = liveLaborTotal > 0 ? liveLaborTotal : ledgerLaborTotal;
+  // Para la capa actual activa, la mano de obra depende exclusivamente de si se configuró valor para esta capa
+  const totalLabor = isCurrentStage
+    ? liveLaborTotal
+    : (liveLaborTotal > 0 ? liveLaborTotal : ledgerLaborTotal);
+
+  const satelliteTotal = isCurrentStage
+    ? (liveSatTotal > 0 ? liveSatTotal : (stageConfig?.enabled ? liveLaborTotal : 0))
+    : ledgerSatTotal;
+
   const finalUnitLabor =
     unitLabor > 0
       ? unitLabor
@@ -286,12 +345,137 @@ export default function Production() {
   >([]);
   const [assignOpenFor, setAssignOpenFor] = useState<string | null>(null);
   const [novedadesCard, setNovedadesCard] = useState<ProductionOrder | null>(null);
+  const [summaryStage, setSummaryStage] = useState<KanbanEtapa | null>(null);
+  const [summaryTargetOrder, setSummaryTargetOrder] = useState<ProductionOrder | null>(null);
   const [laborDialog, setLaborDialog] = useState<{
     open: boolean;
     card: ProductionOrder | null;
     stageKey: string;
     stageLabel: string;
   }>({ open: false, card: null, stageKey: "", stageLabel: "" });
+
+  const [assignModal, setAssignModal] = useState<{
+    open: boolean;
+    card: ProductionOrder | null;
+    selectedStages: string[];
+    assigneeType: "production" | "satellite";
+    selectedUserId: string;
+  }>({
+    open: false,
+    card: null,
+    selectedStages: [],
+    assigneeType: "production",
+    selectedUserId: "",
+  });
+
+  const openAssignModal = (card: ProductionOrder, currentStageKey: string) => {
+    const initialType = card.satelliteAssigneeId ? "satellite" : "production";
+    const initialUserId = card.satelliteAssigneeId || card.assigneeId || "";
+
+    setAssignModal({
+      open: true,
+      card,
+      selectedStages: [currentStageKey],
+      assigneeType: initialType,
+      selectedUserId: initialUserId,
+    });
+  };
+
+  const assignCardToMultipleStages = async (
+    card: ProductionOrder,
+    targetStages: string[],
+    userId: string,
+    userName: string,
+    kind: "production" | "satellite"
+  ) => {
+    if (!card || !card.orderId || targetStages.length === 0 || !userId) return;
+
+    setSavingCard(true);
+    try {
+      let stageAssignees = { ...(card.stageAssignees || {}) };
+
+      for (const sKey of targetStages) {
+        const otherKindKey = kind === "production" ? `${sKey}__satellite` : sKey;
+        delete stageAssignees[otherKindKey];
+
+        const assignKey = kind === "satellite" ? `${sKey}__satellite` : sKey;
+        stageAssignees[assignKey] = {
+          userId,
+          name: userName,
+          kind,
+        };
+
+        await updateKanbanAssignment(card.orderId, {
+          card_id: card.id,
+          stage: sKey,
+          assignee_id: userId,
+          assignee_name: userName,
+          kind,
+        });
+      }
+
+      // Persistir stageAssignees completo en el backend
+      try {
+        await http(endpoints.orders.detail(card.orderId), {
+          method: "PATCH",
+          body: JSON.stringify({
+            kanban_asignaciones: {
+              [card.id]: {
+                stage: card.stage,
+                ...(kind === "satellite"
+                  ? { satelliteAssigneeId: userId, satelliteAssignee: userName, assigneeId: null, assignee: "Sin asignar" }
+                  : { assigneeId: userId, assignee: userName, satelliteAssigneeId: null, satelliteAssignee: "Sin asignar" }),
+                stageAssignees,
+              },
+            },
+          }),
+        });
+      } catch {
+        /* fallback silent */
+      }
+
+      const isCurrentStageIncluded = targetStages.includes(card.stage);
+
+      const patch: Partial<ProductionOrder> = {
+        stageAssignees,
+        ...(isCurrentStageIncluded
+          ? kind === "satellite"
+            ? {
+                assigneeId: null,
+                assignee: "Sin asignar",
+                satelliteAssigneeId: userId,
+                satelliteAssignee: userName,
+              }
+            : {
+                assigneeId: userId,
+                assignee: userName,
+                satelliteAssigneeId: null,
+                satelliteAssignee: "Sin asignar",
+              }
+          : {}),
+      };
+
+      commitOrderCards(card.orderId, (cards) =>
+        cards.map((c) => (c.id === card.id ? { ...c, ...patch } : c))
+      );
+
+      toast({
+        title: "Asignación multicapa exitosa",
+        description: `Se asignó a ${userName} (${kind === "satellite" ? "Satélite" : "Producción"}) en ${targetStages.length} capa(s).`,
+      });
+
+      setAssignModal({ open: false, card: null, selectedStages: [], assigneeType: "production", selectedUserId: "" });
+      fetchOrders();
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "Error en asignación",
+        description: err?.message || "No se pudo realizar la asignación",
+      });
+    } finally {
+      setSavingCard(false);
+    }
+  };
 
   const openLaborCostModal = (card: ProductionOrder, stageKey: string) => {
     const label = stages.find((s) => s.key === stageKey)?.label || stageKey;
@@ -307,6 +491,28 @@ export default function Production() {
     if (!laborDialog.card || !laborDialog.stageKey) return;
     const { card, stageKey } = laborDialog;
 
+    let stageAssignees = { ...(card.stageAssignees || {}) };
+    const hasExistingAssign =
+      stageAssignees[stageKey] ||
+      stageAssignees[`${stageKey}__satellite`] ||
+      stageAssignees[`${stageKey}__production`];
+
+    if (!hasExistingAssign) {
+      if (card.satelliteAssigneeId && card.satelliteAssignee && card.satelliteAssignee !== "Sin asignar") {
+        stageAssignees[`${stageKey}__satellite`] = {
+          userId: card.satelliteAssigneeId,
+          name: card.satelliteAssignee,
+          kind: "satellite",
+        };
+      } else if (card.assigneeId && card.assignee && card.assignee !== "Sin asignar") {
+        stageAssignees[stageKey] = {
+          userId: card.assigneeId,
+          name: card.assignee,
+          kind: "production",
+        };
+      }
+    }
+
     const stageLaborConfig = {
       ...(card.stageLaborConfig || {}),
       [stageKey]: {
@@ -318,6 +524,7 @@ export default function Production() {
     const isCurrentStage = card.stage === stageKey;
     const patch: Partial<ProductionOrder> = {
       stageLaborConfig,
+      stageAssignees,
       ...(isCurrentStage
         ? {
             laborCostEnabled: data.enabled,
@@ -340,6 +547,191 @@ export default function Production() {
       title: "Mano de obra guardada",
       description: `Tarifa actualizada para la capa ${laborDialog.stageLabel}.`,
     });
+  };
+
+  const handleMarkCardTerminado = async (
+    order: ProductionOrder,
+    stageKey: string,
+    targetStageOverride?: string
+  ) => {
+    try {
+      const stageLabor = getCardLaborInfoForStage(order, stageKey);
+      let amount = stageLabor.totalLabor || stageLabor.satelliteTotal || Number(order.satelliteCost || 0);
+
+      if (amount <= 0 && order.laborCostPerUnit && order.quantity) {
+        amount = Number(order.laborCostPerUnit) * Number(order.quantity);
+      }
+      if (amount <= 0 && order.laborCost) {
+        amount = Number(order.laborCost);
+      }
+
+      const stageKeyCompleted = stageKey || order.stage || "current";
+      const stageAssign =
+        order.stageAssignees?.[stageKeyCompleted] ||
+        order.stageAssignees?.[`${stageKeyCompleted}__satellite`] ||
+        order.stageAssignees?.[`${stageKeyCompleted}__production`];
+
+      const isSatKind = stageAssign?.kind === "satellite" || Boolean(order.satelliteAssigneeId) || (Boolean(order.satelliteName) && !order.assigneeId);
+      const prodUserId = (!isSatKind && stageAssign?.userId) || order.assigneeId || (prodSession.isProduction ? prodSession.userId : null);
+
+      if (isSatKind) {
+        let satelliteId = order.satelliteWorkshopId;
+
+        if (!satelliteId) {
+          try {
+            const list = await http<any[]>(endpoints.satellites.list());
+            const searchName = (order.satelliteName || order.satelliteAssignee || "").toLowerCase().trim();
+            const targetUser = satelliteUsers.find((u) => u.id === order.satelliteAssigneeId);
+
+            const match = list.find((s) => {
+              const sName = (s.name || "").toLowerCase().trim();
+              const sContact = (s.contact_name || "").toLowerCase().trim();
+              if (targetUser && (s.id === targetUser.satelliteId || sName.includes(targetUser.name.toLowerCase()))) return true;
+              if (searchName && (sName.includes(searchName) || searchName.includes(sName) || sContact.includes(searchName))) return true;
+              return false;
+            });
+
+            if (match) satelliteId = match.id;
+          } catch {
+            /* ignore */
+          }
+        }
+
+        if (satelliteId) {
+          try {
+            const ws = await http<any>(endpoints.satellites.detail(satelliteId));
+            const prevSettlements = ws?.settlements || {};
+            const rawOrderId = String(order.orderId || order.id || "").replace(/^PO-/, "");
+            const cardId = order.id || `PO-${rawOrderId}`;
+            const prevOrder = prevSettlements[rawOrderId] || prevSettlements[cardId] || {};
+            const prevAmount = Number(prevOrder.amount || prevOrder.agreed_cost || 0);
+            const prevStagesDone = prevOrder.stages_done || {};
+
+            const isAlreadyAdded = Boolean(prevStagesDone[stageKeyCompleted]);
+            const totalAccumAmount = isAlreadyAdded ? prevAmount : prevAmount + amount;
+
+            const settlementPayload = {
+              ...prevOrder,
+              status: prevOrder.status || "pending",
+              work_status: "recibido_completo",
+              amount: totalAccumAmount,
+              agreed_cost: totalAccumAmount,
+              stages_done: {
+                ...prevStagesDone,
+                [stageKeyCompleted]: amount,
+              },
+              confirmed_at: new Date().toISOString(),
+            };
+
+            const nextSettlements = {
+              ...prevSettlements,
+              [rawOrderId]: settlementPayload,
+              [cardId]: settlementPayload,
+            };
+
+            await http(endpoints.satellites.detail(satelliteId), {
+              method: "PATCH",
+              body: JSON.stringify({
+                settlements: nextSettlements,
+                payment_status: "pendiente",
+              }),
+            });
+          } catch {
+            /* ignore */
+          }
+        }
+      } else if (prodUserId) {
+        try {
+          const userRes = await http<any>(endpoints.users.detail(prodUserId)).catch(() => null);
+          const prevSettlements = userRes?.settlements || {};
+          const rawOrderId = String(order.orderId || order.id || "").replace(/^PO-/, "");
+          const cardId = order.id || `PO-${rawOrderId}`;
+          const prevOrder = prevSettlements[rawOrderId] || prevSettlements[cardId] || {};
+          const prevAmount = Number(prevOrder.amount || prevOrder.agreed_cost || 0);
+          const prevStagesDone = prevOrder.stages_done || {};
+
+          const isAlreadyAdded = Boolean(prevStagesDone[stageKeyCompleted]);
+          const totalAccumAmount = isAlreadyAdded ? prevAmount : prevAmount + amount;
+
+          const settlementPayload = {
+            ...prevOrder,
+            status: prevOrder.status || "pending",
+            work_status: "recibido_completo",
+            amount: totalAccumAmount,
+            agreed_cost: totalAccumAmount,
+            stages_done: {
+              ...prevStagesDone,
+              [stageKeyCompleted]: amount,
+            },
+            confirmed_at: new Date().toISOString(),
+          };
+
+          const nextSettlements = {
+            ...prevSettlements,
+            [rawOrderId]: settlementPayload,
+            [cardId]: settlementPayload,
+          };
+
+          await http(endpoints.users.detail(prodUserId), {
+            method: "PATCH",
+            body: JSON.stringify({ settlements: nextSettlements }),
+          }).catch(() => null);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      // Avanzar tarjeta a la siguiente etapa y desasignar
+      const targetOrderId = order.orderId || (selectedOrder ? selectedOrder.id : null);
+      const currentStage = stageKey || order.stage || "design";
+      const visibleStages = stages.filter((s) => isStageRequiredForCard(s.key, order));
+      const nextStage = targetStageOverride || getNextStageKey(visibleStages, currentStage) || currentStage;
+      const prevLabel = stages.find((s) => s.key === currentStage)?.label || currentStage;
+      const nextLabel = stages.find((s) => s.key === nextStage)?.label || nextStage;
+      const now = new Date().toISOString();
+      const frozenCosts = freezeStageCostsOnMove(order, currentStage, prevLabel);
+
+      const movedPatch = {
+        ...frozenCosts,
+        stage: nextStage as ProductionOrder["stage"],
+        daysInStage: 0,
+        assignee: "Sin asignar",
+        assigneeId: null as string | null,
+        satelliteAssignee: "Sin asignar",
+        satelliteAssigneeId: null as string | null,
+        stageHistory: [
+          ...(order.stageHistory || []),
+          { stage: nextStage as ProductionOrder["stage"], enteredAt: now },
+        ],
+      };
+
+      if (targetOrderId && order.id) {
+        commitOrderCards(targetOrderId, (cards) =>
+          cards.map((o) => (o.id !== order.id ? o : { ...o, ...movedPatch }))
+        );
+        void updateKanbanAssignment(targetOrderId, {
+          card_id: order.id,
+          stage: nextStage,
+          clear: true,
+          assignee_id: null,
+          kind: "both",
+        });
+        await updateOrderStage(targetOrderId, nextStage);
+      }
+
+      toast({
+        title: "Trabajo terminado",
+        description: `Trabajo de «${prevLabel}» finalizado. El pedido avanzó a la fase de «${nextLabel}» (Sin asignar) y se sumaron ${new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(amount)} a POR PAGAR.`,
+      });
+
+      await fetchOrders();
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err?.message || "No se pudo marcar el trabajo como terminado",
+        variant: "destructive",
+      });
+    }
   };
 
   useEffect(() => {
@@ -429,6 +821,19 @@ export default function Production() {
   const userCanViewHistory =
     canManageBoard ||
     userStageKeys.some((k) => capaHasAction(capaActionsMap, k, "ver_historial"));
+  const canViewStageSummary =
+    prodSession.isAdmin ||
+    prodSession.isProduction ||
+    (prodSession.roles || []).some((r) => {
+      const lower = r.toLowerCase().trim();
+      return (
+        lower === "administrador" ||
+        lower === "admin" ||
+        lower === "producción" ||
+        lower === "produccion" ||
+        lower === "inventario"
+      );
+    });
   const dialogStageKey = cardDialog.stageKey || "";
 
   // Migración única: datos viejos de localStorage → BD (luego se borran del navegador)
@@ -516,7 +921,12 @@ export default function Production() {
         const variants = groupOrderItemsForFactory(o.items || [], {
           fallbackColor: o.color,
         });
-        const stage = (o.etapa_produccion || "design") as ProductionOrder["stage"];
+        const rawStage = (o.etapa_produccion || "design") as ProductionOrder["stage"];
+        const stage = resolveValidStageForCard(
+          rawStage,
+          { hasBordado: factory.hasBordado, tipoBordado: factory.tipoBordado, hasEstampado: (o as any).hasEstampado, estampado: (o as any).estampado } as any,
+          etapas.length ? etapas : stages
+        ) as ProductionOrder["stage"];
         const history = (o.etapa_historial || []).map((h) => ({
           stage: (h.etapa || "design") as ProductionOrder["stage"],
           enteredAt: h.entered_at || o.fecha_creacion,
@@ -559,53 +969,77 @@ export default function Production() {
         /** Solo muestra responsables de la capa actual según kanban_asignaciones. */
         const applyAsignaciones = (card: ProductionOrder): ProductionOrder => {
           const meta = o.kanban_asignaciones?.[card.id];
-          const cleared = {
-            ...card,
-            assigneeId: null as string | null,
-            assignee: "Sin asignar",
-            satelliteAssigneeId: null as string | null,
-            satelliteAssignee: "Sin asignar",
+          const stageAssignees = {
+            ...(card.stageAssignees || {}),
+            ...(meta?.stageAssignees || {}),
           };
 
-          if (!meta) return cleared;
+          // 1. Revisar si hay un responsable específico en stageAssignees para esta capa (card.stage)
+          const curSatAssign = stageAssignees[`${card.stage}__satellite`] ||
+            (stageAssignees[card.stage]?.kind === "satellite" ? stageAssignees[card.stage] : null);
 
-          // Solo mostrar responsables si la asignación es de ESTA capa
-          if (!meta.stage || meta.stage !== card.stage) {
-            return {
-              ...cleared,
-              stageAssignees: meta.stageAssignees || card.stageAssignees,
-            };
-          }
-
-          const prodId = meta.assigneeId ? String(meta.assigneeId) : null;
-          const satId = meta.satelliteAssigneeId
-            ? String(meta.satelliteAssigneeId)
+          const curProdAssign = stageAssignees[card.stage]?.kind === "production"
+            ? stageAssignees[card.stage]
             : null;
 
-          // Exclusivo en UI: si hay producción, no mostrar satélite (y viceversa)
-          if (prodId) {
-            return {
-              ...card,
-              assigneeId: prodId,
-              assignee: meta.assignee || "Sin asignar",
-              satelliteAssigneeId: null,
-              satelliteAssignee: "Sin asignar",
-              stageAssignees: meta.stageAssignees || card.stageAssignees,
-            };
-          }
-          if (satId) {
+          if (curSatAssign?.userId) {
             return {
               ...card,
               assigneeId: null,
               assignee: "Sin asignar",
-              satelliteAssigneeId: satId,
-              satelliteAssignee: meta.satelliteAssignee || "Sin asignar",
-              stageAssignees: meta.stageAssignees || card.stageAssignees,
+              satelliteAssigneeId: String(curSatAssign.userId),
+              satelliteAssignee: curSatAssign.name || "Satélite",
+              stageAssignees,
             };
           }
+
+          if (curProdAssign?.userId) {
+            return {
+              ...card,
+              assigneeId: String(curProdAssign.userId),
+              assignee: curProdAssign.name || "Producción",
+              satelliteAssigneeId: null,
+              satelliteAssignee: "Sin asignar",
+              stageAssignees,
+            };
+          }
+
+          // 2. Fallback a meta global de kanban_asignaciones si coincide la etapa
+          if (meta) {
+            if (!meta.stage || meta.stage === card.stage) {
+              const prodId = meta.assigneeId ? String(meta.assigneeId) : null;
+              const satId = meta.satelliteAssigneeId ? String(meta.satelliteAssigneeId) : null;
+
+              if (satId) {
+                return {
+                  ...card,
+                  assigneeId: null,
+                  assignee: "Sin asignar",
+                  satelliteAssigneeId: satId,
+                  satelliteAssignee: meta.satelliteAssignee || meta.assignee_name || "Satélite",
+                  stageAssignees,
+                };
+              }
+              if (prodId) {
+                return {
+                  ...card,
+                  assigneeId: prodId,
+                  assignee: meta.assignee || meta.assignee_name || "Producción",
+                  satelliteAssigneeId: null,
+                  satelliteAssignee: "Sin asignar",
+                  stageAssignees,
+                };
+              }
+            }
+          }
+
           return {
-            ...cleared,
-            stageAssignees: meta.stageAssignees || card.stageAssignees,
+            ...card,
+            assigneeId: null,
+            assignee: "Sin asignar",
+            satelliteAssigneeId: null,
+            satelliteAssignee: "Sin asignar",
+            stageAssignees,
           };
         };
 
@@ -622,10 +1056,16 @@ export default function Production() {
 
           const merged = stored.map((card) => {
             const meta = o.kanban_asignaciones?.[card.id];
-            const resolvedStage = (
+            const rawResolvedStage = (
               syncAllToOrderStage
                 ? stage
                 : meta?.stage || card.stage || stage
+            ) as ProductionOrder["stage"];
+
+            const resolvedStage = resolveValidStageForCard(
+              rawResolvedStage,
+              card,
+              etapas.length ? etapas : stages
             ) as ProductionOrder["stage"];
 
             return applyAsignaciones({
@@ -705,29 +1145,38 @@ export default function Production() {
   const activeOrders = rawOrders.filter((o) => {
     if (o.estado === "delivered") return false;
     if (canManageBoard) return true;
-    // Producción / Satélite: solo órdenes con tarjeta asignada a este usuario
+    // Producción / Satélite: solo órdenes donde el usuario es el responsable de la capa actual
     const myId = prodSession.userId;
     if (!myId) return false;
-    const fromCards = prodOrders.some(
-      (c) =>
-        c.orderId === o.id &&
-        (c.assigneeId === myId || c.satelliteAssigneeId === myId)
-    );
-    if (fromCards) return true;
-    const asignaciones = o.kanban_asignaciones || {};
-    return Object.values(asignaciones).some(
-      (a) => a?.assigneeId === myId || a?.satelliteAssigneeId === myId
-    );
+
+    return prodOrders.some((c) => {
+      if (c.orderId !== o.id) return false;
+      const isSat = c.satelliteAssigneeId === myId;
+      const isProd = c.assigneeId === myId;
+      const curAssign =
+        c.stageAssignees?.[c.stage] ||
+        c.stageAssignees?.[`${c.stage}__satellite`] ||
+        c.stageAssignees?.[`${c.stage}__production`];
+      const isStageAssign = curAssign?.userId === myId;
+
+      return isSat || isProd || isStageAssign;
+    });
   });
   const filteredProdOrders = prodOrders.filter((po) => {
     if (po.orderId !== selectedOrderId) return false;
     if (canManageBoard) return true;
     if (!prodSession.userId) return false;
     if (prodSession.isSatellite) {
-      return po.satelliteAssigneeId === prodSession.userId;
+      const curAssign =
+        po.stageAssignees?.[po.stage] ||
+        po.stageAssignees?.[`${po.stage}__satellite`];
+      return po.satelliteAssigneeId === prodSession.userId || curAssign?.userId === prodSession.userId;
     }
     if (prodSession.isProduction) {
-      return po.assigneeId === prodSession.userId;
+      const curAssign =
+        po.stageAssignees?.[po.stage] ||
+        po.stageAssignees?.[`${po.stage}__production`];
+      return po.assigneeId === prodSession.userId || curAssign?.userId === prodSession.userId;
     }
     return false;
   });
@@ -757,7 +1206,7 @@ export default function Production() {
     e.dataTransfer.effectAllowed = "move";
   };
 
-  const handleCardDrop = (targetStage: string) => {
+  const handleCardDrop = async (targetStage: string) => {
     if (dragType !== "card" || !draggedCardId) return;
     const movedCardId = draggedCardId;
     const card = prodOrders.find((o) => o.id === movedCardId);
@@ -779,12 +1228,28 @@ export default function Production() {
       return;
     }
 
-    // Operadores Kanban: solo a la capa siguiente, nunca saltar etapas
+    const visibleStages = stages.filter((s) => isStageRequiredForCard(s.key, card));
+    const fromIndex = visibleStages.findIndex((s) => s.key === previousStage);
+    const toIndex = visibleStages.findIndex((s) => s.key === targetStage);
+
+    if (previousStage === targetStage) return;
+
+    // BLOQUEO TOTAL DE RETROCESO (Las órdenes solo pueden avanzar)
+    if (toIndex <= fromIndex) {
+      toast({
+        variant: "destructive",
+        title: "Movimiento bloqueado",
+        description: "No se permite retroceder tarjetas en el flujo de producción. Las órdenes solo pueden avanzar.",
+      });
+      return;
+    }
+
+    // Operadores Kanban: solo a la capa siguiente requerida
     if (
       !prodSession.unrestricted &&
-      !canMoveCardToStage(stages, previousStage, targetStage)
+      !canMoveCardToStage(visibleStages, previousStage, targetStage)
     ) {
-      const next = getNextStageKey(stages, previousStage);
+      const next = getNextStageKey(visibleStages, previousStage);
       const nextLabel = next
         ? stages.find((s) => s.key === next)?.label || next
         : null;
@@ -798,14 +1263,8 @@ export default function Production() {
       return;
     }
 
-    if (previousStage === targetStage) return;
-
-    setPendingCardMove({
-      cardId: movedCardId,
-      orderId: card.orderId || null,
-      fromStage: previousStage,
-      toStage: targetStage,
-    });
+    // Arrastrar hacia adelante liquida y avanza igual que presionar Terminado
+    await handleMarkCardTerminado(card, previousStage, targetStage);
   };
 
   const cancelPendingCardMove = () => {
@@ -1703,33 +2162,48 @@ export default function Production() {
       </div>
 
       <div className="flex gap-4 overflow-x-auto pb-4 min-h-[calc(100vh-12rem)]">
-        {stages.map((stage, stageIndex) => {
-          const stageOrders = getOrdersForStage(stage.key);
-          const isEditing = editingColKey === stage.key;
-          const isOwnCapa =
-            canManageBoard || userStageKeys.includes(stage.key);
-          const draggedCard =
-            dragType === "card" && draggedCardId
-              ? prodOrders.find((o) => o.id === draggedCardId)
-              : undefined;
-          const nextOfDragged = draggedCard
-            ? getNextStageKey(stages, draggedCard.stage)
-            : null;
-          const isValidDropTarget =
-            canManageBoard ||
-            (Boolean(draggedCard) &&
-              canProductionUserActOnStage(prodSession, draggedCard!.stage) &&
-              (stage.key === draggedCard!.stage || stage.key === nextOfDragged));
-          const isDropTarget = dragType === "card" && draggedCardId != null && isValidDropTarget;
-          const theme = resolveStageTheme(stage, stageIndex);
-          return (
-            <div
-              key={stage.key}
-              className={cn(
-                "flex-shrink-0 w-72 flex flex-col transition-opacity",
-                draggedColKey === stage.key && "opacity-40",
-                !canManageBoard && !isOwnCapa && dragType !== "card" && "opacity-80"
-              )}
+        {(() => {
+          const primaryCard =
+            filteredProdOrders[0] ||
+            prodOrders.find((p) => p.orderId === selectedOrderId) ||
+            null;
+          const visibleStages = stages.filter((stage) =>
+            isStageRequiredForCard(stage.key, primaryCard)
+          );
+
+          return visibleStages.map((stage, stageIndex) => {
+            const stageOrders = getOrdersForStage(stage.key);
+            const isEditing = editingColKey === stage.key;
+            const isOwnCapa =
+              canManageBoard || userStageKeys.includes(stage.key);
+            const draggedCard =
+              dragType === "card" && draggedCardId
+                ? prodOrders.find((o) => o.id === draggedCardId)
+                : undefined;
+            const nextOfDragged = draggedCard
+              ? getNextStageKey(visibleStages, draggedCard.stage)
+              : null;
+            const fromIndex = draggedCard
+              ? visibleStages.findIndex((s) => s.key === draggedCard.stage)
+              : -1;
+            const toIndex = visibleStages.findIndex((s) => s.key === stage.key);
+            const isForward = draggedCard && fromIndex >= 0 && toIndex > fromIndex;
+            const isValidDropTarget =
+              Boolean(isForward) &&
+              (canManageBoard ||
+                (Boolean(draggedCard) &&
+                  canProductionUserActOnStage(prodSession, draggedCard!.stage) &&
+                  stage.key === nextOfDragged));
+            const isDropTarget = dragType === "card" && draggedCardId != null && isValidDropTarget;
+            const theme = resolveStageTheme(stage, stageIndex);
+            return (
+              <div
+                key={stage.key}
+                className={cn(
+                  "flex-shrink-0 w-72 flex flex-col transition-opacity",
+                  draggedColKey === stage.key && "opacity-40",
+                  !canManageBoard && !isOwnCapa && dragType !== "card" && "opacity-80"
+                )}
               onDragOver={(e) => {
                 if (dragType === "column" && !canManageBoard) return;
                 if (dragType === "card" && !isValidDropTarget) return;
@@ -1851,8 +2325,29 @@ export default function Production() {
                       needsAssign && canManageBoard && "ring-1 ring-amber-300/80"
                     )}
                   >
-                    {(canEditCard || canInventoryCard || canManageBoard) && (
-                      <div className="absolute top-2 right-2 flex opacity-0 group-hover/card:opacity-100">
+                    {(canEditCard || canInventoryCard || canManageBoard || canViewStageSummary) && (
+                      <div className="absolute top-2 right-2 flex opacity-0 group-hover/card:opacity-100 bg-card/90 rounded-md backdrop-blur-xs">
+                        {canViewStageSummary && (
+                          <button
+                            type="button"
+                            title="Ver resumen de esta capa para este pedido"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const etapaObj = etapas.find((e) => e.key === stage.key) || ({
+                                id: stage.id,
+                                key: stage.key,
+                                label: stage.label,
+                                activo: true,
+                                orden: 0,
+                              } as any);
+                              setSummaryStage(etapaObj);
+                              setSummaryTargetOrder(order);
+                            }}
+                            className="p-1 text-muted-foreground hover:text-primary transition-colors"
+                          >
+                            <FileText className="h-3 w-3" />
+                          </button>
+                        )}
                         {(canEditCard || canInventoryCard || canManageBoard) && (
                           <button onClick={() => openEditCard(order)} className="p-1">
                             <Pencil className="h-3 w-3" />
@@ -1975,112 +2470,93 @@ export default function Production() {
                       </span>
                     </div>
                     {canManageBoard ? (
-                      <Popover
-                        open={assignOpenFor === order.id}
-                        onOpenChange={(open) =>
-                          setAssignOpenFor(open ? order.id : null)
-                        }
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="w-full h-7 text-[10px] gap-1 mb-1 font-semibold"
+                        onClick={() => openAssignModal(order, stage.key)}
                       >
-                        <PopoverTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="w-full h-7 text-[10px] gap-1 mb-1"
-                          >
-                            <UserPlus className="h-3 w-3" />
-                            {hasProductionAssignee || hasSatelliteAssignee
-                              ? "Reasignar"
-                              : "Asignar a"}
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-60 p-2" align="start">
-                          <p className="text-[11px] text-muted-foreground px-1 mb-2">
-                            Solo un tipo a la vez: Producción o Satélite.
-                          </p>
-                          <p className="text-xs font-medium mb-2 px-1">
-                            Usuarios Producción · esta capa
-                          </p>
-                          {stageUsers.length === 0 ? (
-                            <p className="text-[11px] text-muted-foreground px-1 py-2">
-                              No hay usuarios de Producción con esta capa.
-                            </p>
-                          ) : (
-                            <div className="max-h-36 overflow-y-auto space-y-0.5 mb-2">
-                              {stageUsers.map((u) => (
-                                <button
-                                  key={u.id}
-                                  type="button"
-                                  className={cn(
-                                    "w-full text-left text-xs rounded-md px-2 py-1.5 hover:bg-muted",
-                                    order.assigneeId === u.id && "bg-muted font-medium"
-                                  )}
-                                  onClick={() =>
-                                    assignCardToUser(order, u.id, u.name, "production")
-                                  }
-                                >
-                                  {u.name}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                          <div className="border-t border-border my-2" />
-                          <p className="text-xs font-medium mb-2 px-1">
-                            Usuarios Satélite · esta capa
-                          </p>
-                          {stageSatUsers.length === 0 ? (
-                            <p className="text-[11px] text-muted-foreground px-1 py-2">
-                              No hay usuarios Satélite con esta capa. Créalos en
-                              Administración.
-                            </p>
-                          ) : (
-                            <div className="max-h-36 overflow-y-auto space-y-0.5">
-                              {stageSatUsers.map((u) => (
-                                <button
-                                  key={u.id}
-                                  type="button"
-                                  className={cn(
-                                    "w-full text-left text-xs rounded-md px-2 py-1.5 hover:bg-muted",
-                                    order.satelliteAssigneeId === u.id &&
-                                      "bg-muted font-medium"
-                                  )}
-                                  onClick={() =>
-                                    assignCardToUser(order, u.id, u.name, "satellite")
-                                  }
-                                >
-                                  {u.name}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </PopoverContent>
-                      </Popover>
+                        <UserPlus className="h-3 w-3" />
+                        {hasProductionAssignee || hasSatelliteAssignee
+                          ? "Reasignar"
+                          : "Asignar a"}
+                      </Button>
                     ) : canSeeCapa && !canOperate ? (
                       <p className="text-[10px] text-amber-700 mb-1">
                         Pendiente de asignación por admin
                       </p>
                     ) : null}
-                    {/* Taller externo: no mostrar si el responsable es Producción */}
-                    {!hasProductionAssignee && order.satelliteName ? (
-                      <p className="mt-1 text-[10px] font-medium text-red-700 truncate" title={order.satelliteName}>
-                        Satélite: {order.satelliteName}
+                    <div className="mt-1.5 pt-1.5 border-t flex items-center justify-between gap-1">
+                      <p
+                        className="text-[10px] font-medium truncate min-w-0 flex-1"
+                        title={
+                          hasSatelliteAssignee
+                            ? `Satélite: ${order.satelliteAssignee || order.satelliteName}`
+                            : hasProductionAssignee
+                              ? `Producción: ${order.assignee}`
+                              : "Sin asignar"
+                        }
+                      >
+                        {hasSatelliteAssignee
+                          ? `Satélite: ${order.satelliteAssignee || order.satelliteName}`
+                          : hasProductionAssignee
+                            ? `Producción: ${order.assignee}`
+                            : "Sin asignar"}
                       </p>
-                    ) : null}
+                      {(canManageBoard || canOperate) ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleMarkCardTerminado(order, stage.key);
+                          }}
+                          className="h-6 px-2 text-[10px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white gap-1 shrink-0 rounded shadow-xs"
+                          title="Marcar trabajo como terminado en esta capa para avanzar el pedido y sumar la mano de obra a por pagar"
+                        >
+                          <CheckCircle2 className="h-3 w-3" />
+                          Terminado
+                        </Button>
+                      ) : null}
+                    </div>
                   </div>
                   );
                 })}
                 {isOwnCapa && canManageBoard ? (
                   <button onClick={() => openAddCard(stage.key)} className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-dashed text-xs hover:bg-card"><Plus className="h-3.5 w-3.5" /> Añadir tarjeta</button>
                 ) : null}
+                {canViewStageSummary ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const etapaObj = etapas.find((e) => e.key === stage.key) || ({
+                        id: stage.id,
+                        key: stage.key,
+                        label: stage.label,
+                        activo: true,
+                        orden: 0,
+                      } as any);
+                      setSummaryStage(etapaObj);
+                      setSummaryTargetOrder(null);
+                    }}
+                    className="w-full mt-1.5 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-border/80 bg-background/80 hover:bg-muted text-xs font-medium text-muted-foreground hover:text-foreground transition-colors shadow-xs"
+                  >
+                    <FileText className="h-3.5 w-3.5 text-primary" />
+                    Ver resumen
+                  </button>
+                ) : null}
               </div>
             </div>
           );
-        })}
+          });
+        })()}
       </div>
 
       <KanbanCardEditDialog
         open={cardDialog.open}
         mode={cardDialog.mode}
+        stageKey={cardDialog.stageKey || dialogStageKey}
         initial={cardFormInitial}
         onOpenChange={(open) => setCardDialog((d) => ({ ...d, open }))}
         onSave={saveCard}
@@ -2108,6 +2584,19 @@ export default function Production() {
         stageKey={laborDialog.stageKey}
         stageLabel={laborDialog.stageLabel}
         onSave={saveLaborCostForStage}
+      />
+
+      <KanbanStageSummaryDialog
+        open={Boolean(summaryStage)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSummaryStage(null);
+            setSummaryTargetOrder(null);
+          }
+        }}
+        stage={summaryStage}
+        orders={prodOrders}
+        targetOrder={summaryTargetOrder}
       />
 
       {historyOpen && (
@@ -2254,239 +2743,6 @@ export default function Production() {
                       </div>
                     </>
                   )}
-
-                  <div>
-                    <h3 className="text-xs font-bold tracking-wide text-foreground uppercase mb-3">
-                      Configuración de tarjetas
-                    </h3>
-                    {filteredProdOrders.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        No hay tarjetas Kanban configuradas para este pedido.
-                      </p>
-                    ) : (
-                      <div className="space-y-4">
-                        {filteredProdOrders.map((card) => {
-                          const laborTotal =
-                            (Number(card.quantity) || 0) * (Number(card.laborCostPerUnit) || 0);
-                          return (
-                            <div
-                              key={card.id}
-                              className="rounded-xl border border-border p-3.5 space-y-3"
-                            >
-                              <div>
-                                <p className="text-sm font-semibold text-foreground">{card.items}</p>
-                                <div className="flex flex-wrap items-center gap-1.5 mt-1 text-xs text-muted-foreground">
-                                  <KanbanStageChip
-                                    stageKey={card.stage}
-                                    label={stageLabels[card.stage] || card.stage}
-                                    className="text-[10px] px-2 py-0.5"
-                                  />
-                                  {card.assignee ? <span>· {card.assignee}</span> : null}
-                                  {card.quantity ? <span>· {card.quantity} uds</span> : null}
-                                  {card.dueDate ? <span>· entrega {card.dueDate}</span> : null}
-                                </div>
-                              </div>
-
-                              <div className="space-y-2 text-xs">
-                                <div className="rounded-lg bg-muted/40 px-3 py-2 space-y-1">
-                                  <p className="font-semibold inline-flex items-center gap-1.5">
-                                    <Boxes className="h-3.5 w-3.5 text-red-600" />
-                                    Materiales solicitados
-                                  </p>
-                                  {(card.requestedMaterials || []).length === 0 ? (
-                                    <p className="text-muted-foreground">Sin materiales.</p>
-                                  ) : (
-                                    <ul className="space-y-0.5 text-muted-foreground">
-                                      {card.requestedMaterials!.map((m) => (
-                                        <li key={m.materialId}>
-                                          {m.materialName} × {m.quantity}
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  )}
-                                </div>
-
-                                <div className="rounded-lg bg-muted/40 px-3 py-2 space-y-1">
-                                  <p className="font-semibold inline-flex items-center gap-1.5">
-                                    <Scissors className="h-3.5 w-3.5 text-red-600" />
-                                    Moldería
-                                  </p>
-                                  {!card.moldEnabled ? (
-                                    <p className="text-muted-foreground">No activada.</p>
-                                  ) : (
-                                    <div className="text-muted-foreground space-y-0.5">
-                                      <p>
-                                        Estado:{" "}
-                                        {MOLD_STATUS_LABELS[card.moldStatus || ""] ||
-                                          card.moldStatus ||
-                                          "—"}
-                                      </p>
-                                      {card.moldResponsible ? (
-                                        <p>Responsable: {card.moldResponsible}</p>
-                                      ) : null}
-                                      {card.moldSizes ? <p>Tallas: {card.moldSizes}</p> : null}
-                                      {card.moldCost != null ? (
-                                        <p>Costo: {formatMoneyCop(Number(card.moldCost))}</p>
-                                      ) : null}
-                                      {card.moldNotes ? <p>Notas: {card.moldNotes}</p> : null}
-                                    </div>
-                                  )}
-                                </div>
-
-                                <div className="rounded-lg bg-muted/40 px-3 py-2 space-y-1">
-                                  <p className="font-semibold inline-flex items-center gap-1.5">
-                                    <DollarSign className="h-3.5 w-3.5 text-red-600" />
-                                    Mano de obra
-                                  </p>
-                                  {!card.laborCostEnabled ? (
-                                    <p className="text-muted-foreground">No activada.</p>
-                                  ) : (
-                                    <div className="text-muted-foreground space-y-0.5">
-                                      <p>
-                                        Costo/ud:{" "}
-                                        {formatMoneyCop(Number(card.laborCostPerUnit) || 0)}
-                                      </p>
-                                      <p>Total estimado: {formatMoneyCop(laborTotal)}</p>
-                                    </div>
-                                  )}
-                                </div>
-
-                                <div className="rounded-lg bg-muted/40 px-3 py-2 space-y-1">
-                                  <p className="font-semibold inline-flex items-center gap-1.5">
-                                    <Factory className="h-3.5 w-3.5 text-red-600" />
-                                    Satélite
-                                  </p>
-                                  {!card.satelliteName ? (
-                                    <p className="text-muted-foreground">Sin satélite.</p>
-                                  ) : (
-                                    <div className="text-muted-foreground space-y-0.5">
-                                      <p>{card.satelliteName}</p>
-                                      {card.satelliteCost != null ? (
-                                        <p>Costo: {formatMoneyCop(Number(card.satelliteCost))}</p>
-                                      ) : null}
-                                    </div>
-                                  )}
-                                </div>
-
-                                <div className="rounded-lg bg-muted/40 px-3 py-2 space-y-1">
-                                  <p className="font-semibold inline-flex items-center gap-1.5">
-                                    <ImagePlus className="h-3.5 w-3.5 text-red-600" />
-                                    Imágenes
-                                  </p>
-                                  {(card.cardImages || []).length === 0 ? (
-                                    <p className="text-muted-foreground">Sin imágenes.</p>
-                                  ) : (
-                                    <div className="grid grid-cols-3 gap-1.5 pt-1">
-                                      {card.cardImages!.map((img) => (
-                                        <a
-                                          key={img.id}
-                                          href={img.dataUrl}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="block rounded border overflow-hidden"
-                                          title={img.name}
-                                        >
-                                          <img
-                                            src={img.dataUrl}
-                                            alt={img.name}
-                                            className="h-14 w-full object-cover"
-                                          />
-                                        </a>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-
-                                <div className="rounded-lg bg-muted/40 px-3 py-2 space-y-1">
-                                  <p className="font-semibold inline-flex items-center gap-1.5">
-                                    <Paperclip className="h-3.5 w-3.5 text-red-600" />
-                                    Archivos adjuntos
-                                  </p>
-                                  {(card.cardFiles || []).length === 0 ? (
-                                    <p className="text-muted-foreground">Sin archivos.</p>
-                                  ) : (
-                                    <ul className="space-y-1">
-                                      {card.cardFiles!.map((file) => (
-                                        <li key={file.id}>
-                                          <a
-                                            href={file.dataUrl}
-                                            download={file.name}
-                                            className="inline-flex items-center gap-1.5 text-red-600 hover:underline"
-                                          >
-                                            <FileText className="h-3 w-3" />
-                                            <span className="truncate">{file.name}</span>
-                                            <span className="text-muted-foreground">
-                                              ({formatBytes(file.size)})
-                                            </span>
-                                          </a>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  )}
-                                </div>
-
-                                <div className="rounded-lg bg-muted/40 px-3 py-2 space-y-1">
-                                  <p className="font-semibold inline-flex items-center gap-1.5">
-                                    <MessageSquare className="h-3.5 w-3.5 text-red-600" />
-                                    Novedades
-                                    {(card.novedades || []).length > 0 ? (
-                                      <span className="font-normal text-muted-foreground">
-                                        ({card.novedades!.length})
-                                      </span>
-                                    ) : null}
-                                  </p>
-                                  {(card.novedades || []).length === 0 ? (
-                                    <p className="text-muted-foreground">Sin novedades.</p>
-                                  ) : (
-                                    <ul className="space-y-2">
-                                      {card.novedades!.map((n) => (
-                                        <li key={n.id} className="space-y-0.5">
-                                          <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-                                            <span className="font-medium text-foreground/80 truncate">
-                                              {n.autorNombre || "Usuario"}
-                                            </span>
-                                            <span className="shrink-0">
-                                              {n.createdAt
-                                                ? new Date(n.createdAt).toLocaleString("es-CO", {
-                                                    day: "2-digit",
-                                                    month: "short",
-                                                    hour: "2-digit",
-                                                    minute: "2-digit",
-                                                  })
-                                                : ""}
-                                            </span>
-                                          </div>
-                                          <p className="text-muted-foreground whitespace-pre-wrap">
-                                            {n.texto}
-                                          </p>
-                                          {((n.images || []).length > 0 ||
-                                            (n.files || []).length > 0) && (
-                                            <p className="text-[10px] text-muted-foreground">
-                                              Evidencia: {(n.images || []).length} imagen(es),{" "}
-                                              {(n.files || []).length} archivo(s)
-                                            </p>
-                                          )}
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  )}
-                                  {(card.novedades || []).length > 0 ? (
-                                    <button
-                                      type="button"
-                                      className="text-[11px] font-medium text-red-600 hover:underline"
-                                      onClick={() => setNovedadesCard(card)}
-                                    >
-                                      Abrir novedades
-                                    </button>
-                                  ) : null}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
                 </>
               )}
             </div>
@@ -2535,6 +2791,307 @@ export default function Production() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Modal de Asignación Multicapa */}
+      <Dialog
+        open={assignModal.open}
+        onOpenChange={(open) => {
+          if (!open)
+            setAssignModal({
+              open: false,
+              card: null,
+              selectedStages: [],
+              assigneeType: "production",
+              selectedUserId: "",
+            });
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold flex items-center gap-2">
+              <UserPlus className="h-5 w-5 text-primary" />
+              Asignación Multicapa — ORD-{assignModal.card?.orderId?.slice(0, 3)}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Selecciona las capas a asignar y elige el usuario o taller satélite responsable. Puedes seleccionar múltiples capas para asignar a la misma persona.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* 1. Selección de capas con Checkboxes */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Capas a asignar ({assignModal.selectedStages.length} seleccionadas)
+                </Label>
+                <div className="flex gap-2 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const currentStageIndex = stages.findIndex(
+                        (s) => s.key === assignModal.card?.stage
+                      );
+                      const validStages = stages
+                        .filter((s, idx) => {
+                          const isPast = currentStageIndex >= 0 && idx < currentStageIndex;
+                          const isReq = isStageRequiredForCard(s.key, assignModal.card);
+                          return !isPast && isReq;
+                        })
+                        .map((s) => s.key);
+                      setAssignModal((prev) => ({
+                        ...prev,
+                        selectedStages: validStages,
+                      }));
+                    }}
+                    className="text-primary hover:underline font-medium"
+                  >
+                    Seleccionar todas
+                  </button>
+                  <span>·</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAssignModal((prev) => ({
+                        ...prev,
+                        selectedStages: [],
+                      }))
+                    }
+                    className="text-muted-foreground hover:underline"
+                  >
+                    Desmarcar
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 bg-muted/20 p-3 rounded-lg border">
+                {(() => {
+                  const currentStageIndex = stages.findIndex(
+                    (s) => s.key === assignModal.card?.stage
+                  );
+                  return stages.map((stage, idx) => {
+                    const isPastStage = currentStageIndex >= 0 && idx < currentStageIndex;
+                    const isRequired = isStageRequiredForCard(stage.key, assignModal.card);
+                    const isChecked = !isPastStage && isRequired && assignModal.selectedStages.includes(stage.key);
+                    const theme = resolveStageTheme(stage, idx);
+
+                    if (isPastStage) {
+                      return (
+                        <div
+                          key={stage.key}
+                          className="flex items-center gap-2 p-2.5 pt-3 rounded-lg border text-xs bg-muted/40 border-muted/50 text-muted-foreground/60 cursor-not-allowed relative overflow-hidden select-none"
+                          title="Capa completada previamente"
+                        >
+                          <span className="absolute top-0 left-0 right-0 h-1 bg-muted-foreground/20" />
+                          <div className="h-4 w-4 shrink-0 rounded-xs border border-muted-foreground/30 bg-muted/50 flex items-center justify-center">
+                            <X className="h-3 w-3 text-red-500/80" strokeWidth={3} />
+                          </div>
+                          <span className="line-through flex-1 truncate">{stage.label}</span>
+                          <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-red-600/80 bg-red-100/50 px-1 py-0.5 rounded border border-red-200/50 shrink-0">
+                            Finalizada
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    if (!isRequired) {
+                      return (
+                        <div
+                          key={stage.key}
+                          className="flex items-center gap-2 p-2.5 pt-3 rounded-lg border text-xs bg-muted/30 border-muted/40 text-muted-foreground/50 cursor-not-allowed relative overflow-hidden select-none"
+                          title="Este pedido no requiere esta capa (ej. Sin bordado o sin estampado)"
+                        >
+                          <span className="absolute top-0 left-0 right-0 h-1 bg-amber-400/30" />
+                          <div className="h-4 w-4 shrink-0 rounded-xs border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/20 flex items-center justify-center">
+                            <X className="h-3 w-3 text-amber-600/80" strokeWidth={3} />
+                          </div>
+                          <span className="line-through flex-1 truncate">{stage.label}</span>
+                          <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-400 bg-amber-100/70 dark:bg-amber-950/40 px-1 py-0.5 rounded border border-amber-200 dark:border-amber-800 shrink-0">
+                            No Requiere
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <label
+                        key={stage.key}
+                        className={cn(
+                          "flex items-center gap-2 p-2.5 pt-3 rounded-lg border text-xs cursor-pointer transition-all relative overflow-hidden",
+                          isChecked
+                            ? `${theme.header} font-semibold text-foreground ring-2 ring-primary/40 border-primary/50 shadow-xs`
+                            : "bg-card border-border hover:bg-muted/40 text-muted-foreground"
+                        )}
+                      >
+                        {/* Barrita superior con el color exacto de la etapa */}
+                        <span className={cn("absolute top-0 left-0 right-0 h-1", theme.bar)} />
+                        <Checkbox
+                          checked={isChecked}
+                          onCheckedChange={(checked) => {
+                            setAssignModal((prev) => {
+                              const set = new Set(prev.selectedStages);
+                              if (checked) set.add(stage.key);
+                              else set.delete(stage.key);
+                              return { ...prev, selectedStages: Array.from(set) };
+                            });
+                          }}
+                        />
+                        <span className={cn("h-2.5 w-2.5 rounded-full shrink-0 shadow-xs", theme.bar)} />
+                        <span className="truncate flex-1">{stage.label}</span>
+                      </label>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+
+            {/* 2. Selección de Tipo de Responsable */}
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 block">
+                Tipo de Responsable
+              </Label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAssignModal((prev) => ({
+                      ...prev,
+                      assigneeType: "production",
+                      selectedUserId: "",
+                    }))
+                  }
+                  className={cn(
+                    "flex items-center justify-center gap-2 p-2.5 rounded-lg border text-xs font-medium transition-all",
+                    assignModal.assigneeType === "production"
+                      ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                      : "bg-card text-muted-foreground border-border hover:bg-muted"
+                  )}
+                >
+                  <User className="h-4 w-4" />
+                  Usuario Producción
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAssignModal((prev) => ({
+                      ...prev,
+                      assigneeType: "satellite",
+                      selectedUserId: "",
+                    }))
+                  }
+                  className={cn(
+                    "flex items-center justify-center gap-2 p-2.5 rounded-lg border text-xs font-medium transition-all",
+                    assignModal.assigneeType === "satellite"
+                      ? "bg-red-600 text-white border-red-600 shadow-xs"
+                      : "bg-card text-muted-foreground border-border hover:bg-muted"
+                  )}
+                >
+                  <Factory className="h-4 w-4" />
+                  Taller Satélite
+                </button>
+              </div>
+            </div>
+
+            {/* 3. Dropdown de Selección de Persona / Taller */}
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 block">
+                {assignModal.assigneeType === "production"
+                  ? "Seleccionar Usuario de Producción"
+                  : "Seleccionar Taller o Usuario Satélite"}
+              </Label>
+
+              <Select
+                value={assignModal.selectedUserId}
+                onValueChange={(val) =>
+                  setAssignModal((prev) => ({ ...prev, selectedUserId: val }))
+                }
+              >
+                <SelectTrigger className="h-10 text-xs">
+                  <SelectValue
+                    placeholder={
+                      assignModal.assigneeType === "production"
+                        ? "Selecciona usuario de producción..."
+                        : "Selecciona taller o usuario satélite..."
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {assignModal.assigneeType === "production" ? (
+                    productionUsers.length === 0 ? (
+                      <SelectItem value="none" disabled>
+                        No hay usuarios de producción disponibles
+                      </SelectItem>
+                    ) : (
+                      productionUsers.map((u) => (
+                        <SelectItem key={u.id} value={u.id}>
+                          {u.name}
+                        </SelectItem>
+                      ))
+                    )
+                  ) : satelliteUsers.length === 0 ? (
+                    <SelectItem value="none" disabled>
+                      No hay usuarios satélite disponibles
+                    </SelectItem>
+                  ) : (
+                    satelliteUsers.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.name} {u.satelliteId ? "· (Taller)" : ""}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                setAssignModal({
+                  open: false,
+                  card: null,
+                  selectedStages: [],
+                  assigneeType: "production",
+                  selectedUserId: "",
+                })
+              }
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={
+                savingCard ||
+                assignModal.selectedStages.length === 0 ||
+                !assignModal.selectedUserId
+              }
+              onClick={() => {
+                const isProd = assignModal.assigneeType === "production";
+                const userList = isProd ? productionUsers : satelliteUsers;
+                const foundUser = userList.find(
+                  (u) => u.id === assignModal.selectedUserId
+                );
+                if (!foundUser || !assignModal.card) return;
+
+                assignCardToMultipleStages(
+                  assignModal.card,
+                  assignModal.selectedStages,
+                  foundUser.id,
+                  foundUser.name,
+                  assignModal.assigneeType
+                );
+              }}
+              className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold gap-1.5"
+            >
+              {savingCard ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              Confirmar Asignación ({assignModal.selectedStages.length} capas)
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   );
 }

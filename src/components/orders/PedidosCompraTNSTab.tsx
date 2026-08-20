@@ -36,7 +36,10 @@ import {
   Building2,
   DollarSign,
   Layers,
+  UserPlus,
+  Sparkles,
 } from "lucide-react";
+import type { PedidoCompra } from "@/types/tns";
 import { usePedidosCompraTNS } from "@/hooks/usePedidosCompraTNS";
 import {
   getPedidoNumDoc,
@@ -66,9 +69,18 @@ const formatMoney = (value: number) => formatCurrency(value);
 function EstadoBadge({ estado }: { estado: string }) {
   const norm = (estado || "").toUpperCase().trim();
 
-  if (norm.includes("APROB") || norm.includes("AUTORIZ") || norm === "A") {
+  if (norm.includes("ABIERTO") || norm === "AB") {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 dark:bg-emerald-950/60 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+        <CheckCircle2 className="h-3 w-3" />
+        {estado || "Abierto"}
+      </span>
+    );
+  }
+
+  if (norm.includes("APROB") || norm.includes("AUTORIZ") || norm === "A") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-teal-100 dark:bg-teal-950/60 px-2.5 py-0.5 text-xs font-semibold text-teal-800 dark:text-teal-300">
         <CheckCircle2 className="h-3 w-3" />
         {estado || "Aprobado"}
       </span>
@@ -109,9 +121,14 @@ function EstadoBadge({ estado }: { estado: string }) {
   );
 }
 
-export function PedidosCompraTNSTab() {
+export interface PedidosCompraTNSTabProps {
+  onRegisterSatellite?: (pedido: PedidoCompra) => void;
+}
+
+export function PedidosCompraTNSTab({ onRegisterSatellite }: PedidosCompraTNSTabProps = {}) {
   const {
     pedidos,
+    rawPedidos,
     loading,
     error,
     totalCount,
@@ -124,6 +141,19 @@ export function PedidosCompraTNSTab() {
     expandAll,
     collapseAll,
   } = usePedidosCompraTNS(true);
+
+  // Estados dinámicos proporcionados por TNS
+  const availableEstados = useMemo(() => {
+    const set = new Set<string>();
+    (rawPedidos || []).forEach((p) => {
+      const est = getPedidoEstado(p);
+      if (est && est !== "—") set.add(est.toUpperCase().trim());
+    });
+    if (set.size === 0) {
+      ["ABIERTO", "CERRADO", "PENDIENTE", "APROBADO", "ANULADO"].forEach((s) => set.add(s));
+    }
+    return Array.from(set).sort();
+  }, [rawPedidos]);
 
   // Estadísticas calculadas sobre los pedidos cargados
   const stats = useMemo(() => {
@@ -282,8 +312,8 @@ export function PedidosCompraTNSTab() {
             </div>
 
             {/* Estado */}
-            <div className="w-[140px] space-y-1">
-              <Label className="text-xs font-medium text-muted-foreground">Estado</Label>
+            <div className="w-[150px] space-y-1">
+              <Label className="text-xs font-medium text-muted-foreground">Estado TNS</Label>
               <Select
                 value={filters.estado || "todos"}
                 onValueChange={(v) => updateFilters({ estado: v })}
@@ -293,10 +323,11 @@ export function PedidosCompraTNSTab() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todos">Todos los estados</SelectItem>
-                  <SelectItem value="APROBADO">Aprobado</SelectItem>
-                  <SelectItem value="PENDIENTE">Pendiente</SelectItem>
-                  <SelectItem value="CERRADO">Cerrado</SelectItem>
-                  <SelectItem value="ANULADO">Anulado</SelectItem>
+                  {availableEstados.map((est) => (
+                    <SelectItem key={est} value={est}>
+                      {est}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -508,6 +539,21 @@ export function PedidosCompraTNSTab() {
                                     )}
                                     {pedido.dirTercero && (
                                       <span>Dir: <strong className="text-foreground">{pedido.dirTercero}</strong></span>
+                                    )}
+                                    {onRegisterSatellite && (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onRegisterSatellite(pedido);
+                                        }}
+                                        className="h-7 text-xs gap-1 border-primary/40 text-primary hover:bg-primary/10 ml-auto"
+                                        title="Crear satélite con los datos y capas autocompletadas de este pedido"
+                                      >
+                                        <UserPlus className="h-3.5 w-3.5" />
+                                        Registrar como satélite
+                                      </Button>
                                     )}
                                   </div>
                                 </div>

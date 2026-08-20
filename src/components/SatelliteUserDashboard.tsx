@@ -23,10 +23,22 @@ import {
 import { cn } from "@/lib/utils";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { toast } from "sonner";
 import type { Order } from "@/hooks/useOrders";
 import type { Satellite as SatelliteWorkshop } from "@/hooks/useSatellites";
 import { useKanbanEtapas } from "@/hooks/useKanbanEtapas";
 import { KanbanStageChip } from "@/components/KanbanStageChip";
+import { getNextStageKey } from "@/lib/production-capa-permissions";
 import {
   getKanbanStageSoftPanelClass,
   getKanbanStageSoftTextClass,
@@ -69,9 +81,130 @@ export function SatelliteUserDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [panel, setPanel] = useState<SatelliteUserPanelData | null>(null);
   const [expandedOrders, setExpandedOrders] = useState<Record<string, boolean>>({});
+  const [currentWorkshop, setCurrentWorkshop] = useState<SatelliteWorkshop | null>(null);
+  const [updatingTerminado, setUpdatingTerminado] = useState<string | null>(null);
+  const [laborConfirmDialog, setLaborConfirmDialog] = useState<{
+    open: boolean;
+    order: any;
+    laborValue: string;
+  }>({ open: false, order: null, laborValue: "" });
 
   const toggleOrderDetails = (orderId: string) => {
     setExpandedOrders((prev) => ({ ...prev, [orderId]: !prev[orderId] }));
+  };
+
+  const onMarkTerminadoClick = (order: any) => {
+    const currentAmount =
+      order.agreedCost != null && Number.isFinite(order.agreedCost)
+        ? order.agreedCost
+        : order.cost || order.totalLabor || 0;
+
+    if (currentAmount <= 0) {
+      setLaborConfirmDialog({
+        open: true,
+        order,
+        laborValue: "",
+      });
+    } else {
+      executeMarkTerminado(order, currentAmount);
+    }
+  };
+
+  const executeMarkTerminado = async (order: any, laborAmount: number) => {
+    const wsId = currentWorkshop?.id || storedUser?.satelliteId;
+    if (!wsId) {
+      toast.error("No se pudo identificar el taller satélite asociado a tu usuario.");
+      return;
+    }
+
+    const rawOrderId = String(order.orderId || order.id || "").replace(/^PO-/, "");
+    const cardIds = order.cardIds || [];
+    const primaryCardId = cardIds[0] || `PO-${rawOrderId}`;
+    setUpdatingTerminado(rawOrderId);
+    try {
+      const prevSettlements = (currentWorkshop?.settlements as Record<string, any>) || {};
+      const prevOrderSettlement =
+        prevSettlements[rawOrderId] ||
+        prevSettlements[primaryCardId] ||
+        prevSettlements[order.orderId] ||
+        {};
+      const prevAmount = Number(prevOrderSettlement.amount || prevOrderSettlement.agreed_cost || 0);
+      const stageKeyCompleted = order.stageKey || "current";
+      const prevStagesDone = prevOrderSettlement.stages_done || {};
+
+      const isAlreadyAdded = Boolean(prevStagesDone[stageKeyCompleted]);
+      const totalLaborAmount = isAlreadyAdded ? prevAmount : prevAmount + laborAmount;
+
+      const updatedSettlement = {
+        ...prevOrderSettlement,
+        status: prevOrderSettlement.status || "pending",
+        work_status: "recibido_completo" as const,
+        amount: totalLaborAmount,
+        agreed_cost: totalLaborAmount,
+        stages_done: {
+          ...prevStagesDone,
+          [stageKeyCompleted]: laborAmount,
+        },
+        confirmed_at: new Date().toISOString(),
+      };
+
+      const nextSettlements = {
+        ...prevSettlements,
+        [rawOrderId]: updatedSettlement,
+        [primaryCardId]: updatedSettlement,
+        [order.orderId]: updatedSettlement,
+      };
+
+      await http(endpoints.satellites.detail(wsId), {
+        method: "PATCH",
+        body: JSON.stringify({
+          settlements: nextSettlements,
+          payment_status: "pendiente",
+        }),
+      });
+
+      if (orderId && order.cardIds && order.cardIds.length > 0) {
+        try {
+          const cardId = primaryCardId;
+          const currentStage = order.stageKey || "design";
+          const hasBordado = (order as any).hasBordado ?? false;
+          const hasEstampado = Boolean((order as any).hasEstampado || (order as any).estampado);
+          const visibleEtapas = etapas.filter((e) => {
+            const k = (e.key || "").toLowerCase();
+            if ((k.includes("bordad") || k === "embroidery") && !hasBordado) return false;
+            if ((k.includes("estampad") || k === "printing") && !hasEstampado) return false;
+            return true;
+          });
+          const nextStage = getNextStageKey(visibleEtapas, currentStage) || currentStage;
+
+          await http(endpoints.orders.detail(orderId), {
+            method: "PATCH",
+            body: JSON.stringify({
+              etapa_produccion: nextStage,
+              kanban_asignaciones: {
+                [cardId]: {
+                  stage: nextStage,
+                  assigneeId: null,
+                  satelliteAssigneeId: null,
+                },
+              },
+            }),
+          });
+        } catch {
+          /* ignore unassign error */
+        }
+      }
+
+      toast.success(
+        `Trabajo en ${order.orderCode || "pedido"} marcado como TERMINADO. El pedido fue removido de tus activos y se sumaron ${formatMoneyCop(laborAmount)} a POR PAGAR en el módulo Satélites.`
+      );
+      setLaborConfirmDialog({ open: false, order: null, laborValue: "" });
+      await load();
+    } catch (err: any) {
+      toast.error(err?.message || "No se pudo marcar el trabajo como terminado");
+    } finally {
+      setUpdatingTerminado(null);
+    }
   };
 
   const load = useCallback(async () => {
@@ -151,6 +284,8 @@ export function SatelliteUserDashboard() {
 
       const stageLabels: Record<string, string> = {};
       for (const e of etapasList || []) stageLabels[e.key] = e.label;
+
+      setCurrentWorkshop(workshop);
 
       setPanel(
         buildSatelliteUserPanel({
@@ -328,54 +463,106 @@ export function SatelliteUserDashboard() {
                     return (
                       <div
                         key={order.orderId}
-                        className="flex items-start justify-between px-6 py-3 gap-3"
+                        className="px-6 py-3.5 space-y-2.5 transition-colors hover:bg-muted/20"
                       >
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate">
-                            {order.orderCode} · {order.customerName}
-                          </p>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {order.description || order.stageLabel}
-                          </p>
-                          <div className="flex flex-wrap gap-1.5 mt-1.5">
-                            <span
-                              className={cn(
-                                "inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium",
-                                order.workStatus === "recibido_completo"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : order.workStatus === "recibido_faltantes"
-                                    ? "bg-amber-100 text-amber-900"
-                                    : "bg-sky-100 text-sky-800"
+                        {/* Fila Superior: Datos principales a la izquierda, Monto y Acción a la derecha */}
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-foreground truncate">
+                              {order.orderCode} · {order.customerName}
+                            </p>
+                            <p className="text-xs text-muted-foreground truncate mt-0.5">
+                              {order.description}
+                            </p>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                              <span
+                                className={cn(
+                                  "inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium",
+                                  order.workStatus === "recibido_completo"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : order.workStatus === "recibido_faltantes"
+                                      ? "bg-amber-100 text-amber-900"
+                                      : "bg-sky-100 text-sky-800"
+                                )}
+                              >
+                                {workStatusLabel(order.workStatus)}
+                              </span>
+                              <span
+                                className={cn(
+                                  "inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium",
+                                  order.paymentStatus === "paid"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : order.workStatus === "recibido_completo"
+                                      ? "bg-red-100 text-red-700"
+                                      : "bg-slate-100 text-slate-700"
+                                )}
+                              >
+                                {order.paymentStatus === "paid"
+                                  ? "Pagado"
+                                  : order.workStatus === "recibido_completo"
+                                    ? "Por pagar"
+                                    : "En progreso"}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="text-right shrink-0 flex flex-col items-end gap-1.5">
+                            <p className="text-sm font-bold tabular-nums text-foreground">
+                              {formatMoneyCop(amount)}
+                            </p>
+                            <div>
+                              {order.workStatus === "recibido_completo" || order.paymentStatus === "paid" ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-md border border-emerald-300">
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                                  Listo
+                                </span>
+                              ) : (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  disabled={updatingTerminado === order.orderId}
+                                  onClick={() => onMarkTerminadoClick(order)}
+                                  className="h-7 px-2.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white gap-1 shadow-xs"
+                                >
+                                  {updatingTerminado === order.orderId ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                  )}
+                                  Terminado
+                                </Button>
                               )}
-                            >
-                              {workStatusLabel(order.workStatus)}
-                            </span>
-                            <span
-                              className={cn(
-                                "inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium",
-                                order.paymentStatus === "paid"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-red-100 text-red-700"
-                              )}
-                            >
-                              {order.paymentStatus === "paid" ? "Pagado" : "Por pagar"}
-                            </span>
+                            </div>
                           </div>
                         </div>
-                        <div className="text-right shrink-0 space-y-1">
-                          <p className="text-sm tabular-nums">
-                            {formatMoneyCop(amount)}
-                          </p>
-                          {order.stageLabel ? (
-                            <div className="flex justify-end">
+
+                        {/* Fila Inferior: Capas o Referencias distribuidas a todo lo ancho */}
+                        {order.stagesWorked && order.stagesWorked.length > 0 ? (
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-border/40">
+                            <span className="text-[10px] font-medium text-muted-foreground mr-1">
+                              {order.source === "tns" ? "Referencias:" : "Capas:"}
+                            </span>
+                            {order.stagesWorked.map((stg) => (
                               <KanbanStageChip
-                                stageKey={order.stageKey}
-                                label={order.stageLabel}
-                                className="text-[10px] px-2 py-0.5"
+                                key={stg.stageKey}
+                                stageKey={stg.stageKey}
+                                label={stg.stageLabel}
+                                className="text-[10px] font-mono px-2 py-0.5 shadow-2xs"
                               />
-                            </div>
-                          ) : null}
-                        </div>
+                            ))}
+                          </div>
+                        ) : order.stageLabel ? (
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-border/40">
+                            <span className="text-[10px] font-medium text-muted-foreground mr-1">
+                              Capa:
+                            </span>
+                            <KanbanStageChip
+                              stageKey={order.stageKey}
+                              label={order.stageLabel}
+                              className="text-[10px] px-2 py-0.5"
+                            />
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })}
@@ -512,13 +699,36 @@ export function SatelliteUserDashboard() {
                             </div>
                           ) : null}
                         </div>
-                        <div className="text-right shrink-0">
+                        <div className="text-right shrink-0 space-y-1">
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                             MO total
                           </p>
-                          <p className="text-base tabular-nums">
+                          <p className="text-base font-semibold tabular-nums">
                             {formatMoneyCop(item.totalLabor)}
                           </p>
+                          <div className="pt-0.5">
+                            {item.workStatus === "recibido_completo" || item.paymentStatus === "paid" ? (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-300">
+                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                                Listo
+                              </span>
+                            ) : (
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={updatingTerminado === item.orderId}
+                                onClick={() => onMarkTerminadoClick(item)}
+                                className="h-7 px-2.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white gap-1 shadow-xs"
+                              >
+                                {updatingTerminado === item.orderId ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                )}
+                                Terminado
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </div>
 
@@ -663,6 +873,65 @@ export function SatelliteUserDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog
+        open={laborConfirmDialog.open}
+        onOpenChange={(open) => {
+          if (!open) setLaborConfirmDialog({ open: false, order: null, laborValue: "" });
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+              Marcar trabajo como Terminado
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Ingresa el valor de mano de obra cobrado por este pedido (
+              <strong>{laborConfirmDialog.order?.orderCode || "pedido"}</strong>) para sumarlo a la deuda <strong>POR PAGAR</strong> en el módulo Satélites.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <Label className="text-xs font-medium">Mano de obra ($ COP)</Label>
+              <Input
+                type="number"
+                placeholder="Ej: 50000"
+                value={laborConfirmDialog.laborValue}
+                onChange={(e) =>
+                  setLaborConfirmDialog((p) => ({ ...p, laborValue: e.target.value }))
+                }
+                className="h-9 text-sm"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                setLaborConfirmDialog({ open: false, order: null, laborValue: "" })
+              }
+            >
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              onClick={() => {
+                const val = Number(laborConfirmDialog.laborValue);
+                if (isNaN(val) || val <= 0) {
+                  toast.error("Ingresa un valor válido de mano de obra");
+                  return;
+                }
+                executeMarkTerminado(laborConfirmDialog.order, val);
+              }}
+            >
+              Confirmar y terminar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   );
 }

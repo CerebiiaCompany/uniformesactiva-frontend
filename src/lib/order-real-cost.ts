@@ -81,7 +81,20 @@ function satelliteUserAttribution(card: ProductionOrder): Attribution {
   return productionAttribution(card);
 }
 
-function workingAttribution(card: ProductionOrder): Attribution {
+function workingAttribution(card: ProductionOrder, stageKey?: string): Attribution {
+  if (stageKey && card.stageAssignees) {
+    const sAssign =
+      card.stageAssignees[stageKey] ||
+      card.stageAssignees[`${stageKey}__satellite`] ||
+      card.stageAssignees[`${stageKey}__production`];
+    if (sAssign?.userId && sAssign?.name) {
+      return {
+        userId: sAssign.userId,
+        userName: sAssign.name,
+        actorKind: sAssign.kind === "satellite" ? "satellite_user" : "production_user",
+      };
+    }
+  }
   if (card.assigneeId) return productionAttribution(card);
   if (card.satelliteAssigneeId) return satelliteUserAttribution(card);
   return {
@@ -182,7 +195,7 @@ export function buildStageCostEntries(
   stageLabel?: string
 ): KanbanCostEntry[] {
   const now = new Date().toISOString();
-  const actor = workingAttribution(card);
+  const actor = workingAttribution(card, stage);
   const satUser = satelliteUserAttribution(card);
   const entries: KanbanCostEntry[] = [];
   const labelStage = stageLabel || stage;
@@ -217,13 +230,11 @@ export function buildStageCostEntries(
     const laborEnabled =
       stageLabor !== undefined
         ? Boolean(stageLabor.enabled)
-        : Boolean(card.laborCostEnabled);
+        : false;
     const laborPerUnit =
-      stageLabor !== undefined
-        ? stageLabor.perUnit != null
-          ? Number(stageLabor.perUnit)
-          : 0
-        : Number(card.laborCostPerUnit) || 0;
+      stageLabor !== undefined && stageLabor.perUnit != null
+        ? Number(stageLabor.perUnit)
+        : 0;
 
     if (laborEnabled) {
       const qty = Number(card.quantity) || 0;
@@ -478,9 +489,16 @@ function legacyLinesFromCard(card: ProductionOrder): {
       });
     }
 
-    if (card.laborCostEnabled) {
+    const stageLabor = card.stageLaborConfig?.[card.stage];
+    const laborEnabled =
+      stageLabor !== undefined ? Boolean(stageLabor.enabled) : false;
+    const perUnit =
+      stageLabor !== undefined && stageLabor.perUnit != null
+        ? Number(stageLabor.perUnit)
+        : 0;
+
+    if (laborEnabled) {
       const qty = Number(card.quantity) || 0;
-      const perUnit = Number(card.laborCostPerUnit) || 0;
       const amount = money(qty * perUnit);
       if (amount > 0 || perUnit > 0) {
         laborLines.push({

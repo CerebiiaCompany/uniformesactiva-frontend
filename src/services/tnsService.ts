@@ -52,6 +52,154 @@ export function formatDateToDDMMYYYY(dateInput?: string | Date | null): string {
 }
 
 /**
+ * Parsea una fecha en formato TNS (DD/MM/YYYY, YYYY-MM-DD o ISO) a un objeto Date válido.
+ */
+export function parseTnsDate(dateInput?: string | Date | null): Date | null {
+  if (!dateInput) return null;
+  if (dateInput instanceof Date) {
+    return isNaN(dateInput.getTime()) ? null : dateInput;
+  }
+
+  const str = String(dateInput).trim();
+  if (!str) return null;
+
+  // Formato DD/MM/YYYY o DD-MM-YYYY (común en TNS)
+  const ddmmyyyyMatch = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (ddmmyyyyMatch) {
+    const day = parseInt(ddmmyyyyMatch[1], 10);
+    const month = parseInt(ddmmyyyyMatch[2], 10) - 1; // 0-indexado
+    const year = parseInt(ddmmyyyyMatch[3], 10);
+    const d = new Date(year, month, day);
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  // Formato YYYY-MM-DD o YYYY/MM/DD (estándar HTML date)
+  const yyyymmddMatch = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+  if (yyyymmddMatch) {
+    const year = parseInt(yyyymmddMatch[1], 10);
+    const month = parseInt(yyyymmddMatch[2], 10) - 1;
+    const day = parseInt(yyyymmddMatch[3], 10);
+    const d = new Date(year, month, day);
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  // Fallback estándar
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) return parsed;
+
+  return null;
+}
+
+/**
+ * Normaliza texto para búsqueda insensible a mayúsculas y acentos.
+ */
+function normalizeQuery(str?: string | null): string {
+  if (!str) return "";
+  return str
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+/**
+ * Filtra una lista de pedidos TNS en cliente asegurando soporte completo para:
+ * - Rango de fechas largas (desde / hasta) con parseo correcto de DD/MM/YYYY y YYYY-MM-DD
+ * - Búsqueda por proveedor, NIT, concepto, número de pedido y artículos (nomMat / codMat)
+ * - Filtrado exacto por estado TNS (ABIERTO, CERRADO, PENDIENTE, APROBADO, ANULADO)
+ */
+export function filterPedidosCompraList(
+  pedidos: PedidoCompra[],
+  filters?: PedidosCompraFilters
+): PedidoCompra[] {
+  if (!filters) return pedidos;
+
+  const searchNorm = normalizeQuery(filters.search);
+  const estadoFilter = (filters.estado || "todos").toUpperCase().trim();
+
+  // Fechas límites
+  let dateDesde: Date | null = null;
+  if (filters.fecha_inicio) {
+    const d = parseTnsDate(filters.fecha_inicio);
+    if (d) {
+      d.setHours(0, 0, 0, 0);
+      dateDesde = d;
+    }
+  }
+
+  let dateHasta: Date | null = null;
+  if (filters.fecha_fin) {
+    const d = parseTnsDate(filters.fecha_fin);
+    if (d) {
+      d.setHours(23, 59, 59, 999);
+      dateHasta = d;
+    }
+  }
+
+  return pedidos.filter((pedido) => {
+    // 1. Filtro de Estado
+    if (estadoFilter && estadoFilter !== "TODOS") {
+      const pedidoEstado = getPedidoEstado(pedido).toUpperCase().trim();
+      if (pedidoEstado !== estadoFilter) {
+        return false;
+      }
+    }
+
+    // 2. Filtro de Rango de Fechas
+    if (dateDesde || dateHasta) {
+      const rawDate =
+        pedido.fecha ||
+        pedido.fechaAsentado ||
+        pedido.FECHA ||
+        pedido.fecha_entrega ||
+        pedido.FECHAENT ||
+        "";
+      const pDate = parseTnsDate(rawDate);
+      if (pDate) {
+        if (dateDesde && pDate.getTime() < dateDesde.getTime()) {
+          return false;
+        }
+        if (dateHasta && pDate.getTime() > dateHasta.getTime()) {
+          return false;
+        }
+      }
+    }
+
+    // 3. Filtro de Búsqueda
+    if (searchNorm) {
+      const numDoc = normalizeQuery(getPedidoNumDoc(pedido));
+      const prov = normalizeQuery(getPedidoProveedor(pedido));
+      const nit = normalizeQuery(getPedidoNit(pedido));
+      const concepto = normalizeQuery(getPedidoConcepto(pedido));
+
+      let matched =
+        numDoc.includes(searchNorm) ||
+        prov.includes(searchNorm) ||
+        nit.includes(searchNorm) ||
+        concepto.includes(searchNorm);
+
+      if (!matched) {
+        const detalles = getPedidoDetalles(pedido);
+        for (const d of detalles) {
+          const cod = normalizeQuery(getDetalleCodigo(d));
+          const desc = normalizeQuery(getDetalleDescripcion(d));
+          if (cod.includes(searchNorm) || desc.includes(searchNorm)) {
+            matched = true;
+            break;
+          }
+        }
+      }
+
+      if (!matched) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+}
+
+/**
  * Consulta pedidos de compra desde el backend con soporte para múltiples rutas de endpoints
  */
 export async function getPedidosCompra(
@@ -205,7 +353,7 @@ export function getPedidoFechaEntrega(p: PedidoCompra): string {
 }
 
 export function getPedidoEstado(p: PedidoCompra): string {
-  return (p.estado || p.ESTADO || "PENDIENTE").toUpperCase();
+  return (p.estado || p.ESTADO || "ABIERTO").toUpperCase();
 }
 
 export function getPedidoConcepto(p: PedidoCompra): string {
@@ -279,6 +427,8 @@ export function getDetalleTotal(d: DetallePedidoCompra): number {
 export const tnsService = {
   getPedidosCompra,
   formatDateToDDMMYYYY,
+  parseTnsDate,
+  filterPedidosCompraList,
   getPedidoNumDoc,
   getPedidoProveedor,
   getPedidoNit,

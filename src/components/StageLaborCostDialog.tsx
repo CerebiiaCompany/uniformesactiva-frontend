@@ -32,25 +32,22 @@ export function StageLaborCostDialog({
   onSave,
   saving = false,
 }: StageLaborCostDialogProps) {
-  const [perUnit, setPerUnit] = useState("0");
+  const [perUnit, setPerUnit] = useState("");
 
   useEffect(() => {
     if (!open || !card) return;
     const stageConf = card.stageLaborConfig?.[stageKey];
-    if (stageConf !== undefined) {
-      setPerUnit(
-        stageConf.perUnit != null && Number.isFinite(stageConf.perUnit)
-          ? String(stageConf.perUnit)
-          : "0"
-      );
-    } else if (card.stage === stageKey) {
-      setPerUnit(
-        card.laborCostPerUnit != null && Number.isFinite(card.laborCostPerUnit)
-          ? String(card.laborCostPerUnit)
-          : "0"
-      );
+    if (
+      stageConf !== undefined &&
+      stageConf.enabled &&
+      stageConf.perUnit != null &&
+      Number.isFinite(Number(stageConf.perUnit)) &&
+      Number(stageConf.perUnit) > 0
+    ) {
+      setPerUnit(String(stageConf.perUnit));
     } else {
-      setPerUnit("0");
+      // Siempre en blanco/limpio para cada nueva capa individual
+      setPerUnit("");
     }
   }, [open, card, stageKey]);
 
