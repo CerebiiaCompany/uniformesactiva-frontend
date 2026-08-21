@@ -125,3 +125,202 @@ export interface PedidosCompraResponse {
   count?: number;
   total?: number;
 }
+
+// ----------------------------------------------------
+// Tipos para Inventario TNS en Tiempo Real
+// ----------------------------------------------------
+
+export interface TNSProveedorOferta {
+  nit: string;
+  nombre: string;
+  ultima_compra?: string;
+  ultimo_costo_unitario?: number;
+  num_factura?: string;
+}
+
+export interface TNSInventarioItem {
+  nit_Distribuidor: string;
+  inventario_Fecha: string;
+  prod_Dist_Cod: string;
+  prod_Dist_Desc: string;
+  prod_Prov_Cod: string;
+  prd_UnidadInventario: string;
+  cant_Disponible: string | number;
+  cant_Stock: string | number;
+  costo_Disponible: string | number;
+  costo_Stock: string | number;
+  prov_Cod?: string;
+  bodega_Cod: string;
+  bodega_Desc: string;
+  agencia_Cod?: string;
+  agencia_Desc?: string;
+  inventario_Estado: 'Activo' | 'Inactivo' | string;
+
+  // Nuevos campos enriquecidos de compras y proveedores:
+  proveedor_principal?: string;
+  proveedor_nit?: string;
+  ultima_compra_fecha?: string | null;
+  ultimo_costo_compra?: number | null;
+  proveedores?: TNSProveedorOferta[];
+}
+
+export interface TNSCompraItem {
+  codtercero: string;
+  nomtercero: string;
+  numfactura: string;
+  fechafactu: string;
+  codarticulo: string;
+  descriparticulo: string;
+  nomgrupoarticulo: string;
+  unidad: string;
+  cantidad: string;
+  valorbase: string;
+  valoriva: string;
+  neto: string;
+  costoprome: string;
+}
+
+export interface TNSMaterialComprasHistorialResponse {
+  status?: boolean;
+  codigo_articulo: string;
+  proveedor_principal: string;
+  proveedor_nit?: string;
+  ultima_compra_fecha?: string | null;
+  ultimo_costo_unitario?: number;
+  proveedores: TNSProveedorOferta[];
+  compras_historial: TNSCompraItem[];
+  total_compras: number;
+}
+
+export interface BodegaDistribucion {
+  bodega_cod: string;
+  bodega_desc: string;
+  total_items: number;
+  total_stock: number;
+  total_costo: number;
+}
+
+export interface UnidadDistribucion {
+  unidad: string;
+  total_items: number;
+  total_stock: number;
+}
+
+export interface TopProductoInventario {
+  codigo: string;
+  descripcion: string;
+  unidad: string;
+  bodega_cod: string;
+  bodega_desc: string;
+  estado: string;
+  cant_stock: number;
+  cant_disponible: number;
+  costo_stock: number;
+  costo_disponible: number;
+  fecha_reporte?: string;
+}
+
+export interface TNSInventarioSummary {
+  total_registros: number;
+  activos: number;
+  inactivos: number;
+  con_stock: number;
+  sin_stock: number;
+  stock_bajo_count: number;
+  stock_alto_count: number;
+  total_stock_cantidad: number;
+  total_disponible_cantidad: number;
+  total_costo_stock: number;
+  total_costo_disponible: number;
+  distribucion_bodegas: BodegaDistribucion[];
+  distribucion_unidades: UnidadDistribucion[];
+  top_stock_alto: TopProductoInventario[];
+  top_stock_bajo: TopProductoInventario[];
+  top_mayor_valor: TopProductoInventario[];
+  muestra_agotados: TopProductoInventario[];
+  timestamp?: string;
+}
+
+export interface TNSInventarioParams {
+  search?: string;
+  color?: string;
+  bodega?: string;
+  estado?: 'Activo' | 'Inactivo' | 'TODOS' | string;
+  stock_status?: 'con_stock' | 'agotado' | 'stock_bajo' | 'stock_alto' | 'todos' | string;
+  ordenar_por?: 'stock_desc' | 'stock_asc' | 'costo_desc' | 'costo_asc' | 'nombre_asc' | 'codigo_asc' | string;
+  page?: number;
+  page_size?: number;
+  force_refresh?: boolean;
+}
+
+export interface TNSInventarioResponse {
+  status?: boolean;
+  message?: string | null;
+  data: TNSInventarioItem[];
+  total_count: number;
+  page?: number;
+  page_size?: number;
+  total_pages?: number;
+  summary?: TNSInventarioSummary;
+}
+
+export interface TNSVentaItem {
+  codtercero?: string;
+  nomtercero?: string;
+  nomcliente?: string;
+  cliente?: string;
+  nombre_cliente?: string;
+  numfactura?: string;
+  fechafactu?: string;
+  fecha?: string;
+  codarticulo?: string;
+  descriparticulo?: string;
+  nomgrupoarticulo?: string;
+  unidad?: string;
+  cantidad?: string | number;
+  valorbase?: string | number;
+  valoriva?: string | number;
+  neto?: string | number;
+  costoprome?: string | number;
+  vendedor?: string;
+  nomven?: string;
+  codven?: string;
+  formapago?: string;
+  produccion_rol?: string;
+}
+
+export interface TNSVentasSummary {
+  total_registros: number;
+  total_cantidad_vendida: number;
+  total_ingresos_neto: number;
+}
+
+export interface TNSVentasResponse {
+  status: boolean;
+  message?: string | null;
+  data: TNSVentaItem[];
+  total_count: number;
+  summary: TNSVentasSummary;
+  page?: number;
+  page_size?: number;
+  total_pages?: number;
+}
+
+export interface TNSMaterialVentasHistorialResponse {
+  status: boolean;
+  codigo_articulo: string;
+  ventas_historial: TNSVentaItem[];
+  total_ventas: number;
+  summary: TNSVentasSummary;
+}
+
+export interface TNSVentasParams {
+  search?: string;
+  cod_articulo?: string;
+  cliente?: string;
+  fecha_inicial?: string; // Formato YYYY-MM-DD o ISO
+  fecha_final?: string;   // Formato YYYY-MM-DD o ISO
+  page?: number;
+  page_size?: number;
+  force_refresh?: boolean;
+}

@@ -44,6 +44,14 @@ export const endpoints = {
         suppliers: (id: string) => `${base()}/api/v1/inventory/${id}/suppliers/`,
         supplierDetail: (id: string, offerId: string) =>
             `${base()}/api/v1/inventory/${id}/suppliers/${offerId}/`,
+        tns: (params?: string) => `${base()}/api/v1/inventory/tns/${params ? `?${params}` : ''}`,
+        tnsSummary: (params?: string) => `${base()}/api/v1/inventory/tns/summary/${params ? `?${params}` : ''}`,
+        tnsCompras: (params?: string) => `${base()}/api/v1/inventory/tns/compras/${params ? `?${params}` : ''}`,
+        tnsComprasMaterial: (codigoArticulo: string, params?: string) =>
+            `${base()}/api/v1/inventory/tns/compras/${encodeURIComponent(codigoArticulo)}/${params ? `?${params}` : ''}`,
+        tnsVentas: (params?: string) => `${base()}/api/v1/inventory/tns/ventas/${params ? `?${params}` : ''}`,
+        tnsVentasMaterial: (codigoArticulo: string, params?: string) =>
+            `${base()}/api/v1/inventory/tns/ventas/${encodeURIComponent(codigoArticulo)}/${params ? `?${params}` : ''}`,
     },
     satellites: {
         list: (params?: string) => `${base()}/api/v1/satellites/${params ? `?${params}` : ""}`,

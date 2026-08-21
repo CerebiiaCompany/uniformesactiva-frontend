@@ -6,7 +6,41 @@ import type {
   DetallePedidoCompra,
   PedidosCompraFilters,
   PedidosCompraResponse,
+  TNSInventarioItem,
+  TNSProveedorOferta,
+  TNSCompraItem,
+  TNSMaterialComprasHistorialResponse,
+  TNSVentaItem,
+  TNSVentasSummary,
+  TNSVentasResponse,
+  TNSMaterialVentasHistorialResponse,
+  TNSVentasParams,
+  BodegaDistribucion,
+  UnidadDistribucion,
+  TopProductoInventario,
+  TNSInventarioSummary,
+  TNSInventarioParams,
+  TNSInventarioResponse,
 } from "@/types/tns";
+
+export type {
+  TNSInventarioItem,
+  TNSProveedorOferta,
+  TNSCompraItem,
+  TNSMaterialComprasHistorialResponse,
+  TNSVentaItem,
+  TNSVentasSummary,
+  TNSVentasResponse,
+  TNSMaterialVentasHistorialResponse,
+  TNSVentasParams,
+  BodegaDistribucion,
+  UnidadDistribucion,
+  TopProductoInventario,
+  TNSInventarioSummary,
+  TNSInventarioParams,
+  TNSInventarioResponse,
+};
+
 
 /**
  * Formatea una fecha (string YYYY-MM-DD o Date) a formato DD/MM/YYYY para consultas a TNS.
@@ -424,6 +458,526 @@ export function getDetalleTotal(d: DetallePedidoCompra): number {
   return getDetalleCantidad(d) * getDetalleValorUnitario(d);
 }
 
+// ----------------------------------------------------
+// Métodos y Helpers de Inventario TNS en Tiempo Real
+// ----------------------------------------------------
+
+/**
+ * Parsea un valor numérico seguro desde TNS (string con comas/puntos o número).
+ */
+export function parseTNSNumber(val: string | number | undefined | null): number {
+  if (val == null) return 0;
+  if (typeof val === "number") return isNaN(val) ? 0 : val;
+  const str = String(val).trim().replace(/,/g, "");
+  const parsed = parseFloat(str);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
+/**
+ * Consulta la lista paginada y filtrable de ítems de inventario de TNS.
+ */
+export async function getTNSInventario(
+  params: TNSInventarioParams = {}
+): Promise<TNSInventarioResponse> {
+  const query = new URLSearchParams();
+
+  // Si viene color y búsqueda, combinamos para que el backend busque en la descripción de todas las páginas y bodegas
+  const searchPart = params.search?.trim() || "";
+  const colorPart = params.color?.trim() || "";
+
+  if (searchPart && colorPart) {
+    query.append("search", `${searchPart} ${colorPart}`);
+    query.append("color", colorPart);
+  } else if (colorPart) {
+    query.append("search", colorPart);
+    query.append("color", colorPart);
+  } else if (searchPart) {
+    query.append("search", searchPart);
+  }
+
+  if (params.bodega && params.bodega !== "TODAS") query.append("bodega", params.bodega);
+  if (params.estado && params.estado !== "TODOS") query.append("estado", params.estado);
+  if (params.stock_status && params.stock_status !== "todos") query.append("stock_status", params.stock_status);
+  if (params.ordenar_por) query.append("ordenar_por", params.ordenar_por);
+  if (params.page != null) query.append("page", String(params.page));
+  if (params.page_size != null) query.append("page_size", String(params.page_size));
+  if (params.force_refresh) query.append("force_refresh", "true");
+
+  const queryString = query.toString();
+  const url = endpoints.inventory.tns(queryString);
+
+  const res = await http<any>(url, {
+    skipAuthRedirect: true,
+  });
+
+  if (Array.isArray(res)) {
+    return {
+      status: true,
+      data: res,
+      total_count: res.length,
+      page: params.page || 1,
+      page_size: params.page_size || res.length,
+    };
+  }
+
+  const items = res.data || res.items || res.results || [];
+  const totalCount = res.total_count ?? res.count ?? res.total ?? items.length;
+
+  return {
+    status: res.status ?? true,
+    message: res.message,
+    data: items,
+    total_count: totalCount,
+    page: res.page ?? params.page ?? 1,
+    page_size: res.page_size ?? params.page_size ?? 20,
+    total_pages: res.total_pages ?? Math.ceil(totalCount / (params.page_size || 20)),
+    summary: res.summary,
+  };
+}
+
+/**
+ * Consulta la lista COMPLETA de todos los ítems de inventario de TNS (sin paginación limitante).
+ * Trae el 100% de los registros para permitir filtrado fluido por categorías, colores y bodegas en memoria.
+ */
+export async function getAllTNSInventario(
+  params: TNSInventarioParams = {}
+): Promise<TNSInventarioResponse> {
+  // 1. Solicitamos página completa con page_size alto
+  const firstPage = await getTNSInventario({
+    ...params,
+    page: 1,
+    page_size: 5000,
+  });
+
+  const totalCount = firstPage.total_count || firstPage.data.length;
+  let allItems = [...firstPage.data];
+
+  // 2. Si el backend limita page_size y hay más páginas, las traemos todas en paralelo
+  if (allItems.length < totalCount && firstPage.total_pages && firstPage.total_pages > 1) {
+    const remainingPageNumbers = Array.from(
+      { length: firstPage.total_pages - 1 },
+      (_, i) => i + 2
+    );
+
+    const pageResults = await Promise.all(
+      remainingPageNumbers.map((p) =>
+        getTNSInventario({
+          ...params,
+          page: p,
+          page_size: firstPage.page_size || 100,
+        })
+      )
+    );
+
+    pageResults.forEach((res) => {
+      if (res && res.data) {
+        allItems.push(...res.data);
+      }
+    });
+  }
+
+  return {
+    ...firstPage,
+    data: allItems,
+    total_count: allItems.length,
+    total_pages: 1,
+    page: 1,
+    page_size: allItems.length,
+  };
+}
+
+/**
+ * Consulta el resumen global, métricas, tops y distribución de inventario TNS.
+ */
+export async function getTNSInventarioSummary(
+  force_refresh = false
+): Promise<TNSInventarioSummary> {
+  const query = force_refresh ? "force_refresh=true" : "";
+  const url = endpoints.inventory.tnsSummary(query);
+
+  const res = await http<any>(url, {
+    skipAuthRedirect: true,
+  });
+
+  if (res && res.summary) {
+    return res.summary as TNSInventarioSummary;
+  }
+
+  if (res && res.total_registros !== undefined) {
+    return res as TNSInventarioSummary;
+  }
+
+  return res as TNSInventarioSummary;
+}
+
+/**
+ * Consulta el reporte detallado de compras de TNS con filtros.
+ */
+export async function getTNSComprasReporte(
+  params: {
+    search?: string;
+    cod_articulo?: string;
+    proveedor?: string;
+    fecha_inicial?: string;
+    fecha_final?: string;
+    page?: number;
+    page_size?: number;
+    force_refresh?: boolean;
+  } = {}
+) {
+  const query = new URLSearchParams();
+  if (params.search?.trim()) query.append("search", params.search.trim());
+  if (params.cod_articulo?.trim()) query.append("cod_articulo", params.cod_articulo.trim());
+  if (params.proveedor?.trim()) query.append("proveedor", params.proveedor.trim());
+  if (params.fecha_inicial?.trim()) query.append("fecha_inicial", params.fecha_inicial.trim());
+  if (params.fecha_final?.trim()) query.append("fecha_final", params.fecha_final.trim());
+  if (params.page != null) query.append("page", String(params.page));
+  if (params.page_size != null) query.append("page_size", String(params.page_size));
+  if (params.force_refresh) query.append("force_refresh", "true");
+
+  const url = endpoints.inventory.tnsCompras(query.toString());
+  const res = await http<any>(url, { skipAuthRedirect: true });
+  return res?.data ?? res;
+}
+
+/**
+ * Consulta el historial de compras y cotizaciones de proveedores para un material específico.
+ */
+export async function getTNSMaterialComprasHistorial(
+  codigoArticulo: string,
+  force_refresh = false
+): Promise<TNSMaterialComprasHistorialResponse> {
+  const query = force_refresh ? "force_refresh=true" : "";
+  const url = endpoints.inventory.tnsComprasMaterial(codigoArticulo, query);
+  const res = await http<any>(url, { skipAuthRedirect: true });
+
+  if (res && res.data && res.data.codigo_articulo) {
+    return res.data as TNSMaterialComprasHistorialResponse;
+  }
+  return res as TNSMaterialComprasHistorialResponse;
+}
+
+/**
+ * Consulta la lista paginada y filtrable de ventas detalladas de TNS.
+ */
+export async function getTNSVentasDetalladas(
+  params: TNSVentasParams = {}
+): Promise<TNSVentasResponse> {
+  const query = new URLSearchParams();
+  if (params.search?.trim()) query.append("search", params.search.trim());
+  if (params.cod_articulo?.trim()) query.append("cod_articulo", params.cod_articulo.trim());
+  if (params.cliente?.trim()) query.append("cliente", params.cliente.trim());
+  if (params.fecha_inicial?.trim()) query.append("fecha_inicial", params.fecha_inicial.trim());
+  if (params.fecha_final?.trim()) query.append("fecha_final", params.fecha_final.trim());
+  if (params.page != null) query.append("page", String(params.page));
+  if (params.page_size != null) query.append("page_size", String(params.page_size));
+  if (params.force_refresh) query.append("force_refresh", "true");
+
+  const url = endpoints.inventory.tnsVentas(query.toString());
+  const res = await http<any>(url, { skipAuthRedirect: true });
+  
+  if (res && res.data && Array.isArray(res.data)) {
+    return res as TNSVentasResponse;
+  }
+  if (Array.isArray(res)) {
+    return {
+      status: true,
+      data: res,
+      total_count: res.length,
+      summary: {
+        total_registros: res.length,
+        total_cantidad_vendida: res.reduce((acc, curr) => acc + (Number(curr.cantidad) || 0), 0),
+        total_ingresos_neto: res.reduce((acc, curr) => acc + (Number(curr.neto) || 0), 0),
+      },
+    };
+  }
+  return res as TNSVentasResponse;
+}
+
+/**
+ * Consulta el historial de ventas de un material específico.
+ */
+export async function getTNSMaterialVentasHistorial(
+  codigoArticulo: string,
+  force_refresh = false
+): Promise<TNSMaterialVentasHistorialResponse> {
+  const query = force_refresh ? "force_refresh=true" : "";
+  const url = endpoints.inventory.tnsVentasMaterial(codigoArticulo, query);
+  const res = await http<any>(url, { skipAuthRedirect: true });
+
+  if (res && res.data && res.data.codigo_articulo) {
+    return res.data as TNSMaterialVentasHistorialResponse;
+  }
+  return res as TNSMaterialVentasHistorialResponse;
+}
+
+export const COMMON_COLORS = [
+  "AZUL REY", "AZUL OSCURO", "AZUL MARINO", "AZUL CIELO", "AZUL TURQUESA", "AZUL NOCHE", "AZUL PETROLEO", "AZUL BEBE", "AZUL COBALTO", "AZUL PASTEL", "AZUL ANDINO", "AZUL MEDIO", "AZUL",
+  "VERDE MILITAR", "VERDE ESMERALDA", "VERDE MANZANA", "VERDE OLIVA", "VERDE LIMON", "VERDE BOTELLA", "VERDE MENTA", "VERDE CALI", "VERDE JADE", "VERDE AGUA", "VERDE PINO", "VERDE",
+  "ROJO ESCARLATA", "ROJO VINO", "ROJO CARDENAL", "ROJO PASION", "ROJO FUEGO", "ROJO CEREZA", "ROJO",
+  "AMARILLO POLLITO", "AMARILLO QUEMADO", "AMARILLO ORO", "AMARILLO CANARIO", "AMARILLO NEON", "AMARILLO PAJA", "AMARILLO PASTEL", "AMARILLO",
+  "VINO TINTO", "VINOTINTO", "GRIS RATON", "GRIS CLARO", "GRIS OSCURO", "GRIS PERLA", "GRIS HUMO", "GRIS JASPE", "GRIS MELANGE", "GRIS PLATA", "GRIS MEDIO", "GRIS",
+  "BLANCO OPTICO", "BLANCO HUMO", "BLANCO NIEVE", "BLANCO MARFIL", "BLANCO TIZA", "BLANCO",
+  "NEGRO AZABACHE", "NEGRO CARBON", "NEGRO MATE", "NEGRO",
+  "MOSTAZA", "ESMERALDA", "TURQUESA", "KAKI", "KHAKI", "BEIGE", "ARENA", "MARFIL", "CRUDO", "HUESO", "CHAMPAGNE", "PERLA",
+  "FUCSIA", "MAGENTA", "ROSADO", "ROSA", "PALO DE ROSA", "PALOROSA", "CORAL", "LILA", "MORADO", "VIOLETA", "BERENJENA", "LAVANDA", "CIRUELA",
+  "NARANJA", "MANDARINA", "TERRACOTA", "SALMON", "LADRILLO", "OCRE", "COBRE", "BRONCE", "ORO", "DORADO", "PLATA", "PLATEADO",
+  "CAFE", "MARRON", "CHOCOLATE", "TABACO", "CANELA", "CAMEL", "MIEL", "HABANO", "AVELLANA", "CARMELITA",
+  "ESTAMPADO", "JASPEADO", "SURTIDO", "TRANSPARENTE", "NATURAL"
+];
+
+/**
+ * Parsea la descripción de un ítem de TNS para separar el nombre base del material y el color.
+ * Reglas:
+ * 1. El color siempre se encuentra al final del texto.
+ * 2. Un color no excede de 15 caracteres / 3 palabras (ej. "AZUL REY", "ESMERALDA", "MOSTAZA").
+ * 3. En caso de múltiples guiones (ej. "TELA SUPER VERTIGO-100-AZUL REY"), toma el último segmento como color y el resto como nombre de tela ("TELA SUPER VERTIGO 100").
+ * 4. Si no tiene guión pero termina en un color conocido (ej. "TELA PARKER ESMERALDA"), extrae el color y limpia el nombre.
+ */
+export function parseTNSDescription(desc?: string | null): { name: string; color: string } {
+  if (!desc) return { name: "—", color: "" };
+  const trimmed = desc.trim().replace(/\s+/g, " ");
+
+  // 1. Separar por guiones o barras si existen
+  if (/[-–—/]/.test(trimmed)) {
+    const parts = trimmed.split(/[-–—/]/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length > 1) {
+      const lastPart = parts[parts.length - 1];
+
+      // Verificar si el último segmento califica como color (no es solo número y tiene <= 15 letras y <= 3 palabras)
+      const isPureNumber = /^\d+$/.test(lastPart);
+      const isReasonableLength = lastPart.length <= 15 && lastPart.split(" ").length <= 3;
+
+      if (!isPureNumber && isReasonableLength) {
+        // Limpiar posible código numérico prefijo en el color (ej: "194006 NEGRO" -> "NEGRO" o mantener si es corto)
+        const cleanColor = lastPart.replace(/^\d+\s+/, "").trim() || lastPart;
+        const baseName = parts.slice(0, parts.length - 1).join(" - ").trim();
+        return {
+          name: baseName || trimmed,
+          color: cleanColor.toUpperCase(),
+        };
+      }
+    }
+  }
+
+  // 2. Si no hay guión o el último segmento no era color, buscar si termina con un color conocido
+  const upper = trimmed.toUpperCase();
+  for (const color of COMMON_COLORS) {
+    // Verificar si termina exactamente con la palabra del color (ej. "TELA PARKER ESMERALDA")
+    const regex = new RegExp(`(?:\\s+|^|-)${color}$`, "i");
+    if (regex.test(upper)) {
+      const baseName = trimmed.substring(0, upper.lastIndexOf(color)).replace(/[-–—\s]+$/, "").trim();
+      if (baseName.length > 0) {
+        return {
+          name: baseName,
+          color: color,
+        };
+      }
+    }
+  }
+
+  return {
+    name: trimmed,
+    color: "",
+  };
+}
+
+/**
+ * Diccionario maestro de palabras clave para clasificación de inventario TNS.
+ */
+export const TNS_CATEGORY_KEYWORDS: Record<string, string[]> = {
+  Telas: [
+    "TELA", "POPELINA", "POLUX", "DRILL", "OXFORD", "PIQUE", "PIK", "LINO",
+    "PARKER", "VERTIGO", "SUTEX", "ANTIFLUIDO", "RIPSTOP", "DACRON", "SEDA",
+    "MICROFIBRA", "GABARDINA", "DENIM", "JEAN", "CANVA", "LINOS", "SEDAS", "CHALIS"
+  ],
+  Accesorios: [
+    "BOTON", "CREMALLERA", "CIERRE", "HILO", "SESGO", "ELASTICO", "RESORTE",
+    "BROCHE", "ENTRETELA", "CINTA REFLECTIVA", "HILADILLA", "VELCRO", "HERRAJE",
+    "CUELLO", "PUNO", "HOMBRERA", "CORDON", "SESGO ALGODON", "HILOS", "HEBILLA", "RIB"
+  ],
+  Prendas: [
+    "CAMISA", "PANTALON", "OVEROL", "CHALECO", "DELANTAL", "BATA", "SACO",
+    "BLUSA", "FALDA", "CHAQUETA", "UNIFORME", "BERMUDA", "ENTERIZO", "SUDADERA",
+    "DOTACION", "CAMISETA", "SHORT"
+  ],
+  Empaque: [
+    "BOLSA", "CAJA", "GANCHO", "CINTA EMBALAJE", "CINTA TRANSPARENTE DE EMBALAJE",
+    "POLIETILENO", "CORRUGADO", "EMBALAJE", "STRETCH", "VINIPEL"
+  ],
+  Insumos: [
+    "AGUJA", "ACEITE", "TIZA", "PAPEL TRAZO", "PAPEL MOLDES", "MANTENIMIENTO",
+    "PAPELERIA", "TIJERAS", "CUCHILLA"
+  ],
+};
+
+export interface ClasificacionResultado {
+  categoria: "Telas" | "Accesorios" | "Prendas" | "Empaque" | "Insumos";
+  requiere_revision: boolean;
+  metodo_clasificacion: "diccionario" | "regla_cruzada" | "unidad_heuristica" | "fallback";
+}
+
+/**
+ * Normaliza texto eliminando acentos, caracteres especiales y unificando espacios.
+ */
+function normalizeTNSText(text?: string | null): string {
+  if (!text) return "";
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // Eliminar tildes
+    .replace(/Ñ/g, "N")
+    .replace(/ñ/g, "n")
+    .toUpperCase()
+    .replace(/[^A-Z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Clasifica automáticamente un ítem de TNS aplicando:
+ * 1. Normalización de texto (sin tildes, mayúsculas estrictas).
+ * 2. Reglas cruzadas de desempate (ej. Cinta Reflectiva vs Cinta Embalaje).
+ * 3. Mapeo por diccionario tokenizado con límites de palabra (evita falsos positivos).
+ * 4. Validación heurística por unidad de medida (metro -> Telas, cono -> Accesorios).
+ * 5. Fallback con indicador `requiere_revision: true`.
+ */
+export function clasificarArticuloTNS(item: {
+  prod_Dist_Desc?: string | null;
+  prd_UnidadInventario?: string | null;
+}): ClasificacionResultado {
+  const normDesc = normalizeTNSText(item.prod_Dist_Desc);
+  const normUnit = (item.prd_UnidadInventario || "").toLowerCase().trim();
+
+  // Si no hay descripción, fallback directo
+  if (!normDesc) {
+    return {
+      categoria: "Insumos",
+      requiere_revision: true,
+      metodo_clasificacion: "fallback",
+    };
+  }
+
+  // ----------------------------------------------------
+  // Paso 2: Reglas Cruzadas Específicas de Desempate
+  // ----------------------------------------------------
+  if (normDesc.includes("CINTA REFLECTIVA") || normDesc.includes("REFLECTIV")) {
+    return {
+      categoria: "Accesorios",
+      requiere_revision: false,
+      metodo_clasificacion: "regla_cruzada",
+    };
+  }
+
+  if (
+    normDesc.includes("CINTA EMBALAJE") ||
+    normDesc.includes("CINTA TRANSPARENTE") ||
+    normDesc.includes("CINTA ENMASCARAR") ||
+    normDesc.includes("CINTA PEGANTE") ||
+    normDesc.includes("VINIPEL") ||
+    normDesc.includes("STRETCH")
+  ) {
+    return {
+      categoria: "Empaque",
+      requiere_revision: false,
+      metodo_clasificacion: "regla_cruzada",
+    };
+  }
+
+  if (normDesc.includes("CINTA") && (normUnit === "rollo" || normDesc.includes("EMBALAJE"))) {
+    return {
+      categoria: "Empaque",
+      requiere_revision: false,
+      metodo_clasificacion: "regla_cruzada",
+    };
+  }
+
+  // ----------------------------------------------------
+  // Paso 3: Mapeo por Diccionario de Palabras Clave (Tokenizado)
+  // ----------------------------------------------------
+  const tokens = new Set(normDesc.split(/[\s-]+/).filter(Boolean));
+
+  // Orden de prioridad en diccionario: Prendas > Telas > Accesorios > Empaque > Insumos
+  const priorityOrder: Array<"Prendas" | "Telas" | "Accesorios" | "Empaque" | "Insumos"> = [
+    "Prendas",
+    "Telas",
+    "Accesorios",
+    "Empaque",
+    "Insumos",
+  ];
+
+  for (const cat of priorityOrder) {
+    const keywords = TNS_CATEGORY_KEYWORDS[cat] || [];
+    for (const kw of keywords) {
+      const normKw = normalizeTNSText(kw);
+      // Coincidencia de frase compuesta (ej: "SESGO ALGODON")
+      if (normKw.includes(" ")) {
+        if (normDesc.includes(normKw)) {
+          return {
+            categoria: cat,
+            requiere_revision: false,
+            metodo_clasificacion: "diccionario",
+          };
+        }
+      } else {
+        // Coincidencia exacta de token individual (evita falsos positivos por subcadenas)
+        if (tokens.has(normKw)) {
+          return {
+            categoria: cat,
+            requiere_revision: false,
+            metodo_clasificacion: "diccionario",
+          };
+        }
+      }
+    }
+  }
+
+  // ----------------------------------------------------
+  // Paso 4: Heurísticas por Unidad de Medida (Productos Nuevos)
+  // ----------------------------------------------------
+  if (["metro", "mts", "m", "mt"].includes(normUnit)) {
+    return {
+      categoria: "Telas",
+      requiere_revision: false,
+      metodo_clasificacion: "unidad_heuristica",
+    };
+  }
+
+  if (["cono", "conos"].includes(normUnit)) {
+    return {
+      categoria: "Accesorios",
+      requiere_revision: false,
+      metodo_clasificacion: "unidad_heuristica",
+    };
+  }
+
+  if (["millar", "paquete"].includes(normUnit) && normDesc.includes("BOLSA")) {
+    return {
+      categoria: "Empaque",
+      requiere_revision: false,
+      metodo_clasificacion: "unidad_heuristica",
+    };
+  }
+
+  // ----------------------------------------------------
+  // Paso 5: Fallback Inteligente para Productos Extraños
+  // ----------------------------------------------------
+  return {
+    categoria: "Insumos",
+    requiere_revision: true,
+    metodo_clasificacion: "fallback",
+  };
+}
+
+/**
+ * Clasifica automáticamente el tipo de materia/categoría de un producto TNS (retorna string).
+ */
+export function detectTNSCategory(item: {
+  prod_Dist_Desc?: string | null;
+  prd_UnidadInventario?: string | null;
+}): string {
+  return clasificarArticuloTNS(item).categoria;
+}
+
 export const tnsService = {
   getPedidosCompra,
   formatDateToDDMMYYYY,
@@ -449,4 +1003,19 @@ export const tnsService = {
   getDetallePendiente,
   getDetalleValorUnitario,
   getDetalleTotal,
+  // Inventario y Compras TNS
+  getTNSInventario,
+  getTNSInventarioSummary,
+  getTNSComprasReporte,
+  getTNSMaterialComprasHistorial,
+  // Ventas TNS
+  getTNSVentasDetalladas,
+  getTNSMaterialVentasHistorial,
+  parseTNSNumber,
+  parseTNSDescription,
+  clasificarArticuloTNS,
+  detectTNSCategory,
+  TNS_CATEGORY_KEYWORDS,
 };
+
+
