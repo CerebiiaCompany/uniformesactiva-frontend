@@ -324,3 +324,102 @@ export interface TNSVentasParams {
   page_size?: number;
   force_refresh?: boolean;
 }
+
+// ----------------------------------------------------
+// Tipos para Facturas de Venta TNS (Kardex / FV)
+// ----------------------------------------------------
+
+export interface TNSFacturaItem {
+  kardexId: string | number;
+  codigoComprobante?: string | null;
+  codigoPrefijo?: string | null;
+  numero: string;
+  fecha: string;
+  hora?: string;
+  codigoTercero: string;
+  nombreTercero: string;
+  valorNeto: string | number;
+  fechaAsentado?: string;
+  codigoVendedor?: string;
+  nombreVendedor?: string;
+}
+
+export interface TNSFacturasSummary {
+  total_facturas: number;
+  total_valor_neto: number;
+}
+
+export interface TNSFacturasResponse {
+  status: boolean;
+  message?: string | null;
+  data: TNSFacturaItem[];
+  total_count: number;
+  summary?: TNSFacturasSummary;
+  page?: number;
+  page_size?: number;
+  total_pages?: number;
+}
+
+export interface TNSFacturasParams {
+  search?: string;
+  cliente?: string;
+  numero?: string;
+  fecha_inicial?: string; // "YYYY-MM-DD" o "DD/MM/YYYY"
+  fecha_final?: string;   // "YYYY-MM-DD" o "DD/MM/YYYY"
+  page?: number;
+  page_size?: number;
+  force_refresh?: boolean;
+}
+
+export interface TNSFacturaDetalleItem {
+  codigoArticulo: string;
+  decripcionArticulo: string;
+  codigoBodega?: string;
+  cantidad: string | number;
+  valorBase: string | number;
+  porcentaIva?: string | number;
+  valorIva?: string | number;
+  valorNeto: string | number;
+  valorParcial: string | number;
+}
+
+export interface TNSFacturaDetalle {
+  codigoComprobante?: string | null;
+  codigoPrefijo?: string | null;
+  numero: string;
+  fecha: string;
+  fechaAsentado?: string;
+  codigoTercero: string;
+  nombreTercero: string;
+  codigoVendedor?: string;
+  nombreVendedor?: string;
+  codigoDespachar?: string;
+  nombreDespachar?: string;
+  formaPago?: string;
+  observacion?: string;
+  valorNeto: string | number;
+  netoIva?: string | number;
+  valorDescuentos?: string | number;
+  valorTotal: string | number;
+  impresa?: string;
+  cufe?: string;
+  estadoDian?: string;
+  detallesVenta: TNSFacturaDetalleItem[];
+}
+
+export interface TNSFacturaDetalleResponse {
+  status: boolean;
+  message?: string | null;
+  data: TNSFacturaDetalle;
+}
+
+export interface TNSTransaccionalVentasParams {
+  search?: string;
+  tipo?: string; // ej: "DV", "FV"
+  fecha_inicial?: string; // "YYYY-MM-DD" o "DD/MM/YYYY"
+  fecha_final?: string;   // "YYYY-MM-DD" o "DD/MM/YYYY"
+  page?: number;
+  page_size?: number;
+  force_refresh?: boolean;
+}
+

@@ -25,6 +25,11 @@ export function notifyKanbanEtapasUpdated() {
 
 export const CAPA_KANBAN_ACTIONS = [
   {
+    code: "ver_tablero",
+    label: "Ver tablero",
+    description: "Visualizar el tablero y las tarjetas de esta capa en Kanban.",
+  },
+  {
     code: "solicitar_inventario",
     label: "Solicitar inventario",
     description: "Pedir materiales del inventario desde la tarjeta.",
@@ -82,9 +87,17 @@ function writeRoleStore(store: RoleActionsStore) {
   }
 }
 
-export function getCapaActionsForRole(roleName: string): CapaActionsMap {
-  if (!roleName) return {};
-  return readRoleStore()[roleName] || {};
+export function getCapaActionsForRole(roleNameOrId: string): CapaActionsMap {
+  if (!roleNameOrId) return {};
+  const store = readRoleStore();
+  const direct = store[roleNameOrId] || store[roleNameOrId.trim()];
+  if (direct && Object.keys(direct).length > 0) return direct;
+
+  const lower = roleNameOrId.trim().toLowerCase();
+  for (const [key, val] of Object.entries(store)) {
+    if (key.trim().toLowerCase() === lower && val) return val;
+  }
+  return {};
 }
 
 /** @deprecated Prefer getCapaActionsForRole("Producción") */
@@ -96,10 +109,15 @@ export function getProductionCapaModules(_roleId?: string): CapaActionsMap {
   return getProductionCapaActions();
 }
 
-export function saveCapaActionsForRole(roleName: string, map: CapaActionsMap) {
-  if (!roleName) return;
+export function saveCapaActionsForRole(
+  roleName: string,
+  map: CapaActionsMap,
+  roleId?: string
+) {
+  if (!roleName && !roleId) return;
   const store = readRoleStore();
-  store[roleName] = map;
+  if (roleName) store[roleName.trim()] = map;
+  if (roleId) store[roleId.trim()] = map;
   writeRoleStore(store);
 }
 
@@ -114,13 +132,20 @@ export function saveProductionCapaModules(_roleId: string, map: CapaActionsMap) 
 export function toggleCapaAction(
   map: CapaActionsMap,
   stageKey: string,
-  action: CapaActionCode
+  action: CapaActionCode,
+  allStageKeys?: string[]
 ): CapaActionsMap {
-  const current = new Set(map[stageKey] ?? [...DEFAULT_CAPA_ACTIONS]);
+  const baseMap: CapaActionsMap = { ...map };
+  if (Object.keys(baseMap).length === 0 && allStageKeys && allStageKeys.length > 0) {
+    for (const k of allStageKeys) {
+      baseMap[k] = [...DEFAULT_CAPA_ACTIONS];
+    }
+  }
+  const current = new Set(baseMap[stageKey] ?? [...DEFAULT_CAPA_ACTIONS]);
   if (current.has(action)) current.delete(action);
   else current.add(action);
   return {
-    ...map,
+    ...baseMap,
     [stageKey]: Array.from(current) as CapaActionCode[],
   };
 }
@@ -128,9 +153,10 @@ export function toggleCapaAction(
 export function toggleCapaModule(
   map: CapaActionsMap,
   stageKey: string,
-  moduleCode: string
+  moduleCode: string,
+  allStageKeys?: string[]
 ): CapaActionsMap {
-  return toggleCapaAction(map, stageKey, moduleCode as CapaActionCode);
+  return toggleCapaAction(map, stageKey, moduleCode as CapaActionCode, allStageKeys);
 }
 
 export function getCapaActionsForStage(
@@ -138,8 +164,13 @@ export function getCapaActionsForStage(
   stageKey: string
 ): CapaActionCode[] {
   if (!stageKey) return [];
-  if (map[stageKey] === undefined) return [...DEFAULT_CAPA_ACTIONS];
-  return map[stageKey] || [];
+  if (map && stageKey in map) {
+    return map[stageKey] || [];
+  }
+  if (!map || Object.keys(map).length === 0) {
+    return [...DEFAULT_CAPA_ACTIONS];
+  }
+  return [];
 }
 
 export function capaHasAction(
@@ -266,7 +297,7 @@ export function readProductionSession(): ProductionSession {
       stageKey,
       stageKeys,
       userId: (user.id || "").trim() || null,
-      unrestricted: isAdmin || !isKanbanOperator || stageKeys.length === 0,
+      unrestricted: isAdmin,
     };
   } catch {
     return empty;
@@ -278,7 +309,8 @@ export function canProductionUserActOnStage(
   cardStageKey: string
 ): boolean {
   if (session.unrestricted) return true;
-  return session.stageKeys.includes(cardStageKey);
+  if (session.stageKeys.length > 0) return session.stageKeys.includes(cardStageKey);
+  return true;
 }
 
 export type KanbanAssignableCard = {
@@ -302,6 +334,17 @@ export function canProductionUserOperateCard(
 
 /** Mapa de acciones según el rol Kanban del usuario en sesión. */
 export function getSessionCapaActionsMap(session: ProductionSession): CapaActionsMap {
+  if (session.isAdmin) return {};
+  const merged: CapaActionsMap = {};
+  for (const role of session.roles) {
+    const map = getCapaActionsForRole(role);
+    for (const [stageKey, actions] of Object.entries(map)) {
+      merged[stageKey] = Array.from(
+        new Set([...(merged[stageKey] || []), ...actions])
+      ) as CapaActionCode[];
+    }
+  }
+  if (Object.keys(merged).length > 0) return merged;
   if (session.isSatellite) return getCapaActionsForRole("Satélite");
   if (session.isProduction) return getCapaActionsForRole("Producción");
   return {};

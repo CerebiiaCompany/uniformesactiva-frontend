@@ -87,6 +87,7 @@ export interface VariantSizeCostSummary {
     supplies_total: string | number;
     labor_total: string | number;
     extras_total?: string | number;
+    cif_total?: string | number;
     overall_total: string | number;
     precio_venta?: string | number | null;
     ganancia?: string | number | null;
@@ -100,6 +101,7 @@ export interface VariantCostSummary {
     supplies_total: string | number;
     labor_total: string | number;
     extras_total?: string | number;
+    cif_total?: string | number;
     overall_total: string | number;
     /** Referencia de la tela principal del costeo */
     fabric_reference?: string;
@@ -177,6 +179,32 @@ export interface CreateExtraCostPayload {
 }
 
 export interface UpdateExtraCostPayload {
+    concepto?: string;
+    talla_id?: string | null;
+    cantidad?: string | number;
+    unit_price?: string | number;
+}
+
+export interface CIFCost {
+    id: string;
+    variant_id: string;
+    concepto: string;
+    talla_id?: string | null;
+    talla_nombre?: string | null;
+    cantidad: string;
+    unit_price: string;
+    total: string;
+}
+
+export interface CreateCIFCostPayload {
+    variant_id: string;
+    concepto?: string;
+    talla_id?: string | null;
+    cantidad?: string | number;
+    unit_price: string | number;
+}
+
+export interface UpdateCIFCostPayload {
     concepto?: string;
     talla_id?: string | null;
     cantidad?: string | number;

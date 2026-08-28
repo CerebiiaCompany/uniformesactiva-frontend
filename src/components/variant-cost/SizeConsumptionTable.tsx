@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Check, Loader2, Save, Trash2, X, CircleDot, Square } from "lucide-react";
@@ -98,9 +98,62 @@ export function SizeConsumptionTable({
         });
     }, [data, sizes]);
 
+    const initialConfigDoneRef = useRef<string>("");
+
+    // Predeterminar género una sola vez por variante según tallas con consumo configurado
+    useEffect(() => {
+        if (!variantId || initialConfigDoneRef.current === variantId) return;
+        if (!data || data.length === 0) return;
+
+        const configuredSizeIds = new Set(
+            data
+                .filter((d) => Boolean(d.consumption) && parseFloat(String(d.consumption)) > 0)
+                .map((d) => d.size_id)
+        );
+        if (configuredSizeIds.size === 0) return;
+
+        const mujerSizes = filterTallasByGenero(sizes, "mujer");
+        const hombreSizes = filterTallasByGenero(sizes, "hombre");
+
+        const mujerConfiguredCount = mujerSizes.filter((s) => configuredSizeIds.has(s.id)).length;
+        const hombreConfiguredCount = hombreSizes.filter((s) => configuredSizeIds.has(s.id)).length;
+
+        let targetGen: TallaGenero = "hombre";
+        if (mujerConfiguredCount > 0 && hombreConfiguredCount === 0) {
+            targetGen = "mujer";
+        } else if (mujerConfiguredCount > hombreConfiguredCount) {
+            targetGen = "mujer";
+        }
+
+        setGenero(targetGen);
+
+        const targetSizes = targetGen === "mujer" ? mujerSizes : hombreSizes;
+        const firstConfigured = targetSizes.find((s) => configuredSizeIds.has(s.id))?.id;
+        const fallback = firstConfigured || targetSizes[0]?.id;
+
+        if (fallback && (!selectedSizeId || !configuredSizeIds.has(selectedSizeId))) {
+            setSelectedSizeId(fallback);
+        }
+
+        initialConfigDoneRef.current = variantId;
+    }, [data, sizes, variantId, selectedSizeId]);
+
+    const handleGenderChange = (newGen: TallaGenero) => {
+        if (genero === newGen) return;
+        setGenero(newGen);
+        const genSizes = filterTallasByGenero(sizes, newGen);
+        const configured = genSizes.find((s) => {
+            const item = localValues[s.id];
+            return Boolean(item?.dbId && item.consumption);
+        })?.id;
+        const targetSizeId = configured || genSizes[0]?.id;
+        if (targetSizeId) {
+            setSelectedSizeId(targetSizeId);
+        }
+    };
+
     useEffect(() => {
         const visibleIds = new Set(visibleSizes.map((s) => s.id));
-
         setSelectedSizeIds((prev) => {
             const next = prev.filter((id) => visibleIds.has(id));
             if (next.length === prev.length && next.every((id, i) => id === prev[i])) {
@@ -108,21 +161,7 @@ export function SizeConsumptionTable({
             }
             return next;
         });
-
-        const selectedStillVisible = Boolean(
-            selectedSizeId && visibleSizes.some((s) => s.id === selectedSizeId)
-        );
-        if (selectedStillVisible) return;
-
-        const firstConfigured = visibleSizes.find((size) => {
-            const item = localValues[size.id];
-            return Boolean(item?.dbId && item.consumption);
-        })?.id;
-        const fallback = firstConfigured ?? visibleSizes[0]?.id ?? "";
-        if (fallback && fallback !== selectedSizeId) {
-            setSelectedSizeId(fallback);
-        }
-    }, [genero, visibleSizes, selectedSizeId, localValues]);
+    }, [visibleSizes]);
 
     const executeSave = async (
         sizeId: string,
@@ -398,6 +437,23 @@ export function SizeConsumptionTable({
         });
     };
 
+    const handleClearSelection = () => {
+        setSelectedSizeIds([]);
+        setSelectedSizeId(null);
+        setBulkMeters("");
+    };
+
+    const handleSelectAllVisible = () => {
+        const allIds = visibleSizes.map((s) => s.id);
+        setSelectedSizeIds(allIds);
+        if (allIds.length > 0) {
+            setSelectedSizeId(allIds[0]);
+            const values = allIds.map((id) => localValues[id]?.consumption || "");
+            const same = values.every((v) => v === values[0]);
+            setBulkMeters(same ? values[0] : "");
+        }
+    };
+
     const configuredCount = useMemo(
         () =>
             visibleSizes.filter((size) => {
@@ -468,31 +524,61 @@ export function SizeConsumptionTable({
                 </Button>
             </CardHeader>
             <CardContent className="space-y-4">
-                <div className="inline-flex rounded-lg border border-border bg-muted/30 p-1">
-                    <button
-                        type="button"
-                        onClick={() => setGenero("hombre")}
-                        className={cn(
-                            "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
-                            genero === "hombre"
-                                ? "bg-background text-foreground shadow-sm"
-                                : "text-muted-foreground hover:text-foreground"
-                        )}
-                    >
-                        Hombre
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setGenero("mujer")}
-                        className={cn(
-                            "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
-                            genero === "mujer"
-                                ? "bg-background text-foreground shadow-sm"
-                                : "text-muted-foreground hover:text-foreground"
-                        )}
-                    >
-                        Mujer
-                    </button>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="inline-flex rounded-lg border border-border bg-muted/40 p-1">
+                        <button
+                            type="button"
+                            onClick={() => handleGenderChange("hombre")}
+                            className={cn(
+                                "rounded-md px-4 py-1.5 text-xs font-semibold transition-all",
+                                genero === "hombre"
+                                    ? "bg-red-50 text-red-700 border border-red-200 shadow-sm ring-1 ring-red-400 font-bold"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                            )}
+                        >
+                            Hombre
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => handleGenderChange("mujer")}
+                            className={cn(
+                                "rounded-md px-4 py-1.5 text-xs font-semibold transition-all",
+                                genero === "mujer"
+                                    ? "bg-red-50 text-red-700 border border-red-200 shadow-sm ring-1 ring-red-400 font-bold"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                            )}
+                        >
+                            Mujer
+                        </button>
+                    </div>
+
+                    {multiSelectMode && (
+                        <div className="flex items-center gap-1.5">
+                            {selectedSizeIds.length < visibleSizes.length && visibleSizes.length > 0 && (
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 text-xs gap-1"
+                                    onClick={handleSelectAllVisible}
+                                >
+                                    Seleccionar todas ({visibleSizes.length})
+                                </Button>
+                            )}
+                            {selectedSizeIds.length > 0 && (
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 text-xs text-destructive hover:text-destructive hover:bg-destructive/10 gap-1 font-medium"
+                                    onClick={handleClearSelection}
+                                >
+                                    <X className="h-3.5 w-3.5" />
+                                    Limpiar seleccionados ({selectedSizeIds.length})
+                                </Button>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {visibleSizes.length === 0 ? (
@@ -531,11 +617,10 @@ export function SizeConsumptionTable({
                                                 className={cn(
                                                     "flex flex-col items-center gap-1 rounded-lg border p-2.5 text-center transition-all",
                                                     isSelected
-                                                        ? "border-primary bg-primary/10 ring-1 ring-primary"
-                                                        : "border-border bg-card hover:bg-muted/40",
-                                                    isConfigured &&
-                                                        !isSelected &&
-                                                        "border-green-200/80"
+                                                        ? "border-red-500 bg-red-50/80 ring-2 ring-red-500/30 text-red-950 shadow-sm"
+                                                        : isConfigured
+                                                        ? "border-emerald-300 bg-card hover:bg-emerald-50/30 text-foreground"
+                                                        : "border-border bg-card hover:bg-muted/40 text-muted-foreground"
                                                 )}
                                             >
                                                 {multiSelectMode ? (
@@ -543,12 +628,12 @@ export function SizeConsumptionTable({
                                                         className={cn(
                                                             "w-4 h-4 rounded-full border-2 flex items-center justify-center",
                                                             isSelected
-                                                                ? "border-primary"
+                                                                ? "border-red-500 bg-red-50"
                                                                 : "border-muted-foreground/40"
                                                         )}
                                                     >
                                                         {isSelected && (
-                                                            <div className="w-2 h-2 rounded-full bg-primary" />
+                                                            <div className="w-2 h-2 rounded-full bg-red-600" />
                                                         )}
                                                     </div>
                                                 ) : (
@@ -556,7 +641,7 @@ export function SizeConsumptionTable({
                                                         className={cn(
                                                             "w-4 h-4 rounded-[3px] border-2 flex items-center justify-center",
                                                             isSelected
-                                                                ? "border-red-500 bg-red-50"
+                                                                ? "border-red-500 bg-red-100"
                                                                 : "border-muted-foreground/40 bg-background"
                                                         )}
                                                     >
@@ -568,9 +653,23 @@ export function SizeConsumptionTable({
                                                         )}
                                                     </div>
                                                 )}
-                                                <span className="font-bold text-sm">{label}</span>
+                                                <span
+                                                    className={cn(
+                                                        "font-bold text-sm",
+                                                        isSelected ? "text-red-900" : "text-foreground"
+                                                    )}
+                                                >
+                                                    {label}
+                                                </span>
                                                 {isConfigured ? (
-                                                    <span className="text-[10px] text-muted-foreground">
+                                                    <span
+                                                        className={cn(
+                                                            "text-[10px]",
+                                                            isSelected
+                                                                ? "text-red-700 font-medium"
+                                                                : "text-muted-foreground"
+                                                        )}
+                                                    >
                                                         {item.consumption} m
                                                     </span>
                                                 ) : (
@@ -659,6 +758,19 @@ export function SizeConsumptionTable({
                                     </>
                                 )}
                             </p>
+
+                            {selectedSizeIds.length > 0 && (
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive gap-1"
+                                    onClick={handleClearSelection}
+                                >
+                                    <X className="h-3.5 w-3.5" />
+                                    Limpiar seleccionados
+                                </Button>
+                            )}
                         </div>
 
                         <div className="flex items-center gap-2 flex-wrap">

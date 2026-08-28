@@ -15,6 +15,7 @@ import {
   Settings,
   LogOut,
   Layers,
+  TrendingUp,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
@@ -62,6 +63,8 @@ const MODULE_MAPPING: Record<string, string> = {
   quotes: "Cotizaciones",
   quotations: "Cotizaciones",
   orders: "Órdenes",
+  sales: "Ventas",
+  ventas: "Ventas",
   products: "Líneas",
   factory: "Fábrica",
   production: "Fábrica",
@@ -83,6 +86,7 @@ const comercialItems = [
   { title: "Clientes", url: "/customers", icon: Users },
   { title: "Cotizaciones", url: "/quotations", icon: FileText },
   { title: "Órdenes", url: "/orders", icon: ShoppingCart },
+  { title: "Ventas", url: "/sales", icon: TrendingUp },
 ];
 
 const operacionItems = [
@@ -224,12 +228,17 @@ export function AppSidebar() {
       if (normalizedModuleKey === "production") normalizedModuleKey = "factory";
       if (normalizedModuleKey === "billing") normalizedModuleKey = "costs";
       if (normalizedModuleKey === "users") normalizedModuleKey = "administration";
+      if (normalizedModuleKey === "sales" || normalizedModuleKey === "ventas") normalizedModuleKey = "sales";
 
       const mappedTitle =
         MODULE_MAPPING[normalizedModuleKey] || MODULE_MAPPING[perm.module];
 
       // Valida de forma segura tanto el booleano clásico de la interfaz como el array de la API real
       const hasReadPermission = perm.can_read === true || (perm as any).actions?.includes("read");
+
+      if (title === "Ventas" && (normalizedModuleKey === "orders" || normalizedModuleKey === "sales") && hasReadPermission) {
+        return true;
+      }
 
       return mappedTitle === title && hasReadPermission;
     });

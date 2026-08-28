@@ -31,6 +31,9 @@ export const endpoints = {
         extras: () => `${base()}/api/v1/costos/extras/`,
         extrasByVariant: (variantId: string) => `${base()}/api/v1/costos/extras/${variantId}/`,
         extrasDetalle: (id: string) => `${base()}/api/v1/costos/extras/detalle/${id}/`,
+        cif: () => `${base()}/api/v1/costos/cif/`,
+        cifByVariant: (variantId: string) => `${base()}/api/v1/costos/cif/${variantId}/`,
+        cifDetalle: (id: string) => `${base()}/api/v1/costos/cif/detalle/${id}/`,
         resumenByVariant: (variantId: string) =>
             `${base()}/api/v1/costos/variante/${variantId}/resumen/`,
     },
@@ -46,6 +49,11 @@ export const endpoints = {
             `${base()}/api/v1/inventory/${id}/suppliers/${offerId}/`,
         tns: (params?: string) => `${base()}/api/v1/inventory/tns/${params ? `?${params}` : ''}`,
         tnsSummary: (params?: string) => `${base()}/api/v1/inventory/tns/summary/${params ? `?${params}` : ''}`,
+        tnsFacturas: (params?: string) => `${base()}/api/v1/inventory/tns/facturas/${params ? `?${params}` : ''}`,
+        tnsFacturaDetalle: (kardexId: string | number, params?: string) =>
+            `${base()}/api/v1/inventory/tns/facturas/${encodeURIComponent(kardexId)}/${params ? `?${params}` : ''}`,
+        tnsTransaccionalVentas: (params?: string) =>
+            `${base()}/api/v1/inventory/tns/transaccional-ventas/${params ? `?${params}` : ''}`,
         tnsCompras: (params?: string) => `${base()}/api/v1/inventory/tns/compras/${params ? `?${params}` : ''}`,
         tnsComprasMaterial: (codigoArticulo: string, params?: string) =>
             `${base()}/api/v1/inventory/tns/compras/${encodeURIComponent(codigoArticulo)}/${params ? `?${params}` : ''}`,

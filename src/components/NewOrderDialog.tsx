@@ -350,6 +350,19 @@ export function NewOrderDialog({
         };
     }, [productEntries]);
 
+    const hasPersonalizacion = useMemo(() => {
+        return productEntries.some((p) => {
+            const est = (p.estampado || "").trim().toLowerCase();
+            return (
+                est &&
+                est !== "sin estampado" &&
+                est !== "sin_estampado" &&
+                est !== "ninguno" &&
+                est !== "none"
+            );
+        });
+    }, [productEntries]);
+
     const abonoAmount = Number(abonoAmountRaw) || 0;
     const saldoPendiente = Math.max(0, Math.round((income - abonoAmount) * 100) / 100);
     const estimatedProfit = income > 0 ? income - totalCost : 0;
@@ -1345,127 +1358,131 @@ export function NewOrderDialog({
                                     )}
                                 </section>
 
-                                <Separator />
+                                {hasPersonalizacion && (
+                                    <>
+                                        <Separator />
 
-                                {/* Comentarios y logo */}
-                                <section className="space-y-4">
-                                    <SectionHeader
-                                        icon={Layers}
-                                        title="Notas y personalización"
-                                    />
-                                    <div className="space-y-1.5">
-                                        <Label className="text-xs font-medium">Comentarios de la orden</Label>
-                                        <Textarea
-                                            placeholder="Indicaciones generales, condiciones de entrega, observaciones..."
-                                            value={orderComments}
-                                            onChange={(e) => setOrderComments(e.target.value)}
-                                            className="min-h-[88px] resize-y"
-                                        />
-                                    </div>
-
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                                        <div className="space-y-2">
-                                            <Label className="text-xs font-medium flex items-center gap-1.5">
-                                                <ImageIcon className="h-3.5 w-3.5" />
-                                                Logo del cliente
-                                            </Label>
-                                            <input
-                                                ref={logoInputRef}
-                                                type="file"
-                                                accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg"
-                                                className="hidden"
-                                                onChange={handleLogoFileChange}
+                                        {/* Comentarios y logo */}
+                                        <section className="space-y-4">
+                                            <SectionHeader
+                                                icon={Layers}
+                                                title="Notas y personalización"
                                             />
-                                            {logoPreviewUrl ? (
-                                                <div className="rounded-xl border bg-muted/20 p-3 space-y-3">
-                                                    <div className="flex items-center justify-center rounded-lg bg-background border overflow-hidden h-28">
-                                                        <img
-                                                            src={logoPreviewUrl}
-                                                            alt="Vista previa del logo"
-                                                            className="max-h-full max-w-full object-contain"
-                                                        />
-                                                    </div>
-                                                    <div className="flex gap-2">
-                                                        <Button
+                                            <div className="space-y-1.5">
+                                                <Label className="text-xs font-medium">Comentarios de la orden</Label>
+                                                <Textarea
+                                                    placeholder="Indicaciones generales, condiciones de entrega, observaciones..."
+                                                    value={orderComments}
+                                                    onChange={(e) => setOrderComments(e.target.value)}
+                                                    className="min-h-[88px] resize-y"
+                                                />
+                                            </div>
+
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                                                <div className="space-y-2">
+                                                    <Label className="text-xs font-medium flex items-center gap-1.5">
+                                                        <ImageIcon className="h-3.5 w-3.5" />
+                                                        Logo del cliente
+                                                    </Label>
+                                                    <input
+                                                        ref={logoInputRef}
+                                                        type="file"
+                                                        accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg"
+                                                        className="hidden"
+                                                        onChange={handleLogoFileChange}
+                                                    />
+                                                    {logoPreviewUrl ? (
+                                                        <div className="rounded-xl border bg-muted/20 p-3 space-y-3">
+                                                            <div className="flex items-center justify-center rounded-lg bg-background border overflow-hidden h-28">
+                                                                <img
+                                                                    src={logoPreviewUrl}
+                                                                    alt="Vista previa del logo"
+                                                                    className="max-h-full max-w-full object-contain"
+                                                                />
+                                                            </div>
+                                                            <div className="flex gap-2">
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="outline"
+                                                                    size="sm"
+                                                                    className="flex-1"
+                                                                    disabled={logoUploading}
+                                                                    onClick={() => logoInputRef.current?.click()}
+                                                                >
+                                                                    Cambiar
+                                                                </Button>
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    className="text-destructive hover:text-destructive"
+                                                                    disabled={logoUploading}
+                                                                    onClick={clearLogo}
+                                                                >
+                                                                    Quitar
+                                                                </Button>
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <button
                                                             type="button"
-                                                            variant="outline"
-                                                            size="sm"
-                                                            className="flex-1"
                                                             disabled={logoUploading}
                                                             onClick={() => logoInputRef.current?.click()}
+                                                            className="w-full flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-muted-foreground/20 px-4 py-5 text-sm text-muted-foreground hover:border-primary/40 hover:bg-primary/[0.03] hover:text-foreground transition-colors disabled:opacity-60"
                                                         >
-                                                            Cambiar
-                                                        </Button>
-                                                        <Button
-                                                            type="button"
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            className="text-destructive hover:text-destructive"
-                                                            disabled={logoUploading}
-                                                            onClick={clearLogo}
-                                                        >
-                                                            Quitar
-                                                        </Button>
+                                                            {logoUploading ? (
+                                                                <Loader2 className="h-5 w-5 animate-spin" />
+                                                            ) : (
+                                                                <Upload className="h-5 w-5" />
+                                                            )}
+                                                            <span className="font-medium">
+                                                                {logoUploading ? "Subiendo..." : "Subir logo"}
+                                                            </span>
+                                                            <span className="text-[11px]">PNG, JPG, WEBP o SVG (máx. 5 MB)</span>
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <Label className="text-xs font-medium">Posiciones del logo</Label>
+                                                    <div className="grid grid-cols-2 gap-1.5">
+                                                        {LOGO_POSITIONS.map((pos) => {
+                                                            const active = logoPositions.includes(pos.id);
+                                                            return (
+                                                                <button
+                                                                    key={pos.id}
+                                                                    type="button"
+                                                                    onClick={() => toggleLogoPosition(pos.id)}
+                                                                    className={cn(
+                                                                        "flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs font-medium transition-all text-left",
+                                                                        active
+                                                                            ? "border-primary bg-primary/10 text-primary shadow-sm"
+                                                                            : "border-border bg-background text-muted-foreground hover:border-primary/30 hover:bg-muted/50"
+                                                                    )}
+                                                                >
+                                                                    <span
+                                                                        className={cn(
+                                                                            "h-3.5 w-3.5 rounded-sm border shrink-0 flex items-center justify-center",
+                                                                            active
+                                                                                ? "border-primary bg-primary text-primary-foreground"
+                                                                                : "border-muted-foreground/40"
+                                                                        )}
+                                                                    >
+                                                                        {active && (
+                                                                            <svg viewBox="0 0 10 8" className="h-2 w-2 fill-current">
+                                                                                <path d="M1 4l2.5 2.5L9 1" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                                                                            </svg>
+                                                                        )}
+                                                                    </span>
+                                                                    {pos.label}
+                                                                </button>
+                                                            );
+                                                        })}
                                                     </div>
                                                 </div>
-                                            ) : (
-                                                <button
-                                                    type="button"
-                                                    disabled={logoUploading}
-                                                    onClick={() => logoInputRef.current?.click()}
-                                                    className="w-full flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-muted-foreground/20 px-4 py-5 text-sm text-muted-foreground hover:border-primary/40 hover:bg-primary/[0.03] hover:text-foreground transition-colors disabled:opacity-60"
-                                                >
-                                                    {logoUploading ? (
-                                                        <Loader2 className="h-5 w-5 animate-spin" />
-                                                    ) : (
-                                                        <Upload className="h-5 w-5" />
-                                                    )}
-                                                    <span className="font-medium">
-                                                        {logoUploading ? "Subiendo..." : "Subir logo"}
-                                                    </span>
-                                                    <span className="text-[11px]">PNG, JPG, WEBP o SVG (máx. 5 MB)</span>
-                                                </button>
-                                            )}
-                                        </div>
-                                        <div className="space-y-2">
-                                            <Label className="text-xs font-medium">Posiciones del logo</Label>
-                                            <div className="grid grid-cols-2 gap-1.5">
-                                                {LOGO_POSITIONS.map((pos) => {
-                                                    const active = logoPositions.includes(pos.id);
-                                                    return (
-                                                        <button
-                                                            key={pos.id}
-                                                            type="button"
-                                                            onClick={() => toggleLogoPosition(pos.id)}
-                                                            className={cn(
-                                                                "flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs font-medium transition-all text-left",
-                                                                active
-                                                                    ? "border-primary bg-primary/10 text-primary shadow-sm"
-                                                                    : "border-border bg-background text-muted-foreground hover:border-primary/30 hover:bg-muted/50"
-                                                            )}
-                                                        >
-                                                            <span
-                                                                className={cn(
-                                                                    "h-3.5 w-3.5 rounded-sm border shrink-0 flex items-center justify-center",
-                                                                    active
-                                                                        ? "border-primary bg-primary text-primary-foreground"
-                                                                        : "border-muted-foreground/40"
-                                                                )}
-                                                            >
-                                                                {active && (
-                                                                    <svg viewBox="0 0 10 8" className="h-2 w-2 fill-current">
-                                                                        <path d="M1 4l2.5 2.5L9 1" stroke="currentColor" strokeWidth="1.5" fill="none" />
-                                                                    </svg>
-                                                                )}
-                                                            </span>
-                                                            {pos.label}
-                                                        </button>
-                                                    );
-                                                })}
                                             </div>
-                                        </div>
-                                    </div>
-                                </section>
+                                        </section>
+                                    </>
+                                )}
                             </div>
 
                             {/* Footer fijo */}

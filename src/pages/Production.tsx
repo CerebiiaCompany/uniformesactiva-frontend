@@ -810,6 +810,10 @@ export default function Production() {
 
   const userStageKeys = prodSession.stageKeys;
   const canManageBoard = prodSession.unrestricted;
+  const canViewBoardOnStage = (stageKey: string) =>
+    canManageBoard ||
+    (userStageKeys.includes(stageKey) &&
+      capaHasAction(capaActionsMap, stageKey, "ver_tablero"));
   const canEditOnStage = (stageKey: string) =>
     canManageBoard ||
     (userStageKeys.includes(stageKey) &&
@@ -2168,11 +2172,14 @@ export default function Production() {
             prodOrders.find((p) => p.orderId === selectedOrderId) ||
             null;
           const visibleStages = stages.filter((stage) =>
-            isStageRequiredForCard(stage.key, primaryCard)
+            isStageRequiredForCard(stage.key, primaryCard) &&
+            canViewBoardOnStage(stage.key)
           );
 
           return visibleStages.map((stage, stageIndex) => {
-            const stageOrders = getOrdersForStage(stage.key);
+            const rawStageOrders = getOrdersForStage(stage.key);
+            const canViewThisStage = canViewBoardOnStage(stage.key);
+            const stageOrders = canViewThisStage ? rawStageOrders : [];
             const isEditing = editingColKey === stage.key;
             const isOwnCapa =
               canManageBoard || userStageKeys.includes(stage.key);
@@ -2302,22 +2309,27 @@ export default function Production() {
                   theme.column
                 )}
               >
-                {stageOrders.map((order) => {
-                  const canOperate = canProductionUserOperateCard(prodSession, order);
-                  const canSeeCapa = canProductionUserActOnStage(prodSession, order.stage);
-                  const canEditCard = canOperate && canEditOnStage(order.stage);
-                  const canInventoryCard =
-                    canOperate && canRequestInventoryOnStage(order.stage);
-                  const stageUsers = usersForStage(order.stage);
-                  const stageSatUsers = satelliteUsersForStage(order.stage);
-                  const needsAssign = !order.assigneeId && !order.satelliteAssigneeId;
-                  const hasProductionAssignee = Boolean(order.assigneeId);
-                  const hasSatelliteAssignee = Boolean(order.satelliteAssigneeId);
-                  const stageLabor = getCardLaborInfoForStage(order, stage.key);
-                  return (
-                  <div
-                    key={order.id}
-                    draggable={canOperate}
+                {!canViewThisStage ? (
+                  <div className="flex flex-col items-center justify-center p-6 text-center text-xs text-muted-foreground/60 italic">
+                    Sin permisos para ver tarjetas de esta capa
+                  </div>
+                ) : (
+                  stageOrders.map((order) => {
+                    const canOperate = canProductionUserOperateCard(prodSession, order);
+                    const canSeeCapa = canProductionUserActOnStage(prodSession, order.stage);
+                    const canEditCard = canOperate && canEditOnStage(order.stage);
+                    const canInventoryCard =
+                      canOperate && canRequestInventoryOnStage(order.stage);
+                    const stageUsers = usersForStage(order.stage);
+                    const stageSatUsers = satelliteUsersForStage(order.stage);
+                    const needsAssign = !order.assigneeId && !order.satelliteAssigneeId;
+                    const hasProductionAssignee = Boolean(order.assigneeId);
+                    const hasSatelliteAssignee = Boolean(order.satelliteAssigneeId);
+                    const stageLabor = getCardLaborInfoForStage(order, stage.key);
+                    return (
+                    <div
+                      key={order.id}
+                      draggable={canOperate}
                     onDragStart={(e) => handleCardDragStart(e, order.id)}
                     className={cn(
                       "bg-card rounded-lg border border-border p-3 hover:shadow-md transition-shadow relative group/card",
@@ -2522,7 +2534,8 @@ export default function Production() {
                     </div>
                   </div>
                   );
-                })}
+                })
+              )}
                 {isOwnCapa && canManageBoard ? (
                   <button onClick={() => openAddCard(stage.key)} className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-dashed text-xs hover:bg-card"><Plus className="h-3.5 w-3.5" /> Añadir tarjeta</button>
                 ) : null}

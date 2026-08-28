@@ -15,6 +15,14 @@ import type {
   TNSVentasResponse,
   TNSMaterialVentasHistorialResponse,
   TNSVentasParams,
+  TNSFacturaItem,
+  TNSFacturaDetalle,
+  TNSFacturaDetalleItem,
+  TNSFacturaDetalleResponse,
+  TNSFacturasSummary,
+  TNSFacturasResponse,
+  TNSFacturasParams,
+  TNSTransaccionalVentasParams,
   BodegaDistribucion,
   UnidadDistribucion,
   TopProductoInventario,
@@ -33,6 +41,14 @@ export type {
   TNSVentasResponse,
   TNSMaterialVentasHistorialResponse,
   TNSVentasParams,
+  TNSFacturaItem,
+  TNSFacturaDetalle,
+  TNSFacturaDetalleItem,
+  TNSFacturaDetalleResponse,
+  TNSFacturasSummary,
+  TNSFacturasResponse,
+  TNSFacturasParams,
+  TNSTransaccionalVentasParams,
   BodegaDistribucion,
   UnidadDistribucion,
   TopProductoInventario,
@@ -675,7 +691,7 @@ export async function getTNSVentasDetalladas(
 
   const url = endpoints.inventory.tnsVentas(query.toString());
   const res = await http<any>(url, { skipAuthRedirect: true });
-  
+
   if (res && res.data && Array.isArray(res.data)) {
     return res as TNSVentasResponse;
   }
@@ -709,6 +725,122 @@ export async function getTNSMaterialVentasHistorial(
     return res.data as TNSMaterialVentasHistorialResponse;
   }
   return res as TNSMaterialVentasHistorialResponse;
+}
+
+/**
+ * Consulta la lista paginada y filtrable de Facturas de Venta desde el ERP TNS.
+ */
+export async function getTNSFacturas(
+  params: TNSFacturasParams = {}
+): Promise<TNSFacturasResponse> {
+  const query = new URLSearchParams();
+  if (params.search?.trim()) query.append("search", params.search.trim());
+  if (params.cliente?.trim()) query.append("cliente", params.cliente.trim());
+  if (params.numero?.trim()) query.append("numero", params.numero.trim());
+  if (params.fecha_inicial?.trim()) {
+    const d = formatDateToDDMMYYYY(params.fecha_inicial);
+    query.append("fecha_inicial", d || params.fecha_inicial.trim());
+  }
+  if (params.fecha_final?.trim()) {
+    const d = formatDateToDDMMYYYY(params.fecha_final);
+    query.append("fecha_final", d || params.fecha_final.trim());
+  }
+  if (params.page != null) query.append("page", String(params.page));
+  if (params.page_size != null) query.append("page_size", String(params.page_size));
+  if (params.force_refresh) query.append("force_refresh", "true");
+
+  const url = endpoints.inventory.tnsFacturas(query.toString());
+  const res = await http<any>(url, { skipAuthRedirect: true });
+
+  if (Array.isArray(res)) {
+    return {
+      status: true,
+      data: res,
+      total_count: res.length,
+      page: params.page || 1,
+      page_size: params.page_size || res.length,
+      summary: {
+        total_facturas: res.length,
+        total_valor_neto: res.reduce((acc, curr) => acc + parseTNSNumber(curr.valorNeto), 0),
+      },
+    };
+  }
+
+  const items = res.data || res.items || res.results || [];
+  const totalCount = res.total_count ?? res.count ?? res.total ?? items.length;
+
+  return {
+    status: res.status ?? true,
+    message: res.message,
+    data: items,
+    total_count: totalCount,
+    summary: res.summary || {
+      total_facturas: totalCount,
+      total_valor_neto: items.reduce((acc: number, curr: any) => acc + parseTNSNumber(curr.valorNeto), 0),
+    },
+    page: res.page ?? params.page ?? 1,
+    page_size: res.page_size ?? params.page_size ?? 20,
+    total_pages: res.total_pages ?? Math.ceil(totalCount / (params.page_size || 20)),
+  };
+}
+
+/**
+ * Consulta el detalle completo de una Factura de Venta por su KardexId desde el ERP TNS.
+ */
+export async function getTNSFacturaDetalle(
+  kardexId: string | number,
+  force_refresh = false
+): Promise<TNSFacturaDetalle> {
+  const query = force_refresh ? "force_refresh=true" : "";
+  const url = endpoints.inventory.tnsFacturaDetalle(kardexId, query);
+  const res = await http<any>(url, { skipAuthRedirect: true });
+
+  if (res && res.data && typeof res.data === "object") {
+    return res.data as TNSFacturaDetalle;
+  }
+  return res as TNSFacturaDetalle;
+}
+
+/**
+ * Consulta el reporte transaccional de ventas (FV / DV) desde TNS.
+ */
+export async function getTNSTransaccionalVentas(
+  params: TNSTransaccionalVentasParams = {}
+): Promise<TNSVentasResponse> {
+  const query = new URLSearchParams();
+  if (params.search?.trim()) query.append("search", params.search.trim());
+  if (params.tipo?.trim()) query.append("tipo", params.tipo.trim());
+  if (params.fecha_inicial?.trim()) {
+    const d = formatDateToDDMMYYYY(params.fecha_inicial);
+    query.append("fecha_inicial", d || params.fecha_inicial.trim());
+  }
+  if (params.fecha_final?.trim()) {
+    const d = formatDateToDDMMYYYY(params.fecha_final);
+    query.append("fecha_final", d || params.fecha_final.trim());
+  }
+  if (params.page != null) query.append("page", String(params.page));
+  if (params.page_size != null) query.append("page_size", String(params.page_size));
+  if (params.force_refresh) query.append("force_refresh", "true");
+
+  const url = endpoints.inventory.tnsTransaccionalVentas(query.toString());
+  const res = await http<any>(url, { skipAuthRedirect: true });
+
+  if (res && res.data && Array.isArray(res.data)) {
+    return res as TNSVentasResponse;
+  }
+  if (Array.isArray(res)) {
+    return {
+      status: true,
+      data: res,
+      total_count: res.length,
+      summary: {
+        total_registros: res.length,
+        total_cantidad_vendida: res.reduce((acc, curr) => acc + parseTNSNumber(curr.cantidad), 0),
+        total_ingresos_neto: res.reduce((acc, curr) => acc + parseTNSNumber(curr.neto), 0),
+      },
+    };
+  }
+  return res as TNSVentasResponse;
 }
 
 export const COMMON_COLORS = [
@@ -787,32 +919,33 @@ export function parseTNSDescription(desc?: string | null): { name: string; color
  */
 export const TNS_CATEGORY_KEYWORDS: Record<string, string[]> = {
   Telas: [
-    "TELA", "POPELINA", "POLUX", "DRILL", "OXFORD", "PIQUE", "PIK", "LINO",
+    "TELA", "TELAS", "POPELINA", "POLUX", "DRILL", "OXFORD", "PIQUE", "PIK", "LINO",
     "PARKER", "VERTIGO", "SUTEX", "ANTIFLUIDO", "RIPSTOP", "DACRON", "SEDA",
     "MICROFIBRA", "GABARDINA", "DENIM", "JEAN", "CANVA", "LINOS", "SEDAS", "CHALIS"
   ],
-  Accesorios: [
-    "BOTON", "CREMALLERA", "CIERRE", "HILO", "SESGO", "ELASTICO", "RESORTE",
-    "BROCHE", "ENTRETELA", "CINTA REFLECTIVA", "HILADILLA", "VELCRO", "HERRAJE",
-    "CUELLO", "PUNO", "HOMBRERA", "CORDON", "SESGO ALGODON", "HILOS", "HEBILLA", "RIB"
-  ],
   Prendas: [
-    "CAMISA", "PANTALON", "OVEROL", "CHALECO", "DELANTAL", "BATA", "SACO",
-    "BLUSA", "FALDA", "CHAQUETA", "UNIFORME", "BERMUDA", "ENTERIZO", "SUDADERA",
-    "DOTACION", "CAMISETA", "SHORT"
-  ],
-  Empaque: [
-    "BOLSA", "CAJA", "GANCHO", "CINTA EMBALAJE", "CINTA TRANSPARENTE DE EMBALAJE",
-    "POLIETILENO", "CORRUGADO", "EMBALAJE", "STRETCH", "VINIPEL"
+    "CAMISA", "PANTALON", "PANTALONES", "OVEROL", "CHALECO", "DELANTAL", "BATA", "SACO",
+    "BLUSA", "FALDA", "CHAQUETA", "UNIFORME", "BERMUDA", "ENTERIZO", "SUDADERA", "SUDADERAS",
+    "DOTACION", "CAMISETA", "SHORT", "CONJUNTO", "CONJUNTOS", "CAMIBUSO", "CAMIBUSOS",
+    "CAMIBUZO", "CAMIBUZOS", "CORBATA", "CORBATAS", "GORRA", "GORRAS", "GORRO", "GORROS",
+    "ZAPATO", "ZAPATOS", "CALZADO", "FILIPINA", "FILIPINAS", "FRANELA", "FRANELAS", "FRANELILLA", "FRANELILLAS",
+    "JARDINERA", "JARDINERAS", "MEDIA", "MEDIAS", "POLO"
   ],
   Insumos: [
+    "BOTON", "CREMALLERA", "CIERRE", "HILO", "SESGO", "ELASTICO", "RESORTE",
+    "BROCHE", "ENTRETELA", "ENTRETELAS", "INTERLON", "INTERLONES", "INTELON",
+    "FUSIONABLE", "FUSIONABLES", "MARQUILLA", "MARQUILLAS", "ETIQUETA", "ETIQUETAS",
+    "BOLSA", "BOLSAS", "CAJA", "CAJAS", "GANCHO", "GANCHOS", "CINTA EMBALAJE", "CINTA TRANSPARENTE",
+    "POLIETILENO", "CORRUGADO", "EMBALAJE", "STRETCH", "VINIPEL", "CINTA PEGANTE", "CINTA ENMASCARAR",
+    "CINTA REFLECTIVA", "HILADILLA", "VELCRO", "HERRAJE",
+    "CUELLO", "PUNO", "HOMBRERA", "CORDON", "SESGO ALGODON", "HILOS", "HEBILLA", "RIB",
     "AGUJA", "ACEITE", "TIZA", "PAPEL TRAZO", "PAPEL MOLDES", "MANTENIMIENTO",
     "PAPELERIA", "TIJERAS", "CUCHILLA"
   ],
 };
 
 export interface ClasificacionResultado {
-  categoria: "Telas" | "Accesorios" | "Prendas" | "Empaque" | "Insumos";
+  categoria: "Telas" | "Prendas" | "Insumos";
   requiere_revision: boolean;
   metodo_clasificacion: "diccionario" | "regla_cruzada" | "unidad_heuristica" | "fallback";
 }
@@ -834,11 +967,35 @@ function normalizeTNSText(text?: string | null): string {
 }
 
 /**
+ * Determina la unidad de medida estándar de un ítem de TNS.
+ * Regla: Cualquier artículo que inicie o contenga MARQUILLA / MARQUILLAS se mide en 'UND' (unidad).
+ */
+export function getTNSItemUnit(item: {
+  prod_Dist_Desc?: string | null;
+  prd_UnidadInventario?: string | null;
+} | null | undefined): string {
+  if (!item) return "UND";
+  const normDesc = normalizeTNSText(item.prod_Dist_Desc);
+  if (
+    normDesc.startsWith("MARQUILLA") ||
+    normDesc.startsWith("MARQUILLAS") ||
+    normDesc.includes("MARQUILLA") ||
+    normDesc.includes("MARQUILLAS") ||
+    normDesc.startsWith("ETIQUETA") ||
+    normDesc.includes("ETIQUETA")
+  ) {
+    return "UND";
+  }
+  const clean = (item.prd_UnidadInventario || "").trim();
+  return clean || "UND";
+}
+
+/**
  * Clasifica automáticamente un ítem de TNS aplicando:
- * 1. Normalización de texto (sin tildes, mayúsculas estrictas).
- * 2. Reglas cruzadas de desempate (ej. Cinta Reflectiva vs Cinta Embalaje).
+ * 1. Reglas prioritarias estrictas (artículos que inicien por pantalón, franela, franelilla, etc.).
+ * 2. Reglas cruzadas de desempate (Telas vs Interlones, Bolsas/Empaques -> Insumos, Marquillas -> Insumos).
  * 3. Mapeo por diccionario tokenizado con límites de palabra (evita falsos positivos).
- * 4. Validación heurística por unidad de medida (metro -> Telas, cono -> Accesorios).
+ * 4. Validación heurística por unidad de medida (metro -> Telas, cono/bolsa -> Insumos).
  * 5. Fallback con indicador `requiere_revision: true`.
  */
 export function clasificarArticuloTNS(item: {
@@ -858,34 +1015,152 @@ export function clasificarArticuloTNS(item: {
   }
 
   // ----------------------------------------------------
+  // Paso 1: Regla Prioritaria Estricta para Prendas
+  // Artículos que inicien por PANTALON, FRANELA, FRANELILLA, etc. van directamente a Prendas
+  // ----------------------------------------------------
+  const PRENDA_PREFIXES = [
+    "PANTALON",
+    "PANTALONES",
+    "PANT",
+    "FRANELA",
+    "FRANELAS",
+    "FRANELILLA",
+    "FRANELILLAS",
+    "CAMISA",
+    "CAMISAS",
+    "CAMIBUSO",
+    "CAMIBUSOS",
+    "CAMIBUZO",
+    "CAMIBUZOS",
+    "POLO",
+    "CONJUNTO",
+    "CONJUNTOS",
+    "CORBATA",
+    "CORBATAS",
+    "GORRA",
+    "GORRAS",
+    "GORRO",
+    "GORROS",
+    "ZAPATO",
+    "ZAPATOS",
+    "CALZADO",
+    "FILIPINA",
+    "FILIPINAS",
+    "JARDINERA",
+    "JARDINERAS",
+    "SUDADERA",
+    "SUDADERAS",
+    "BERMUDA",
+    "BERMUDAS",
+    "SHORT",
+    "SHORTS",
+    "OVEROL",
+    "OVEROLES",
+    "CHALECO",
+    "CHALECOS",
+    "DELANTAL",
+    "DELANTALES",
+    "BATA",
+    "BATAS",
+    "SACO",
+    "SACOS",
+    "BLUSA",
+    "BLUSAS",
+    "CHAQUETA",
+    "CHAQUETAS",
+    "UNIFORME",
+    "UNIFORMES",
+    "ENTERIZO",
+    "ENTERIZOS",
+    "DOTACION",
+    "DOTACIONES",
+    "CAMISETA",
+    "CAMISETAS",
+  ];
+
+  for (const prefix of PRENDA_PREFIXES) {
+    if (
+      normDesc === prefix ||
+      normDesc.startsWith(`${prefix} `) ||
+      normDesc.startsWith(`${prefix}-`) ||
+      normDesc.startsWith(`${prefix}/`) ||
+      normDesc.startsWith(prefix)
+    ) {
+      return {
+        categoria: "Prendas",
+        requiere_revision: false,
+        metodo_clasificacion: "regla_cruzada",
+      };
+    }
+  }
+
+  // ----------------------------------------------------
   // Paso 2: Reglas Cruzadas Específicas de Desempate
   // ----------------------------------------------------
-  if (normDesc.includes("CINTA REFLECTIVA") || normDesc.includes("REFLECTIV")) {
-    return {
-      categoria: "Accesorios",
-      requiere_revision: false,
-      metodo_clasificacion: "regla_cruzada",
-    };
-  }
-
+  // Interlon / Intelon / Entretela / Fusionable -> Insumos (incluso si tienen unidad metro)
   if (
-    normDesc.includes("CINTA EMBALAJE") ||
-    normDesc.includes("CINTA TRANSPARENTE") ||
-    normDesc.includes("CINTA ENMASCARAR") ||
-    normDesc.includes("CINTA PEGANTE") ||
-    normDesc.includes("VINIPEL") ||
-    normDesc.includes("STRETCH")
+    normDesc.includes("INTERLON") ||
+    normDesc.includes("INTELON") ||
+    normDesc.includes("ENTRETELA") ||
+    normDesc.includes("FUSIONABLE")
   ) {
     return {
-      categoria: "Empaque",
+      categoria: "Insumos",
       requiere_revision: false,
       metodo_clasificacion: "regla_cruzada",
     };
   }
 
-  if (normDesc.includes("CINTA") && (normUnit === "rollo" || normDesc.includes("EMBALAJE"))) {
+  // Marquilla / Marquillas / Etiquetas -> Insumos (medidas por unidad)
+  if (
+    normDesc.startsWith("MARQUILLA") ||
+    normDesc.startsWith("MARQUILLAS") ||
+    normDesc.includes("MARQUILLA") ||
+    normDesc.includes("MARQUILLAS") ||
+    normDesc.includes("ETIQUETA")
+  ) {
     return {
-      categoria: "Empaque",
+      categoria: "Insumos",
+      requiere_revision: false,
+      metodo_clasificacion: "regla_cruzada",
+    };
+  }
+
+  // Todo lo que diga TELA o TELAS va directamente a la categoría Telas
+  if (
+    normDesc.startsWith("TELA") ||
+    normDesc.startsWith("TELAS") ||
+    normDesc.includes("TELA ") ||
+    normDesc.includes("TELAS ") ||
+    normDesc.includes(" TELA") ||
+    normDesc.includes(" TELAS") ||
+    normDesc === "TELA" ||
+    normDesc === "TELAS"
+  ) {
+    return {
+      categoria: "Telas",
+      requiere_revision: false,
+      metodo_clasificacion: "regla_cruzada",
+    };
+  }
+
+  // Bolsas, Cajas, Ganchos, Embalaje, Vinipel, Stretch -> Todo va a Insumos
+  if (
+    normDesc.includes("BOLSA") ||
+    normDesc.includes("BOLSAS") ||
+    normDesc.includes("CAJA") ||
+    normDesc.includes("CAJAS") ||
+    normDesc.includes("GANCHO") ||
+    normDesc.includes("GANCHOS") ||
+    normDesc.includes("EMBALAJE") ||
+    normDesc.includes("VINIPEL") ||
+    normDesc.includes("STRETCH") ||
+    normDesc.includes("POLIETILENO") ||
+    normDesc.includes("CORRUGADO") ||
+    normDesc.includes("CINTA")
+  ) {
+    return {
+      categoria: "Insumos",
       requiere_revision: false,
       metodo_clasificacion: "regla_cruzada",
     };
@@ -896,12 +1171,10 @@ export function clasificarArticuloTNS(item: {
   // ----------------------------------------------------
   const tokens = new Set(normDesc.split(/[\s-]+/).filter(Boolean));
 
-  // Orden de prioridad en diccionario: Prendas > Telas > Accesorios > Empaque > Insumos
-  const priorityOrder: Array<"Prendas" | "Telas" | "Accesorios" | "Empaque" | "Insumos"> = [
+  // Orden de prioridad en diccionario: Prendas > Telas > Insumos
+  const priorityOrder: Array<"Prendas" | "Telas" | "Insumos"> = [
     "Prendas",
     "Telas",
-    "Accesorios",
-    "Empaque",
     "Insumos",
   ];
 
@@ -942,17 +1215,9 @@ export function clasificarArticuloTNS(item: {
     };
   }
 
-  if (["cono", "conos"].includes(normUnit)) {
+  if (["cono", "conos", "millar", "paquete", "rollo", "rollos"].includes(normUnit)) {
     return {
-      categoria: "Accesorios",
-      requiere_revision: false,
-      metodo_clasificacion: "unidad_heuristica",
-    };
-  }
-
-  if (["millar", "paquete"].includes(normUnit) && normDesc.includes("BOLSA")) {
-    return {
-      categoria: "Empaque",
+      categoria: "Insumos",
       requiere_revision: false,
       metodo_clasificacion: "unidad_heuristica",
     };
@@ -976,6 +1241,35 @@ export function detectTNSCategory(item: {
   prd_UnidadInventario?: string | null;
 }): string {
   return clasificarArticuloTNS(item).categoria;
+}
+
+/**
+ * Normaliza y limpia nombres de proveedores provenientes de TNS,
+ * eliminando cláusulas legales excesivamente largas o razones sociales compuestas.
+ */
+export function cleanTNSProveedorName(rawName?: string | null): string {
+  if (!rawName) return "";
+  let name = rawName.trim();
+
+  // Caso específico: Textiles Lafayette con cláusula legal larga
+  if (
+    name.toUpperCase().includes("TEXTILES LAFAYETTE") ||
+    name.toUpperCase().includes("TELAS LAFAYETTE") ||
+    name.toUpperCase().includes("LAFAYETTE SAS") ||
+    name.toUpperCase().includes("LAFAYETTE")
+  ) {
+    return "TEXTILES LAFAYETTE SAS";
+  }
+
+  // Si contiene "PUDIENDO GIRAR BAJO..." u otras cláusulas notariales
+  if (/pudiendo girar/i.test(name)) {
+    name = name.split(/pudiendo girar/i)[0].trim();
+  }
+
+  // Quitar comillas y dobles espacios
+  name = name.replace(/["“”]/g, "").replace(/\s+/g, " ").trim();
+
+  return name;
 }
 
 export const tnsService = {
@@ -1008,14 +1302,20 @@ export const tnsService = {
   getTNSInventarioSummary,
   getTNSComprasReporte,
   getTNSMaterialComprasHistorial,
-  // Ventas TNS
+  // Ventas y Facturas TNS
   getTNSVentasDetalladas,
   getTNSMaterialVentasHistorial,
+  getTNSFacturas,
+  getTNSFacturaDetalle,
+  getTNSTransaccionalVentas,
   parseTNSNumber,
   parseTNSDescription,
   clasificarArticuloTNS,
+  getTNSItemUnit,
   detectTNSCategory,
+  cleanTNSProveedorName,
   TNS_CATEGORY_KEYWORDS,
 };
+
 
 

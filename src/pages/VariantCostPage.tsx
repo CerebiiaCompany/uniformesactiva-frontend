@@ -25,15 +25,16 @@ import type { ProductVariant } from "@/types/variant";
 import { useGetFabricCosts } from "@/hooks/useGetFabricCosts";
 import { useGetLaborCosts } from "@/hooks/useGetLaborCosts";
 import { useGetExtraCosts } from "@/hooks/useGetExtraCosts";
+import { useGetCIFCosts } from "@/hooks/useGetCIFCosts";
 import { useGetSizeConsumption } from "@/hooks/useGetSizeConsumption";
 import { useGetSupplyCosts } from "@/hooks/useGetSupplyCosts";
 import { useGetCostCatalogs } from "@/hooks/useGetCostCatalogs";
 import { useGetCostSummary } from "@/hooks/useGetCostSummary";
-import { useGetMaterials } from "@/hooks/useGetMaterials";
 import { useFabricCosts } from "@/hooks/useFabricCost";
 import { useSupplyCosts } from "@/hooks/useSupplyCosts";
 import { useLaborCosts } from "@/hooks/useLaborCosts";
 import { useExtraCosts } from "@/hooks/useExtraCosts";
+import { useCIFCosts } from "@/hooks/useCIFCosts";
 import { useSizeConsumption } from "@/hooks/useSizeConsumption";
 import { useCreateProveedor } from "@/hooks/useCreateProveedor";
 import { useCreateInsumoTipo } from "@/hooks/useCreateInsumoTipo";
@@ -42,16 +43,32 @@ import { useCreateVariant } from "@/hooks/useCreateVariant";
 
 import { FabricCostsTable } from "@/components/variant-cost/FabricCostsTable";
 import { SuppliesTable } from "@/components/variant-cost/SuppliesTable";
+import {
+    SupplyFormDialog,
+    type InventorySupplyRef,
+    type SupplyFormSubmitData,
+} from "@/components/variant-cost/SupplyFormDialog";
 import { LaborCostsTable } from "@/components/variant-cost/LaborCostsTable";
 import { ExtraCostsTable } from "@/components/variant-cost/ExtraCostsTable";
+import { CIFCard } from "@/components/variant-cost/CIFCard";
 import { SizeConsumptionTable } from "@/components/variant-cost/SizeConsumptionTable";
 import { VariantSizeCostBreakdownTable } from "@/components/variant-cost/VariantSizeCostBreakdownTable";
 import { ModalForm, FieldDefinition } from "@/components/ui/ModalForm";
 import { getNewInsumoTipoFields } from "@/lib/insumo-tipo-form";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { formatCurrency, formatDecimal, formatForInput } from "@/lib/format-number";
+import { sumApplicableCostLines } from "@/lib/cost-summary";
 import type { UpdateLaborPayload, UpdateSupplyPayload, UpdateExtraCostPayload } from "@/types/variant";
 import { cn } from "@/lib/utils";
+import {
+    getAllTNSInventario,
+    parseTNSDescription,
+    parseTNSNumber,
+    clasificarArticuloTNS,
+    getTNSItemUnit,
+    cleanTNSProveedorName,
+} from "@/services/tnsService";
+import type { TNSInventarioItem } from "@/types/tns";
 
 /** IVA Colombia (19%). */
 const IVA_RATE = 0.19;
@@ -137,6 +154,7 @@ export default function VariantCostPage() {
     const { addSupply, updateSupply, deleteSupply } = useSupplyCosts();
     const { addLabor, updateLabor, deleteLabor } = useLaborCosts();
     const { addExtra, updateExtra, deleteExtra } = useExtraCosts();
+    const { addCIF, updateCIF, deleteCIF } = useCIFCosts();
     const { updateSizeConsumption, loading: isSalePriceSaving } = useSizeConsumption();
 
     const activeVariantId = variantId ?? "";
@@ -145,28 +163,222 @@ export default function VariantCostPage() {
     const { data: fabrics } = useGetFabricCosts(activeVariantId);
     const { data: labor } = useGetLaborCosts(activeVariantId);
     const { data: extras } = useGetExtraCosts(activeVariantId);
+    const { data: cifData } = useGetCIFCosts(activeVariantId);
     const { data: sizeCons } = useGetSizeConsumption(activeVariantId);
     const { data: supplies } = useGetSupplyCosts(activeVariantId);
-    const { materials: inventoryTelas } = useGetMaterials({ category: "Telas" });
+    const [tnsItems, setTnsItems] = useState<TNSInventarioItem[]>([]);
+    const [tnsLoading, setTnsLoading] = useState<boolean>(false);
+
+    useEffect(() => {
+        let isMounted = true;
+        setTnsLoading(true);
+        getAllTNSInventario()
+            .then((res) => {
+                if (isMounted) setTnsItems(res.data || []);
+            })
+            .catch((err) => console.error("Error al cargar materiales TNS en costeo:", err))
+            .finally(() => {
+                if (isMounted) setTnsLoading(false);
+            });
+        return () => {
+            isMounted = false;
+        };
+    }, []);
+
+    const NON_FABRIC_KEYWORDS = useMemo(
+        () => [
+            "AGUAS",
+            "ELECTRICA",
+            "ENERGIA",
+            "TELECOMUNICACIONES",
+            "CLARO",
+            "MOVISTAR",
+            "TIGO",
+            "CAMARA DE COMERCIO",
+            "DIAN",
+            "ALCALDIA",
+            "BANCO",
+            "CLINICA",
+            "URGENCIAS",
+            "MEGA PARTES",
+            "SATELITE",
+            "CORTADOR",
+            "CORTADORA",
+            "COSTURITAS",
+            "MENSAJERIA",
+            "SERVIENTREGA",
+            "INTERRAPIDISIMO",
+            "GAS",
+            "ASEO",
+        ],
+        []
+    );
+
+    // Proveedores 100% extraídos de las telas registradas en TNS
+    const allProveedores = useMemo(() => {
+        const provMap = new Map<string, Proveedor>();
+
+        const isNonFabricSupplier = (name: string) => {
+            const upper = name.toUpperCase();
+            return NON_FABRIC_KEYWORDS.some((kw) => upper.includes(kw));
+        };
+
+        // Extraer proveedores ÚNICAMENTE de artículos clasificados como Telas en TNS
+        const tnsTelas = tnsItems.filter((item) => {
+            const c = clasificarArticuloTNS(item);
+            return c.categoria === "Telas";
+        });
+
+        tnsTelas.forEach((item) => {
+            const addValidName = (rawName?: string | null, code?: string) => {
+                if (!rawName) return;
+                const cleaned = cleanTNSProveedorName(rawName);
+                if (!cleaned || cleaned.length < 2 || isNonFabricSupplier(cleaned)) return;
+                const key = cleaned.toLowerCase();
+                if (!provMap.has(key)) {
+                    // Si ya existe en la base de datos de proveedores local de Django, reusar su UUID
+                    const localMatch = (proveedores || []).find(
+                        (p) => p.name.trim().toLowerCase() === key || p.id === code
+                    );
+                    provMap.set(key, { id: localMatch ? localMatch.id : code || cleaned, name: cleaned });
+                }
+            };
+
+            addValidName(item.proveedor_principal);
+            addValidName(item.ter_Emp_Nom);
+            if (Array.isArray(item.proveedores)) {
+                item.proveedores.forEach((p) => {
+                    addValidName(p.ter_Emp_Nom, p.ter_Emp_Cod);
+                });
+            }
+        });
+
+        return Array.from(provMap.values()).sort((a, b) => a.name.localeCompare(b.name, "es-CO"));
+    }, [tnsItems, proveedores, NON_FABRIC_KEYWORDS]);
+
+    // Telas 100% extraídas del inventario TNS
     const inventoryFabricRefs = useMemo(() => {
-        // Precio = costo unitario del material (como se configuró al crearlo).
-        // El proveedor en costeo es solo trazabilidad; no cambia el $/metro.
-        return inventoryTelas.map((m) => ({
-            reference: m.name,
-            unit_cost: Number(m.unit_cost) || 0,
-            color: (m.color || "").trim(),
-        }));
-    }, [inventoryTelas]);
+        const tnsTelas = tnsItems.filter((item) => {
+            const c = clasificarArticuloTNS(item);
+            return c.categoria === "Telas";
+        });
+
+        return tnsTelas.map((m) => {
+            const parsed = parseTNSDescription(m.prod_Dist_Desc);
+            const unitCost = parseTNSNumber(
+                m.ultimo_costo_compra || m.inventario_CostoUnitario || m.costo_unitario
+            );
+            const rawProvList = [
+                m.proveedor_principal,
+                m.ter_Emp_Nom,
+                ...(m.proveedores?.map((p) => p.ter_Emp_Nom) || []),
+            ]
+                .filter(Boolean)
+                .map((s) => cleanTNSProveedorName(s))
+                .filter((s) => s.length > 0);
+
+            const mainProv = cleanTNSProveedorName(m.proveedor_principal || m.ter_Emp_Nom);
+
+            return {
+                code: m.prod_Dist_Cod,
+                reference: parsed.name || m.prod_Dist_Desc,
+                full_desc: m.prod_Dist_Desc,
+                unit_cost: unitCost,
+                color: parsed.color || "",
+                proveedor: mainProv || "",
+                proveedoresList: [...new Set(rawProvList)],
+                stock: parseTNSNumber(m.inventario_Cantidad),
+            };
+        });
+    }, [tnsItems]);
+
+    // Insumos extraídos de TNS (únicamente los que tienen precio registrado, deduplicados por código/referencia)
+    const inventorySupplyRefs: InventorySupplyRef[] = useMemo(() => {
+        const map = new Map<string, InventorySupplyRef>();
+
+        tnsItems
+            .filter((item) => {
+                const c = clasificarArticuloTNS(item);
+                return c.categoria === "Accesorios" || c.categoria === "Insumos";
+            })
+            .forEach((m) => {
+                const parsed = parseTNSDescription(m.prod_Dist_Desc);
+                const clasificacion = clasificarArticuloTNS(m);
+                
+                let unitCost = parseTNSNumber(
+                    m.ultimo_costo_compra ||
+                    (m as any).inventario_CostoUnitario ||
+                    (m as any).costo_unitario ||
+                    (m as any).valunit ||
+                    (m as any).costo_promedio ||
+                    (m as any).costo ||
+                    (m as any).precio
+                );
+
+                if (unitCost <= 0) {
+                    const cantStock = parseTNSNumber(m.cant_Stock);
+                    const costoStock = parseTNSNumber(m.costo_Stock);
+                    if (cantStock > 0 && costoStock > 0) {
+                        unitCost = costoStock / cantStock;
+                    }
+                }
+
+                if (unitCost <= 0) {
+                    const cantDisp = parseTNSNumber(m.cant_Disponible);
+                    const costoDisp = parseTNSNumber(m.costo_Disponible);
+                    if (cantDisp > 0 && costoDisp > 0) {
+                        unitCost = costoDisp / cantDisp;
+                    }
+                }
+
+                if (unitCost <= 0 && m.proveedores && m.proveedores.length > 0) {
+                    for (const p of m.proveedores) {
+                        const pCost = parseTNSNumber(
+                            (p as any).ultimo_costo_unitario ||
+                            (p as any).costo_unitario ||
+                            (p as any).valunit ||
+                            (p as any).precio
+                        );
+                        if (pCost > 0) {
+                            unitCost = pCost;
+                            break;
+                        }
+                    }
+                }
+
+                const key = (m.prod_Dist_Cod || "").trim().toUpperCase() || (parsed.name || m.prod_Dist_Desc).trim().toUpperCase();
+                if (key) {
+                    const existing = map.get(key);
+                    const stock = parseTNSNumber(m.cant_Stock);
+                    if (!existing || (stock > (existing.stock || 0)) || (!existing.unit_cost && unitCost > 0)) {
+                        map.set(key, {
+                            code: m.prod_Dist_Cod,
+                            reference: parsed.name || m.prod_Dist_Desc,
+                            full_desc: m.prod_Dist_Desc,
+                            categoria: "Insumos",
+                            unit_cost: unitCost > 0 ? unitCost : (existing?.unit_cost || 0),
+                            unidad: getTNSItemUnit(m),
+                            color: parsed.color || "",
+                            stock: Math.max(stock, existing?.stock || 0),
+                        });
+                    }
+                }
+            });
+
+        return Array.from(map.values());
+    }, [tnsItems]);
 
     const { data: summary, isLoading: isSummaryLoading } = useGetCostSummary(activeVariantId);
     const [selectedCostSizeId, setSelectedCostSizeId] = useState<string>("");
     const [salePriceInput, setSalePriceInput] = useState("");
+    const [isEditingSalePrice, setIsEditingSalePrice] = useState(false);
     /** true cuando el usuario editó el precio a mano (no sobrescribir con sugerencia). */
     const salePriceManualRef = useRef(false);
 
     useEffect(() => {
         setSelectedCostSizeId("");
         salePriceManualRef.current = false;
+        setIsEditingSalePrice(false);
     }, [activeVariantId]);
 
     // Solo auto-elegir al inicio (sin talla). No pelear si el usuario eligió una sin consumo.
@@ -200,6 +412,30 @@ export default function VariantCostPage() {
     const laborTotal = Number(selectedSizeCost?.labor_total ?? summary?.labor_total ?? 0);
     const extrasTotal = Number(selectedSizeCost?.extras_total ?? summary?.extras_total ?? 0);
     const overallTotal = Number(selectedSizeCost?.overall_total ?? summary?.overall_total ?? 0);
+
+    const cifList = useMemo(() => {
+        if (cifData && cifData.length > 0) return cifData;
+        return (extras || []).filter(
+            (e) => e.concepto.toUpperCase().includes("CIF") || e.concepto.toUpperCase().includes("INDIRECTO")
+        );
+    }, [cifData, extras]);
+
+    const nonCifExtras = useMemo(() => {
+        return (extras || []).filter(
+            (e) => !e.concepto.toUpperCase().includes("CIF") && !e.concepto.toUpperCase().includes("INDIRECTO")
+        );
+    }, [extras]);
+
+    const consumptionTallaIds = useMemo(() => new Set(sizes.map((s) => s.id)), [sizes]);
+
+    const cifTotal = useMemo(() => {
+        return sumApplicableCostLines(cifList, selectedCostSizeId, consumptionTallaIds);
+    }, [cifList, selectedCostSizeId, consumptionTallaIds]);
+
+    const pureExtrasTotal = useMemo(() => {
+        return sumApplicableCostLines(nonCifExtras, selectedCostSizeId, consumptionTallaIds);
+    }, [nonCifExtras, selectedCostSizeId, consumptionTallaIds]);
+
     const sizeConsumption = Number(selectedSizeCost?.consumption ?? summary?.average_consumption ?? 0);
     const fabricPricePerMeter = Number(summary?.fabric_price_per_meter ?? 0);
     const showFabricBreakdown = sizeConsumption > 0 && fabricPricePerMeter > 0;
@@ -237,6 +473,8 @@ export default function VariantCostPage() {
     }, [overallTotal, parsedSalePrice, suggestedPricing]);
 
     useEffect(() => {
+        if (isEditingSalePrice) return;
+
         const fromSelected = selectedSizeCost?.precio_venta;
         const savedRaw =
             fromSelected != null && fromSelected !== ""
@@ -254,11 +492,8 @@ export default function VariantCostPage() {
 
         if (saved != null && Number.isFinite(saved) && saved > 0) {
             setSalePriceInput(formatForInput(saved));
-            salePriceManualRef.current = true;
             return;
         }
-
-        if (salePriceManualRef.current) return;
 
         if (suggestedPricing?.precioConIva) {
             setSalePriceInput(formatForInput(suggestedPricing.precioConIva));
@@ -271,6 +506,7 @@ export default function VariantCostPage() {
         selectedSizeCost?.precio_venta,
         summary?.sizes,
         suggestedPricing?.precioConIva,
+        isEditingSalePrice,
     ]);
 
     const handleSaveSalePrice = async () => {
@@ -401,6 +637,146 @@ export default function VariantCostPage() {
         }
     };
 
+    const ensureValidProveedorId = async (provIdentifier?: string): Promise<string | undefined> => {
+        if (!provIdentifier) return undefined;
+        const trimmed = provIdentifier.trim();
+        if (!trimmed) return undefined;
+
+        // 1. Si ya es un ID existente en el catálogo local de Postgres
+        const byId = proveedores.find((p) => p.id === trimmed);
+        if (byId) return byId.id;
+
+        // 2. Si coincide por nombre con el catálogo local
+        const byName = proveedores.find(
+            (p) => p.name.trim().toLowerCase() === trimmed.toLowerCase()
+        );
+        if (byName) return byName.id;
+
+        // 3. Crear automáticamente el proveedor en la base de datos para obtener su UUID válido
+        try {
+            const res = await createProveedor(trimmed);
+            if (res.success && res.data?.id) {
+                return res.data.id;
+            }
+        } catch (err) {
+            console.warn("No se pudo auto-crear el proveedor:", err);
+        }
+
+        // 4. Si el catálogo tiene algún proveedor, usarlo como fallback seguro
+        return proveedores[0]?.id || undefined;
+    };
+
+    const [isSupplyDialogOpen, setIsSupplyDialogOpen] = useState<boolean>(false);
+    const [editingSupplyData, setEditingSupplyData] = useState<any | null>(null);
+
+    const ensureValidSupplyTypeId = async (
+        tipoIdentifier?: string,
+        refName?: string,
+        refCategory?: string,
+        refUnitCost?: number,
+        refCode?: string
+    ): Promise<string | undefined> => {
+        const target = (refName || tipoIdentifier || "").trim();
+        if (!target) return undefined;
+
+        // 1. Si coincide con algún supplyType existente por ID o por Nombre
+        const byId = supplyTypes.find((t) => t.id === target || t.id === tipoIdentifier);
+        if (byId) return byId.id;
+
+        const byName = supplyTypes.find(
+            (t) =>
+                t.name.trim().toLowerCase() === target.toLowerCase() ||
+                (t.label && t.label.trim().toLowerCase() === target.toLowerCase())
+        );
+        if (byName) return byName.id;
+
+        // 2. Si no existe en la base de datos local de Django, crear automáticamente el InsumoTipo
+        try {
+            const res = await createInsumoTipo({
+                name: target,
+                categoria: refCategory || "Insumos",
+                unidad_medida: "UND",
+                codigo_sku: refCode || "",
+                precio_unitario_default: refUnitCost != null && refUnitCost > 0 ? refUnitCost : null,
+            });
+            if (res.success && res.data?.id) {
+                await refetchSupplyTypes();
+                return res.data.id;
+            }
+        } catch (err) {
+            console.warn("No se pudo auto-crear el tipo de insumo:", err);
+        }
+
+        return supplyTypes[0]?.id || undefined;
+    };
+
+    const handleSaveSupplyModal = async (data: SupplyFormSubmitData): Promise<boolean> => {
+        if (!activeVariantId) return false;
+
+        const resolvedTipoId = await ensureValidSupplyTypeId(
+            undefined,
+            data.reference,
+            data.tipo_categoria,
+            Number(data.unit_price) || 0,
+            data.code
+        );
+
+        if (!resolvedTipoId) {
+            toast.error("No se pudo resolver el tipo de insumo.");
+            return false;
+        }
+
+        if (editingSupplyData?.id) {
+            const payload: Record<string, string | null> = {
+                tipo_id: resolvedTipoId,
+                talla_id: resolveTallaId(data.talla_id),
+                quantity: data.quantity,
+                unit_price: data.unit_price,
+            };
+            const ok = await updateSupply(editingSupplyData.id, payload, activeVariantId);
+            if (ok) {
+                toast.success("Insumo actualizado");
+                setIsSupplyDialogOpen(false);
+                setEditingSupplyData(null);
+                return true;
+            } else {
+                toast.error("No se pudo actualizar el insumo");
+                return false;
+            }
+        } else {
+            const ok = await addSupply({
+                variant_id: activeVariantId,
+                tipo_id: resolvedTipoId,
+                talla_id: resolveTallaId(data.talla_id),
+                quantity: data.quantity,
+                unit_price: data.unit_price,
+            });
+            if (ok) {
+                toast.success("Insumo agregado correctamente");
+                setIsSupplyDialogOpen(false);
+                setEditingSupplyData(null);
+                return true;
+            } else {
+                toast.error("No se pudo agregar el insumo");
+                return false;
+            }
+        }
+    };
+
+    const handleAddFabric = async (payload: any) => {
+        const finalProveedorId = await ensureValidProveedorId(payload.proveedor_id);
+        const ok = await addFabric({
+            ...payload,
+            proveedor_id: finalProveedorId,
+        });
+        if (ok) {
+            toast.success("Tela agregada correctamente");
+        } else {
+            toast.error("Error al agregar el costo de tela");
+        }
+        return ok;
+    };
+
     const handleOpenModal = (
         type: ModalType,
         title: string,
@@ -468,7 +844,10 @@ export default function VariantCostPage() {
                 const meters = normalizeDecimalInput(data.meters);
                 const pricePerMeter = normalizeDecimalInput(data.price_per_meter);
 
-                if (data.proveedor_id !== initial.proveedor_id) payload.proveedor_id = data.proveedor_id;
+                if (data.proveedor_id !== initial.proveedor_id) {
+                    const resolvedProvId = await ensureValidProveedorId(data.proveedor_id);
+                    if (resolvedProvId) payload.proveedor_id = resolvedProvId;
+                }
                 if (data.reference !== initial.reference) payload.reference = data.reference;
                 if (meters !== normalizeDecimalInput(String(initial.meters))) payload.meters = meters;
                 if (pricePerMeter !== normalizeDecimalInput(String(initial.price_per_meter))) {
@@ -595,6 +974,52 @@ export default function VariantCostPage() {
         }
     };
 
+    const handleSaveCIF = async ({
+        id,
+        unit_price,
+        talla_id,
+    }: {
+        id?: string;
+        unit_price: string;
+        talla_id: string | null;
+    }) => {
+        if (!hasActiveVariant) return false;
+        if (id) {
+            const ok = await updateCIF(
+                id,
+                {
+                    concepto: "Costos Indirectos de Fabricación (CIF)",
+                    unit_price,
+                    cantidad: "1",
+                    talla_id: resolveTallaId(talla_id),
+                },
+                activeVariantId
+            );
+            if (ok) toast.success("CIF actualizado correctamente");
+            else toast.error("No se pudo actualizar el CIF");
+            return ok;
+        } else {
+            const ok = await addCIF({
+                variant_id: activeVariantId,
+                concepto: "Costos Indirectos de Fabricación (CIF)",
+                unit_price,
+                cantidad: "1",
+                talla_id: resolveTallaId(talla_id),
+            });
+            if (ok) toast.success("CIF asignado correctamente");
+            else toast.error("No se pudo asignar el CIF");
+            return ok;
+        }
+    };
+
+    const handleDeleteCIF = async (id: string) => {
+        if (!hasActiveVariant) return false;
+        const ok = await deleteCIF(id, activeVariantId);
+        if (ok) toast.success("CIF eliminado");
+        else toast.error("No se pudo eliminar el CIF");
+        return ok;
+    };
+
     const supplyTypeOptions = supplyTypes.map((t) => ({
         value: t.id,
         label: t.label || t.name,
@@ -640,7 +1065,7 @@ export default function VariantCostPage() {
         options: sizeScopeOptions,
     };
 
-    const proveedorOptions = proveedores.map((p) => ({
+    const proveedorOptions = allProveedores.map((p) => ({
         value: p.id,
         label: p.name,
     }));
@@ -825,14 +1250,18 @@ export default function VariantCostPage() {
                                                     id="costo-venta"
                                                     type="text"
                                                     inputMode="decimal"
-                                                    placeholder="Se calcula solo"
+                                                    placeholder={suggestedPricing ? formatForInput(suggestedPricing.precioConIva) : "Se calcula solo"}
                                                     value={salePriceInput}
+                                                    onFocus={() => setIsEditingSalePrice(true)}
                                                     onChange={(e) => {
                                                         const raw = e.target.value.replace(/[^\d.,]/g, "");
                                                         salePriceManualRef.current = Boolean(raw.trim());
                                                         setSalePriceInput(raw);
                                                     }}
-                                                    onBlur={handleSaveSalePrice}
+                                                    onBlur={() => {
+                                                        setIsEditingSalePrice(false);
+                                                        handleSaveSalePrice();
+                                                    }}
                                                     onKeyDown={(e) => {
                                                         if (e.key === "Enter") {
                                                             e.currentTarget.blur();
@@ -842,7 +1271,7 @@ export default function VariantCostPage() {
                                                         isSalePriceSaving ||
                                                         !(sizeCons && sizeCons.length > 0)
                                                     }
-                                                    className="pl-7 tabular-nums"
+                                                    className="pl-7 tabular-nums font-semibold text-base"
                                                 />
                                             </div>
                                             <p className="text-[11px] text-muted-foreground">
@@ -924,7 +1353,11 @@ export default function VariantCostPage() {
                                                 </div>
                                                 <div className="flex justify-between">
                                                     <span>Costos extra</span>
-                                                    <span>${formatCurrency(extrasTotal)}</span>
+                                                    <span>${formatCurrency(pureExtrasTotal)}</span>
+                                                </div>
+                                                <div className="flex justify-between font-medium text-foreground">
+                                                    <span>CIF (Costos Indirectos)</span>
+                                                    <span className="font-mono">${formatCurrency(cifTotal)}</span>
                                                 </div>
                                                 {selectedSizeCost &&
                                                     (supplies?.length || labor?.length) &&
@@ -1013,10 +1446,10 @@ export default function VariantCostPage() {
                         <FabricCostsTable
                             data={fabrics || []}
                             variantId={activeVariantId}
-                            proveedores={proveedores}
+                            proveedores={allProveedores}
                             inventoryFabricRefs={inventoryFabricRefs}
                             isSettingPrincipal={isFabricLoading}
-                            onAdd={addFabric}
+                            onAdd={handleAddFabric}
                             onSetPrincipal={async (id) => {
                                 const ok = await setFabricPrincipal(id, activeVariantId);
                                 if (ok) toast.success("Tela marcada como principal para el costeo");
@@ -1040,63 +1473,14 @@ export default function VariantCostPage() {
 
                         <SuppliesTable
                             data={supplies || []}
-                            onCreateTipo={() =>
-                                handleOpenModal(
-                                    "new_insumo_tipo",
-                                    "Crear tipo de insumo",
-                                    newInsumoTipoFields
-                                )
-                            }
-                            onAdd={() =>
-                                handleOpenModal(
-                                    "supply",
-                                    "Nuevo insumo",
-                                    [
-                                        {
-                                            name: "tipo_id",
-                                            label: "Tipo de insumo",
-                                            type: "select",
-                                            options: supplyTypeOptions,
-                                        },
-                                        supplyTallaField,
-                                        { name: "quantity", label: "Cantidad", type: "number", placeholder: "8" },
-                                        {
-                                            name: "unit_price",
-                                            label: "Precio unitario",
-                                            type: "number",
-                                            placeholder: "Ej. 3500 o 12,50",
-                                        },
-                                    ],
-                                    {
-                                        // Por defecto: talla del resumen activo, o compartido.
-                                        talla_id: selectedCostSizeId || "",
-                                    }
-                                )
-                            }
-                            onEdit={(item) =>
-                                handleOpenModal(
-                                    "edit_supply",
-                                    "Editar insumo",
-                                    [
-                                        {
-                                            name: "tipo_id",
-                                            label: "Tipo de insumo",
-                                            type: "select",
-                                            options: supplyTypeOptions,
-                                        },
-                                        supplyTallaField,
-                                        { name: "quantity", label: "Cantidad", type: "number" },
-                                        { name: "unit_price", label: "Precio unitario", type: "number" },
-                                    ],
-                                    {
-                                        ...item,
-                                        tipo_id: item.tipo_id || item.tipo,
-                                        talla_id: item.talla_id || "",
-                                        quantity: formatForInput(item.quantity),
-                                        unit_price: formatForInput(item.unit_price),
-                                    }
-                                )
-                            }
+                            onAdd={() => {
+                                setEditingSupplyData(null);
+                                setIsSupplyDialogOpen(true);
+                            }}
+                            onEdit={(item) => {
+                                setEditingSupplyData(item);
+                                setIsSupplyDialogOpen(true);
+                            }}
                             onDelete={(id) => deleteSupply(id, activeVariantId)}
                         />
 
@@ -1133,7 +1517,8 @@ export default function VariantCostPage() {
                                         },
                                     ],
                                     {
-                                        talla_id: selectedCostSizeId || "",
+                                        talla_id: "",
+                                        cantidad: "1",
                                     }
                                 )
                             }
@@ -1165,7 +1550,7 @@ export default function VariantCostPage() {
                         />
 
                         <ExtraCostsTable
-                            data={extras || []}
+                            data={nonCifExtras}
                             onAdd={() =>
                                 handleOpenModal(
                                     "extra",
@@ -1175,7 +1560,7 @@ export default function VariantCostPage() {
                                             name: "concepto",
                                             label: "Concepto",
                                             type: "text",
-                                            placeholder: "Empaque, flete, acabado…",
+                                            placeholder: "Flete, acabado, diseño…",
                                         },
                                         extraTallaField,
                                         { name: "cantidad", label: "Cantidad", type: "number", placeholder: "1" },
@@ -1187,7 +1572,7 @@ export default function VariantCostPage() {
                                         },
                                     ],
                                     {
-                                        talla_id: selectedCostSizeId || "",
+                                        talla_id: "",
                                         cantidad: "1",
                                     }
                                 )
@@ -1216,8 +1601,29 @@ export default function VariantCostPage() {
                             }
                             onDelete={(id) => deleteExtra(id, activeVariantId)}
                         />
+
+                        <CIFCard
+                            data={cifList}
+                            sizes={sizes}
+                            onSave={handleSaveCIF}
+                            onDelete={handleDeleteCIF}
+                        />
                     </>
                 )}
+
+                <SupplyFormDialog
+                    isOpen={isSupplyDialogOpen}
+                    onClose={() => {
+                        setIsSupplyDialogOpen(false);
+                        setEditingSupplyData(null);
+                    }}
+                    onSubmit={handleSaveSupplyModal}
+                    initialData={editingSupplyData}
+                    inventorySupplyRefs={inventorySupplyRefs}
+                    sizes={sizes}
+                    defaultTallaId=""
+                    isEditing={Boolean(editingSupplyData)}
+                />
 
                 <ModalForm
                     key={`${modalConfig.type}-${modalConfig.initialData?.id ?? "new"}-${modalConfig.isOpen}`}

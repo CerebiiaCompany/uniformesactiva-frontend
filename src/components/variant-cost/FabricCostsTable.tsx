@@ -14,6 +14,11 @@ type InventoryFabricRef = {
     reference: string;
     unit_cost: number;
     color?: string;
+    code?: string;
+    full_desc?: string;
+    proveedor?: string;
+    proveedoresList?: string[];
+    stock?: number;
 };
 
 interface FabricTableProps {
@@ -69,19 +74,88 @@ export function FabricCostsTable({
     const [errors, setErrors] = useState<FabricFormErrors>({});
     const [isSaving, setIsSaving] = useState(false);
 
-    const uniqueRefs = useMemo(
-        () => [...new Set(inventoryFabricRefs.map((r) => r.reference).filter(Boolean))],
-        [inventoryFabricRefs]
-    );
-
     useEffect(() => {
         setRows(data);
     }, [data]);
 
-    const findMaterialByReference = (reference: string): InventoryFabricRef | undefined => {
+    // Proveedor seleccionado en la fila de creación
+    const selectedProveedor = useMemo(() => {
+        if (!newRow.proveedor_id) return null;
+        return (
+            proveedores.find(
+                (p) => p.id === newRow.proveedor_id || p.name.toLowerCase() === newRow.proveedor_id.toLowerCase()
+            ) || null
+        );
+    }, [newRow.proveedor_id, proveedores]);
+
+    // Lista de telas filtradas según el proveedor seleccionado
+    const filteredInventoryRefs = useMemo(() => {
+        if (!selectedProveedor) return inventoryFabricRefs;
+        const targetName = selectedProveedor.name.trim().toLowerCase();
+
+        return inventoryFabricRefs.filter((r) => {
+            if (r.proveedoresList && r.proveedoresList.length > 0) {
+                return r.proveedoresList.some((p) => {
+                    const pLower = p.toLowerCase();
+                    return pLower === targetName || pLower.includes(targetName) || targetName.includes(pLower);
+                });
+            }
+            if (r.proveedor) {
+                const pLower = r.proveedor.toLowerCase();
+                return pLower === targetName || pLower.includes(targetName) || targetName.includes(pLower);
+            }
+            return false;
+        });
+    }, [inventoryFabricRefs, selectedProveedor]);
+
+    const uniqueRefs = useMemo(
+        () => [...new Set(filteredInventoryRefs.map((r) => r.reference).filter(Boolean))],
+        [filteredInventoryRefs]
+    );
+
+    const findMaterialByReference = (
+        reference: string,
+        proveedorId?: string
+    ): InventoryFabricRef | undefined => {
         const ref = reference.trim().toLowerCase();
         if (!ref) return undefined;
-        return inventoryFabricRefs.find((r) => r.reference.trim().toLowerCase() === ref);
+
+        const prov = proveedorId
+            ? proveedores.find((p) => p.id === proveedorId || p.name.toLowerCase() === proveedorId.toLowerCase())
+            : selectedProveedor;
+
+        const pool = prov
+            ? inventoryFabricRefs.filter((r) => {
+                  const target = prov.name.trim().toLowerCase();
+                  if (r.proveedoresList && r.proveedoresList.length > 0) {
+                      return r.proveedoresList.some((p) => {
+                          const pLower = p.toLowerCase();
+                          return pLower === target || pLower.includes(target) || target.includes(pLower);
+                      });
+                  }
+                  if (r.proveedor) {
+                      const pLower = r.proveedor.toLowerCase();
+                      return pLower === target || pLower.includes(target) || target.includes(pLower);
+                  }
+                  return false;
+              })
+            : inventoryFabricRefs;
+
+        const matchInPool = pool.find(
+            (r) =>
+                r.reference.trim().toLowerCase() === ref ||
+                (r.code && r.code.trim().toLowerCase() === ref) ||
+                (r.full_desc && r.full_desc.trim().toLowerCase() === ref)
+        );
+
+        if (matchInPool) return matchInPool;
+
+        return inventoryFabricRefs.find(
+            (r) =>
+                r.reference.trim().toLowerCase() === ref ||
+                (r.code && r.code.trim().toLowerCase() === ref) ||
+                (r.full_desc && r.full_desc.trim().toLowerCase() === ref)
+        );
     };
 
     const applyInventoryDefaults = (
@@ -89,7 +163,7 @@ export function FabricCostsTable({
         proveedorId: string,
         current: typeof emptyRow
     ) => {
-        const match = findMaterialByReference(reference);
+        const match = findMaterialByReference(reference, proveedorId);
         if (!match) {
             return {
                 ...current,
@@ -101,19 +175,28 @@ export function FabricCostsTable({
             };
         }
 
+        // Si el material tiene proveedor en TNS y no se ha seleccionado proveedor, buscar si coincide por nombre
+        let matchedProvId = proveedorId;
+        if (!matchedProvId && match.proveedor && proveedores.length > 0) {
+            const foundP = proveedores.find(
+                (p) => p.name.toLowerCase() === match.proveedor?.toLowerCase()
+            );
+            if (foundP) matchedProvId = foundP.id;
+        }
+
         return {
             ...current,
-            reference,
-            proveedor_id: proveedorId,
+            reference: match.reference,
+            proveedor_id: matchedProvId,
             color: (match.color || "").trim(),
-            meters: "1",
-            // Siempre el costo unitario configurado al crear el material
+            meters: current.meters || "1",
+            // Costo unitario configurado directamente desde TNS
             price_per_meter: formatForInput(match.unit_cost),
         };
     };
 
     const resolveRowColor = (item: FabricRecord) => {
-        const match = findMaterialByReference(item.reference);
+        const match = findMaterialByReference(item.reference, item.proveedor_id);
         return (match?.color || "").trim() || "—";
     };
 
@@ -130,15 +213,12 @@ export function FabricCostsTable({
     const validateNewRow = (): boolean => {
         const nextErrors: FabricFormErrors = {};
 
-        if (!newRow.proveedor_id.trim()) {
-            nextErrors.proveedor_id = "Debe seleccionar un proveedor";
-        }
         if (!newRow.reference.trim()) nextErrors.reference = "Requerido";
         if (!newRow.meters.trim()) nextErrors.meters = "Requerido";
         if (!newRow.price_per_meter.trim()) nextErrors.price_per_meter = "Requerido";
 
         if (Object.keys(nextErrors).length) {
-            nextErrors.general = "Debe llenar todos los campos";
+            nextErrors.general = "Debe llenar los campos de referencia, metro y precio";
         } else {
             const meters = parseDecimalInput(newRow.meters);
             const price = parseDecimalInput(newRow.price_per_meter);
@@ -150,9 +230,11 @@ export function FabricCostsTable({
                 nextErrors.price_per_meter = "Debe ser mayor a 0";
                 nextErrors.general = "Debe llenar todos los campos";
             }
-            if (!findMaterialByReference(newRow.reference)) {
-                nextErrors.reference = "Debe coincidir con una tela del inventario";
-                nextErrors.general = "La referencia no existe en inventario";
+            // Comprobamos que la referencia exista en el inventario TNS
+            const match = findMaterialByReference(newRow.reference, newRow.proveedor_id);
+            if (!match) {
+                nextErrors.reference = "La referencia no existe en el catálogo de telas TNS";
+                nextErrors.general = "Debe coincidir con una tela del inventario";
             }
         }
 
@@ -165,8 +247,22 @@ export function FabricCostsTable({
 
         setIsSaving(true);
         try {
+            const match = findMaterialByReference(newRow.reference, newRow.proveedor_id);
+            let finalProveedorId = newRow.proveedor_id;
+
+            // Si no se eligió proveedor a mano, autocompletarlo desde el material o usar fallback
+            if (!finalProveedorId && match?.proveedor && proveedores.length > 0) {
+                const foundP = proveedores.find(
+                    (p) => p.name.toLowerCase() === match.proveedor?.toLowerCase()
+                );
+                if (foundP) finalProveedorId = foundP.id;
+            }
+            if (!finalProveedorId && proveedores.length > 0) {
+                finalProveedorId = proveedores[0].id;
+            }
+
             const success = await onAdd({
-                proveedor_id: newRow.proveedor_id,
+                proveedor_id: finalProveedorId,
                 reference: newRow.reference,
                 variant_id: variantId,
                 meters: normalizeDecimalInput(newRow.meters),
@@ -318,7 +414,7 @@ export function FabricCostsTable({
                             <div className="space-y-1">
                                 <select
                                     className={cn(
-                                        "h-9 w-full rounded-md border bg-background px-2 text-xs",
+                                        "h-9 w-full rounded-md border bg-background px-2 text-xs font-medium",
                                         errors.proveedor_id
                                             ? "border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
                                             : "border-input"
@@ -326,17 +422,29 @@ export function FabricCostsTable({
                                     value={newRow.proveedor_id}
                                     onChange={(e) => {
                                         const proveedorId = e.target.value;
-                                        setNewRow((prev) =>
-                                            applyInventoryDefaults(prev.reference, proveedorId, {
+                                        setNewRow((prev) => {
+                                            // Si la tela actual no pertenece al nuevo proveedor, la limpiamos para que el usuario elija una de ese proveedor
+                                            const matchInNewProv = findMaterialByReference(prev.reference, proveedorId);
+                                            if (!matchInNewProv) {
+                                                return {
+                                                    ...prev,
+                                                    proveedor_id: proveedorId,
+                                                    reference: "",
+                                                    color: "",
+                                                    price_per_meter: "",
+                                                };
+                                            }
+                                            return applyInventoryDefaults(prev.reference, proveedorId, {
                                                 ...prev,
                                                 proveedor_id: proveedorId,
-                                            })
-                                        );
+                                            });
+                                        });
                                         clearFieldError("proveedor_id");
+                                        clearFieldError("reference");
                                         clearFieldError("price_per_meter");
                                     }}
                                 >
-                                    <option value="">Proveedor</option>
+                                    <option value="">Todos los proveedores ({proveedores.length})</option>
                                     {proveedores.map((p) => (
                                         <option key={p.id} value={p.id}>
                                             {p.name}
@@ -365,21 +473,36 @@ export function FabricCostsTable({
                                         clearFieldError("price_per_meter");
                                         clearFieldError("meters");
                                     }}
-                                    placeholder="Referencia exacta"
+                                    placeholder={
+                                        selectedProveedor
+                                            ? `Seleccionar tela de ${selectedProveedor.name}...`
+                                            : "Referencia de tela..."
+                                    }
                                     className={cn(
                                         errors.reference && "border-red-500 focus-visible:ring-red-500"
                                     )}
                                 />
                                 <datalist id="fabric-inventory-refs">
-                                    {uniqueRefs.map((ref) => (
-                                        <option key={ref} value={ref} />
+                                    {filteredInventoryRefs.map((r, i) => (
+                                        <option
+                                            key={`${r.code || r.reference}-${i}`}
+                                            value={r.reference}
+                                        >
+                                            {r.code ? `[${r.code}] ` : ""}{r.reference}{r.color ? ` - ${r.color}` : ""} (${formatCurrency(r.unit_cost)}/m)
+                                        </option>
                                     ))}
                                 </datalist>
                                 {errors.reference ? (
                                     <p className="text-[11px] text-red-600 leading-tight">{errors.reference}</p>
+                                ) : selectedProveedor ? (
+                                    <p className="text-[10px] text-muted-foreground leading-tight">
+                                        {filteredInventoryRefs.length > 0
+                                            ? `${filteredInventoryRefs.length} telas de ${selectedProveedor.name}`
+                                            : `Sin telas registradas para este proveedor en TNS`}
+                                    </p>
                                 ) : (
                                     <p className="text-[10px] text-muted-foreground leading-tight">
-                                        $/metro = costo unitario del material en inventario.
+                                        Elige un proveedor para filtrar sus telas de TNS.
                                     </p>
                                 )}
                             </div>

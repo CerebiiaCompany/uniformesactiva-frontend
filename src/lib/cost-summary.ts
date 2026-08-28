@@ -35,6 +35,7 @@ export function normalizeVariantCostSummary(raw: Record<string, unknown>): Varia
                   "extras",
                   "costo_extra"
               ),
+              cif_total: pickAmount(size, "cif_total", "cif", "costo_cif", "costos_cif"),
               overall_total: pickAmount(size, "overall_total", "total", "costo_total"),
               precio_venta: size.precio_venta ?? null,
               ganancia: size.ganancia ?? null,
@@ -49,6 +50,7 @@ export function normalizeVariantCostSummary(raw: Record<string, unknown>): Varia
         supplies_total: pickAmount(raw, "supplies_total", "insumos"),
         labor_total: pickAmount(raw, "labor_total", "mano_de_obra", "mano_obra"),
         extras_total: pickAmount(raw, "extras_total", "costos_extra", "extras"),
+        cif_total: pickAmount(raw, "cif_total", "cif", "costos_cif"),
         overall_total: pickAmount(raw, "overall_total", "total"),
         fabric_reference: String(raw.fabric_reference ?? "").trim() || undefined,
         fabric_color: String(raw.fabric_color ?? "").trim() || undefined,
@@ -79,3 +81,31 @@ export function sumApplicableCostLines(
         return sum + parseApiNumber(line.total ?? 0);
     }, 0);
 }
+
+/** IVA Colombia (19%). */
+export const IVA_RATE = 0.19;
+/** Margen sobre el costo de la prenda (como en la hoja de costeo). */
+export const DEFAULT_MARGIN_ON_COST = 0.17;
+
+export function roundPesos(value: number): number {
+    return Math.round(Number.isFinite(value) ? value : 0);
+}
+
+/** Precio sugerido: costo → margen 17% → sin IVA → IVA 19% → con IVA. */
+export function buildSuggestedSalePricing(costoTotal: number) {
+    const costo = roundPesos(costoTotal);
+    if (costo <= 0) return null;
+    const margenMonto = roundPesos(costo * DEFAULT_MARGIN_ON_COST);
+    const precioSinIva = roundPesos(costo + margenMonto);
+    const iva = roundPesos(precioSinIva * IVA_RATE);
+    const precioConIva = roundPesos(precioSinIva + iva);
+    return {
+        costoTotal: costo,
+        margenPct: DEFAULT_MARGIN_ON_COST * 100,
+        margenMonto,
+        precioSinIva,
+        iva,
+        precioConIva,
+    };
+}
+
