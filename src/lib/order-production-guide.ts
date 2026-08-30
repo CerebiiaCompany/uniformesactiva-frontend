@@ -3,6 +3,7 @@ import { formatCurrency, parseApiNumber } from "@/lib/format-number";
 import { http } from "@/lib/http";
 import { getActiveLogoLabels } from "@/lib/order-fields";
 import type { Order } from "@/hooks/useOrders";
+import { resolveEffectivePaymentStatus } from "@/lib/payment-status";
 
 export interface OrderGuideClientInfo {
   name: string;
@@ -34,8 +35,9 @@ function shortOrderId(id: string): string {
 }
 
 function paymentLabel(order: Order): string {
-  if (order.estado_pago === "parcial") return "Pagado parcial";
-  if (order.estado_pago === "pagado" || order.pagado) return "Pagado";
+  const status = resolveEffectivePaymentStatus(order);
+  if (status === "parcial") return "Pagado parcial";
+  if (status === "pagado") return "Pagado";
   return "No pagado";
 }
 

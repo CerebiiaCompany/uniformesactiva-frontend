@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { AppLayout } from "@/components/AppLayout";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -19,6 +20,11 @@ import { useToast } from "@/components/ui/use-toast";
 import { EditableSalePriceCell, getOrderProfitPreview } from "@/components/EditableSalePriceCell";
 
 import { formatCurrency } from "@/lib/format-number";
+import {
+  resolveEffectivePaymentStatus,
+  resolvePaymentBadge,
+  paymentBadgeLabel,
+} from "@/lib/payment-status";
 import {
   resolveFactoryCardInfo,
   summarizeOrderArticles,
@@ -41,20 +47,13 @@ import type { TNSOrderRealMaterialCostResponse } from "@/types/tns";
 const formatMoney = (value: string | number) => formatCurrency(value);
 
 function orderToPaymentSubject(order: Order): PaymentDetailSubject {
-  const estado =
-    order.estado_pago === "parcial" ||
-    order.estado_pago === "pagado" ||
-    order.estado_pago === "no_pagado"
-      ? order.estado_pago
-      : order.pagado
-        ? "pagado"
-        : "no_pagado";
+  const estado = resolveEffectivePaymentStatus(order);
 
   return {
     id: order.id,
     cliente_nombre: order.cliente_nombre,
     estado_pago: estado,
-    pagado: estado === "pagado" || order.pagado,
+    pagado: estado === "pagado",
     detalle_abono: order.detalle_abono ?? null,
     valor_venta_proyectado: order.valor_venta_proyectado,
   };
@@ -62,6 +61,8 @@ function orderToPaymentSubject(order: Order): PaymentDetailSubject {
 
 export default function Orders() {
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const highlightHandledRef = useRef<string | null>(null);
   const {
     orders,
     loading,
@@ -96,6 +97,9 @@ export default function Orders() {
   const [tnsMaterialCosts, setTnsMaterialCosts] = useState<
     Record<string, TNSOrderRealMaterialCostResponse>
   >({});
+  /** True cuando ya se intentó hidratar materiales TNS para la página actual. */
+  const [tnsMaterialsHydrated, setTnsMaterialsHydrated] = useState(false);
+  const [openingRealCost, setOpeningRealCost] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState("");
   const [salePriceDrafts, setSalePriceDrafts] = useState<Record<string, string>>({});
@@ -129,17 +133,18 @@ export default function Orders() {
 
   useEffect(() => {
     if (!orders.length) {
-      setTnsMaterialCosts({});
+      setTnsMaterialsHydrated(true);
       return;
     }
     const activeForMaterials = orders.filter((order) =>
-      order.estado === "in_production" || order.estado === "delivered"
+      orderIncludesDeliveredMaterials(order.estado)
     );
     if (!activeForMaterials.length) {
-      setTnsMaterialCosts({});
+      setTnsMaterialsHydrated(true);
       return;
     }
     let cancelled = false;
+    setTnsMaterialsHydrated(false);
     void (async () => {
       const entries = await Promise.all(
         activeForMaterials.map(async (order) => {
@@ -152,11 +157,21 @@ export default function Orders() {
         })
       );
       if (cancelled) return;
-      const next: Record<string, TNSOrderRealMaterialCostResponse> = {};
-      for (const [orderId, data] of entries) {
-        if (data) next[orderId] = data;
-      }
-      setTnsMaterialCosts(next);
+      // Merge: no borrar costos previos al refrescar (evita flash sin materiales).
+      setTnsMaterialCosts((prev) => {
+        const next = { ...prev };
+        const activeIds = new Set(activeForMaterials.map((o) => o.id));
+        for (const key of Object.keys(next)) {
+          if (!activeIds.has(key) && !orders.some((o) => o.id === key)) {
+            delete next[key];
+          }
+        }
+        for (const [orderId, data] of entries) {
+          if (data) next[orderId] = data;
+        }
+        return next;
+      });
+      setTnsMaterialsHydrated(true);
     })();
     return () => {
       cancelled = true;
@@ -176,6 +191,44 @@ export default function Orders() {
     }
     return map;
   }, [orders, realCostTick, tnsMaterialCosts]);
+
+  const hasPersistedDeliveredMaterials = (order: Order) => {
+    const base = getOrderRealCostFromOrder(order);
+    return (base?.materialsLines || []).some(
+      (l) => l.materialSource !== "kanban_additional" && (Number(l.amount) || 0) > 0
+    );
+  };
+
+  /** Evita mostrar un total incompleto (sin materiales) mientras llega TNS. */
+  const isRealCostReady = (order: Order) => {
+    if (!orderIncludesDeliveredMaterials(order.estado)) return true;
+    if (tnsMaterialCosts[order.id]) return true;
+    if (hasPersistedDeliveredMaterials(order)) return true;
+    return tnsMaterialsHydrated;
+  };
+
+  const openRealCostDialog = async (order: Order) => {
+    setOpeningRealCost(true);
+    setRealCostOrder(order);
+    try {
+      if (
+        orderIncludesDeliveredMaterials(order.estado) &&
+        !tnsMaterialCosts[order.id]
+      ) {
+        try {
+          const data = await getTNSOrderRealMaterialCost(order.id);
+          if (data) {
+            setTnsMaterialCosts((prev) => ({ ...prev, [order.id]: data }));
+          }
+        } catch {
+          /* se muestra lo persistido */
+        }
+      }
+      setRealCostOpen(true);
+    } finally {
+      setOpeningRealCost(false);
+    }
+  };
 
   useEffect(() => {
     if (error) {
@@ -267,6 +320,46 @@ export default function Orders() {
     }
     setLoadingDetail(false);
   };
+
+  // Deep-link desde notificaciones: /orders?highlight=<orderId>[&payment=1]
+  useEffect(() => {
+    const highlight = (searchParams.get("highlight") || "").trim();
+    if (!highlight || highlightHandledRef.current === highlight) return;
+
+    const openPayment = ["1", "true", "yes"].includes(
+      (searchParams.get("payment") || "").trim().toLowerCase()
+    );
+
+    let cancelled = false;
+    void (async () => {
+      const order = await fetchOrderById(highlight);
+      if (cancelled) return;
+      highlightHandledRef.current = highlight;
+      if (order) {
+        if (openPayment) {
+          setPaymentDetailOrder(order);
+          setPaymentDetailOpen(true);
+        } else {
+          await openDetailModal(order);
+        }
+      } else {
+        toast({
+          title: "Pedido no encontrado",
+          description: "La notificación apunta a un pedido que ya no está disponible.",
+          variant: "destructive",
+        });
+      }
+      const next = new URLSearchParams(searchParams);
+      next.delete("highlight");
+      next.delete("payment");
+      setSearchParams(next, { replace: true });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams.get("highlight"), searchParams.get("payment")]);
 
   const handlePrintGuide = async (order: Order) => {
     setPrintingOrderId(order.id);
@@ -508,19 +601,25 @@ export default function Orders() {
                             <button
                               type="button"
                               title="Ver desglose de costo real"
+                              disabled={openingRealCost}
                               onClick={() => {
-                                setRealCostOrder(order);
-                                setRealCostOpen(true);
+                                void openRealCostDialog(order);
                               }}
-                              className="inline-flex items-center justify-end gap-1 w-full text-sm tabular-nums text-red-600 hover:text-red-700 hover:underline"
+                              className="inline-flex items-center justify-end gap-1 w-full text-sm tabular-nums text-red-600 hover:text-red-700 hover:underline disabled:opacity-60"
                             >
-                              <Calculator className="h-3.5 w-3.5 shrink-0 opacity-80" />
-                              $
-                              {formatMoney(
-                                computeRealAccumulatedCost(
-                                  realCostByOrder[order.id] ?? emptyRealCost(order.id)
-                                )
+                              {openingRealCost && realCostOrder?.id === order.id ? (
+                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin opacity-80" />
+                              ) : (
+                                <Calculator className="h-3.5 w-3.5 shrink-0 opacity-80" />
                               )}
+                              $
+                              {isRealCostReady(order)
+                                ? formatMoney(
+                                    computeRealAccumulatedCost(
+                                      realCostByOrder[order.id] ?? emptyRealCost(order.id)
+                                    )
+                                  )
+                                : "…"}
                             </button>
                           </TableCell>
                           <TableCell className="text-right py-2.5">
@@ -573,24 +672,30 @@ export default function Orders() {
                           <TableCell className="text-center py-2.5">
                             <div className="flex flex-col items-center justify-center gap-0.5">
                               <div className="flex items-center justify-center gap-1">
-                                {order.pagado || order.estado_pago === "pagado" ? (
-                                  <span
-                                    title="Pago cerrado — no se puede modificar"
-                                    className="inline-flex items-center gap-0.5 bg-emerald-100/50 border border-emerald-200/40 px-1.5 py-0.5 rounded text-xs font-medium text-emerald-800/55 cursor-default select-none"
-                                  >
-                                    SI
-                                  </span>
-                                ) : (
-                                  <span
-                                    className={
-                                      order.estado_pago === "parcial"
-                                        ? "bg-blue-100 px-1.5 py-0.5 rounded text-xs font-bold text-blue-800"
-                                        : "bg-red-100 px-1.5 py-0.5 rounded text-xs font-bold text-red-800"
-                                    }
-                                  >
-                                    {order.estado_pago === "parcial" ? "PARCIAL" : "NO"}
-                                  </span>
-                                )}
+                                {(() => {
+                                  const badge = resolvePaymentBadge(order);
+                                  if (badge === "si") {
+                                    return (
+                                      <span
+                                        title="Pago cerrado — no se puede modificar"
+                                        className="inline-flex items-center gap-0.5 bg-emerald-100/50 border border-emerald-200/40 px-1.5 py-0.5 rounded text-xs font-medium text-emerald-800/55 cursor-default select-none"
+                                      >
+                                        {paymentBadgeLabel(badge)}
+                                      </span>
+                                    );
+                                  }
+                                  return (
+                                    <span
+                                      className={
+                                        badge === "parcial"
+                                          ? "bg-blue-100 px-1.5 py-0.5 rounded text-xs font-bold text-blue-800"
+                                          : "bg-red-100 px-1.5 py-0.5 rounded text-xs font-bold text-red-800"
+                                      }
+                                    >
+                                      {paymentBadgeLabel(badge)}
+                                    </span>
+                                  );
+                                })()}
                                 <button
                                   type="button"
                                   title="Ver detalle de pago"
@@ -603,7 +708,8 @@ export default function Orders() {
                                   <FileText className="h-4 w-4" />
                                 </button>
                               </div>
-                              {order.estado_pago === "parcial" && order.detalle_abono?.fecha_registro && (
+                              {resolveEffectivePaymentStatus(order) === "parcial" &&
+                                order.detalle_abono?.fecha_registro && (
                                 <div
                                   className="text-[10px] text-muted-foreground leading-tight text-center max-w-[130px]"
                                   title={`Fecha y hora de abono: ${new Date(order.detalle_abono.fecha_registro).toLocaleString("es-CO")}`}
@@ -613,7 +719,8 @@ export default function Orders() {
                                   </span>
                                 </div>
                               )}
-                              {order.estado_pago === "pagado" && order.detalle_abono?.fecha_registro && (
+                              {resolveEffectivePaymentStatus(order) === "pagado" &&
+                                order.detalle_abono?.fecha_registro && (
                                 <div
                                   className="text-[10px] text-muted-foreground leading-tight text-center max-w-[130px]"
                                   title={`Fecha y hora de pago: ${new Date(order.detalle_abono.fecha_registro).toLocaleString("es-CO")}`}

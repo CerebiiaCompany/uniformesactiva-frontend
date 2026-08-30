@@ -54,6 +54,8 @@ import {
   getCapaActionsForRole,
   saveCapaActionsForRole,
   toggleCapaAction,
+  toggleAllCapaActionsForStage,
+  isCapaRowFullySelected,
   getCapaActionsForStage,
   CAPA_KANBAN_ACTIONS,
   notifyKanbanEtapasUpdated,
@@ -501,6 +503,11 @@ export default function AdministrationSubmodule() {
     [rolesList, selectedRole]
   );
 
+  const showKanbanCapaPermissions = useMemo(
+    () => isKanbanOperatorRole(selectedRoleObj?.name || ""),
+    [selectedRoleObj]
+  );
+
   const roleUserCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const role of rolesList) {
@@ -665,9 +672,11 @@ export default function AdministrationSubmodule() {
         const backendCapas = data.capa_actions || data.kanban_capas_permissions;
         setCapaActions(backendCapas);
         const role = rolesList.find((r) => r.id === selectedRole);
-        if (role?.name) {
+        if (role?.name && isKanbanOperatorRole(role.name)) {
           saveCapaActionsForRole(role.name, backendCapas, role.id);
         }
+      } else {
+        setCapaActions({});
       }
     } catch (error: any) {
       if (error instanceof UnauthorizedError) return;
@@ -706,9 +715,7 @@ export default function AdministrationSubmodule() {
     if (!selectedRole) return;
 
     const currentRoleObj = rolesList.find((r) => r.id === selectedRole);
-    if (currentRoleObj?.name) {
-      saveCapaActionsForRole(currentRoleObj.name, capaActions, currentRoleObj.id);
-    }
+    const isKanbanRole = isKanbanOperatorRole(currentRoleObj?.name || "");
 
     const UPDATE_PERMISSIONS_URL = `${BASE_URL}/api/v1/users/permisos/roles/${selectedRole}/permissions/`;
 
@@ -720,11 +727,13 @@ export default function AdministrationSubmodule() {
       can_delete: matrix[moduleKey].eliminar,
     }));
 
-    const payload = {
+    const payload: Record<string, unknown> = {
       permissions: formattedPermissions,
-      capa_actions: capaActions,
-      kanban_capas_permissions: capaActions,
     };
+    if (isKanbanRole) {
+      payload.capa_actions = capaActions;
+      payload.kanban_capas_permissions = capaActions;
+    }
 
     try {
       const response = await apiFetch(UPDATE_PERMISSIONS_URL, {
@@ -738,11 +747,21 @@ export default function AdministrationSubmodule() {
 
       if (!response.ok) throw new Error('Error al guardar los permisos en Django');
 
-      const currentRoleObj = rolesList.find(r => r.id === selectedRole);
+      const saved = await response.json().catch(() => ({} as any));
+      if (isKanbanRole) {
+        const backendCapas =
+          saved?.capa_actions ||
+          saved?.kanban_capas_permissions ||
+          capaActions;
+        setCapaActions(backendCapas);
+        if (currentRoleObj?.name) {
+          saveCapaActionsForRole(currentRoleObj.name, backendCapas, currentRoleObj.id);
+        }
+      }
 
       toast({
         title: "Cambios guardados",
-        description: `Los permisos y configuración Kanban para ${currentRoleObj?.name || "el rol"} se sincronizaron con éxito.`,
+        description: `Los permisos${isKanbanRole ? " y configuración Kanban" : ""} para ${currentRoleObj?.name || "el rol"} se sincronizaron con el servidor.`,
       });
     } catch (error: any) {
       if (error instanceof UnauthorizedError) return;
@@ -1402,7 +1421,8 @@ export default function AdministrationSubmodule() {
                       </div>
                     </div>
 
-                    {/* Sección Permisos por capa Kanban */}
+                    {/* Sección Permisos por capa Kanban: solo Producción, Diseño y Satélite */}
+                    {showKanbanCapaPermissions ? (
                     <div className="space-y-3 pt-3 border-t">
                       <div>
                         <h4 className="text-sm font-semibold text-foreground">
@@ -1424,6 +1444,7 @@ export default function AdministrationSubmodule() {
                           <Table>
                             <TableHeader>
                               <TableRow className="bg-muted/50">
+                                <TableHead className="w-14 text-center">Toda la fila</TableHead>
                                 <TableHead>Capa</TableHead>
                                 {CAPA_KANBAN_ACTIONS.map((action) => (
                                   <TableHead key={action.code} className="text-center">
@@ -1442,8 +1463,34 @@ export default function AdministrationSubmodule() {
                                   capaActions,
                                   capa.key
                                 );
+                                const rowFullySelected = isCapaRowFullySelected(
+                                  capaActions,
+                                  capa.key
+                                );
                                 return (
                                   <TableRow key={capa.id}>
+                                    <TableCell className="text-center">
+                                      <div className="flex justify-center" title={rowFullySelected ? "Deseleccionar toda la fila" : "Seleccionar toda la fila"}>
+                                        <Checkbox
+                                          checked={rowFullySelected}
+                                          onCheckedChange={(checked) =>
+                                            setCapaActions((prev) =>
+                                              toggleAllCapaActionsForStage(
+                                                prev,
+                                                capa.key,
+                                                Boolean(checked),
+                                                kanbanCapas.map((c) => c.key)
+                                              )
+                                            )
+                                          }
+                                          aria-label={
+                                            rowFullySelected
+                                              ? `Deseleccionar todas las acciones de ${capa.label}`
+                                              : `Seleccionar todas las acciones de ${capa.label}`
+                                          }
+                                        />
+                                      </div>
+                                    </TableCell>
                                     <TableCell>
                                       <KanbanStageChip
                                         stageKey={capa.key}
@@ -1483,6 +1530,7 @@ export default function AdministrationSubmodule() {
                         </div>
                       )}
                     </div>
+                    ) : null}
 
                     <div className="flex justify-end pt-2">
                       <Button

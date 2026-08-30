@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { FileText, CreditCard, Loader2, Lock } from "lucide-react";
 import { formatCurrency } from "@/lib/format-number";
+import { resolveEffectivePaymentStatus } from "@/lib/payment-status";
 
 function formatNumberWithDots(val: string | number): string {
   if (val === "" || val == null) return "";
@@ -127,9 +128,7 @@ function medioLabel(value: string | undefined | null) {
 }
 
 function resolvePaymentStatus(entity: PaymentDetailSubject): PaymentStatus {
-  if (entity.estado_pago === "parcial") return "parcial";
-  if (entity.estado_pago === "pagado" || entity.pagado) return "pagado";
-  return "no_pagado";
+  return resolveEffectivePaymentStatus(entity);
 }
 
 function getShortId(id: string, prefix: string) {
@@ -287,9 +286,13 @@ export function OrderPaymentDetailDialog({
         registrado_por_id: audit.id,
         registrado_por_nombre: audit.nombre,
         fecha_registro: audit.fecha,
+        monto_total: saleValue || prev?.monto_total,
+        // Cierra el saldo: el pago total implica deuda en cero
+        saldo_pendiente: 0,
         ...(hasPreviousPartial
           ? {
               abono_detalle: {
+                monto_total: prev?.monto_total,
                 monto_abono: prev?.monto_abono,
                 saldo_pendiente: prev?.saldo_pendiente,
                 medio_pago: prev?.medio_pago,
@@ -299,6 +302,8 @@ export function OrderPaymentDetailDialog({
                 registrado_por_nombre: prev?.registrado_por_nombre,
                 fecha_registro: prev?.fecha_registro,
               },
+              // Evitar que el monto del abono se interprete como saldo abierto
+              monto_abono: prev?.monto_abono,
             }
           : {}),
       },

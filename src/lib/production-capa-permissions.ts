@@ -1,7 +1,10 @@
 /**
- * Permisos por capa Kanban (roles Producción y Satélite).
+ * Permisos por capa Kanban (roles Producción, Diseño y Satélite).
  * Cada capa opera su columna; puede mover tarjetas solo a la etapa siguiente.
- * Acciones: solicitar inventario, editar tarjeta, ver historial.
+ * Acciones: ver tablero, solicitar inventario, editar tarjeta, ver historial.
+ *
+ * Fuente de verdad: backend (roles.kanban_capa_permissions).
+ * localStorage solo cachea tras un GET/POST exitoso.
  */
 
 const STORAGE_KEY_BY_ROLE = "ua:capa-actions-by-role-v1";
@@ -9,7 +12,7 @@ const STORAGE_KEY_BY_ROLE = "ua:capa-actions-by-role-v1";
 const LEGACY_PRODUCTION_KEY = "ua:production-capa-actions-v2";
 const LEGACY_MODULES_KEY = "ua:production-capa-modules-v1";
 
-export const KANBAN_OPERATOR_ROLES = ["Producción", "Satélite"] as const;
+export const KANBAN_OPERATOR_ROLES = ["Producción", "Diseño", "Satélite"] as const;
 export type KanbanOperatorRole = (typeof KANBAN_OPERATOR_ROLES)[number];
 
 export function isKanbanOperatorRole(role: string): boolean {
@@ -151,6 +154,34 @@ export function toggleCapaAction(
   };
 }
 
+/** Activa o desactiva todas las acciones de una capa (fila completa). */
+export function toggleAllCapaActionsForStage(
+  map: CapaActionsMap,
+  stageKey: string,
+  selectAll: boolean,
+  allStageKeys?: string[]
+): CapaActionsMap {
+  const baseMap: CapaActionsMap = { ...map };
+  if (Object.keys(baseMap).length === 0 && allStageKeys && allStageKeys.length > 0) {
+    for (const k of allStageKeys) {
+      baseMap[k] = [...DEFAULT_CAPA_ACTIONS];
+    }
+  }
+  return {
+    ...baseMap,
+    [stageKey]: selectAll ? [...DEFAULT_CAPA_ACTIONS] : [],
+  };
+}
+
+export function isCapaRowFullySelected(
+  map: CapaActionsMap,
+  stageKey: string,
+  adminAssignedStageKeys?: string[]
+): boolean {
+  const selected = getCapaActionsForStage(map, stageKey, adminAssignedStageKeys);
+  return DEFAULT_CAPA_ACTIONS.every((code) => selected.includes(code));
+}
+
 export function toggleCapaModule(
   map: CapaActionsMap,
   stageKey: string,
@@ -166,9 +197,11 @@ export function getCapaActionsForStage(
   adminAssignedStageKeys?: string[]
 ): CapaActionCode[] {
   if (!stageKey) return [];
-  if (map && stageKey in map) {
+  // Si la capa está explícitamente en el mapa, respetar lo configurado
+  // (incluye [] = ninguna acción permitida).
+  if (map && Object.prototype.hasOwnProperty.call(map, stageKey)) {
     const configured = map[stageKey] || [];
-    return configured.length > 0 ? configured : [...DEFAULT_CAPA_ACTIONS];
+    return Array.isArray(configured) ? ([...configured] as CapaActionCode[]) : [];
   }
   if (!map || Object.keys(map).length === 0) {
     return [...DEFAULT_CAPA_ACTIONS];
@@ -315,7 +348,8 @@ export function readProductionSession(): ProductionSession {
       }) || Boolean((user as Record<string, unknown>).is_superuser);
     const isProduction = roles.includes("Producción");
     const isSatellite = roles.includes("Satélite");
-    const isKanbanOperator = isProduction || isSatellite;
+    const isDesign = roles.includes("Diseño");
+    const isKanbanOperator = isProduction || isSatellite || isDesign;
     const stageKeys = parseStageKeys(
       user.production_stage_keys?.length
         ? user.production_stage_keys
@@ -469,5 +503,6 @@ export function getSessionCapaActionsMap(session: ProductionSession): CapaAction
   if (Object.keys(merged).length > 0) return merged;
   if (session.isSatellite) return getCapaActionsForRole("Satélite");
   if (session.isProduction) return getCapaActionsForRole("Producción");
+  if (session.roles.includes("Diseño")) return getCapaActionsForRole("Diseño");
   return {};
 }

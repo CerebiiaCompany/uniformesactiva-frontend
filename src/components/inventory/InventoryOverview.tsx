@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/format-number";
 import type { Material } from "@/hooks/useGetMaterials";
+import type { TNSInventarioSummary } from "@/types/tns";
 
 type StockBucket = "optimal" | "low" | "out";
 
@@ -60,6 +61,32 @@ export function computeInventoryStats(materials: Material[]): InventoryMaterialS
     low,
     out,
     totalValue,
+  };
+}
+
+/** Mismas métricas que el módulo Inventario TNS (óptimo / bajo / agotado). */
+export function computeInventoryStatsFromTnsSummary(
+  summary: TNSInventarioSummary | null | undefined
+): InventoryMaterialStats {
+  if (!summary) {
+    return { total: 0, optimal: 0, low: 0, out: 0, totalValue: 0 };
+  }
+  const out = Number(summary.sin_stock) || 0;
+  const low = Number(summary.stock_bajo_count) || 0;
+  const conStock = Number(summary.con_stock) || 0;
+  const optimal = Math.max(0, conStock - low);
+  const totalFromBuckets = optimal + low + out;
+  const total =
+    Number(summary.total_registros) > 0
+      ? Number(summary.total_registros)
+      : totalFromBuckets;
+
+  return {
+    total,
+    optimal,
+    low,
+    out,
+    totalValue: Number(summary.total_costo_stock) || 0,
   };
 }
 
@@ -317,7 +344,10 @@ function TopMaterialsByValueChart({ rows }: { rows: MaterialValueRow[] }) {
 }
 
 type InventoryMaterialStatusRingsProps = {
-  materials: Material[];
+  /** Preferido: métricas del resumen TNS (módulo Inventario). */
+  stats?: InventoryMaterialStats | null;
+  /** @deprecated Inventario local — el proyecto usa TNS. */
+  materials?: Material[];
   isLoading?: boolean;
   /** Enlace opcional al inventario completo */
   showInventoryLink?: boolean;
@@ -325,18 +355,22 @@ type InventoryMaterialStatusRingsProps = {
 
 /** Gráficas circulares de estado (óptimo / bajo / agotado) — reutilizable en Dashboard. */
 export function InventoryMaterialStatusRings({
+  stats: statsProp,
   materials,
   isLoading,
   showInventoryLink = false,
 }: InventoryMaterialStatusRingsProps) {
-  const stats = useMemo(() => computeInventoryStats(materials), [materials]);
+  const stats = useMemo(() => {
+    if (statsProp) return statsProp;
+    return computeInventoryStats(materials || []);
+  }, [statsProp, materials]);
 
-  if (isLoading && materials.length === 0) {
+  if (isLoading && stats.total === 0) {
     return (
       <Card className="shadow-sm">
         <CardHeader className="pb-2">
           <CardTitle className="text-lg font-semibold tracking-tight">Estado de materiales</CardTitle>
-          <p className="text-xs text-muted-foreground">Cargando inventario…</p>
+          <p className="text-xs text-muted-foreground">Cargando inventario TNS…</p>
         </CardHeader>
         <CardContent>
           <div className="h-[160px] rounded-lg bg-muted/40 animate-pulse" />
@@ -358,9 +392,10 @@ export function InventoryMaterialStatusRings({
           <div className="rounded-full bg-muted p-3 text-muted-foreground">
             <Boxes className="h-6 w-6" />
           </div>
-          <p className="text-sm font-semibold text-foreground">Inventario vacío</p>
+          <p className="text-sm font-semibold text-foreground">Sin datos de inventario TNS</p>
           <p className="text-xs text-muted-foreground max-w-sm">
-            Agrega materiales al inventario para ver el estado de stock.
+            El inventario se consulta en tiempo real desde el ERP TNS. Verifica la conexión
+            o actualiza desde el módulo Inventario.
           </p>
           {showInventoryLink ? (
             <Link
@@ -375,13 +410,16 @@ export function InventoryMaterialStatusRings({
     );
   }
 
+  // Porcentajes alineados al módulo Inventario TNS (sobre total de registros)
+  const ringTotal = Math.max(1, stats.total || stats.optimal + stats.low + stats.out);
+
   return (
     <Card className="shadow-sm">
       <CardHeader className="pb-2 flex flex-row items-start justify-between gap-3">
         <div>
           <CardTitle className="text-lg font-semibold tracking-tight">Estado de materiales</CardTitle>
           <p className="text-xs text-muted-foreground">
-            Distribución del inventario: óptimo, stock bajo y agotados.
+            Distribución del inventario TNS: óptimo, stock bajo y agotados.
           </p>
         </div>
         {showInventoryLink ? (
@@ -398,7 +436,7 @@ export function InventoryMaterialStatusRings({
           <StatusRing
             label="Óptimo"
             count={stats.optimal}
-            total={stats.total}
+            total={ringTotal}
             color="#10b981"
             trackColor="rgba(16, 185, 129, 0.15)"
             icon={Boxes}
@@ -407,7 +445,7 @@ export function InventoryMaterialStatusRings({
           <StatusRing
             label="Stock bajo"
             count={stats.low}
-            total={stats.total}
+            total={ringTotal}
             color="#ef4444"
             trackColor="rgba(239, 68, 68, 0.15)"
             icon={AlertTriangle}
@@ -416,7 +454,7 @@ export function InventoryMaterialStatusRings({
           <StatusRing
             label="Agotado"
             count={stats.out}
-            total={stats.total}
+            total={ringTotal}
             color="#71717a"
             trackColor="rgba(113, 113, 122, 0.18)"
             icon={PackageX}
