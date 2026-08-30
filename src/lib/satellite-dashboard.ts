@@ -32,6 +32,8 @@ export type SatelliteWorkshop = {
   status: string;
   payment_status: string;
   settlements?: Record<string, SatelliteSettlement>;
+  /** Nombres alternos para cruzar con TNS (contacto, usuarios vinculados, razón social). */
+  aliases?: string[];
 };
 
 export type SatelliteUserRef = {
@@ -135,11 +137,131 @@ function normalizeText(str: string): string {
     .trim();
 }
 
+/** NIT/cédula comparable: solo dígitos. */
+export function normalizeNit(value?: string | null): string {
+  return String(value || "").replace(/[^\d]/g, "");
+}
+
 /**
- * Cruza un taller satélite con un pedido de compra de TNS por NIT/Documento o Nombre.
+ * Quita sufijos tipo "/ SATELITE", "/ CORTADORA" para comparar nombres TNS.
+ */
+function stripTnsRoleSuffix(name: string): string {
+  return (name || "")
+    .replace(
+      /\s*\/\s*(satelite|satélite|taller|cortadora|corte|confeccion|confección|bordado|estampado|proveedor|servicios?|produccion|producción)\s*$/i,
+      ""
+    )
+    .replace(/\s*\([^)]*\)\s*$/i, "")
+    .trim();
+}
+
+const TNS_NIT_MARKER = /(?:^|\s|·)\s*NIT\s*:\s*([0-9.\-\s]+)/i;
+const TNS_NAME_MARKER = /(?:^|\s|·)\s*TNS\s*:\s*(.+)$/i;
+
+/** Persiste NIT y razón social TNS en cargo (usuarios sin campo nit). */
+export function encodeTnsUserMeta(cargo: string, nit?: string, tnsName?: string): string {
+  const base = (cargo || "").replace(TNS_NIT_MARKER, "").replace(TNS_NAME_MARKER, "").trim()
+    || "Operario de Producción";
+  const parts = [base];
+  const cleanNit = String(nit || "").trim();
+  const cleanTns = String(tnsName || "").trim();
+  if (cleanNit) parts.push(`NIT:${cleanNit}`);
+  if (cleanTns) parts.push(`TNS:${cleanTns}`);
+  return parts.join(" · ");
+}
+
+export function parseTnsUserMeta(cargo?: string | null): {
+  displayCargo: string;
+  nit: string;
+  tnsName: string;
+} {
+  const raw = String(cargo || "");
+  const nitMatch = raw.match(TNS_NIT_MARKER);
+  const tnsMatch = raw.match(TNS_NAME_MARKER);
+  const displayCargo = raw
+    .replace(TNS_NIT_MARKER, "")
+    .replace(TNS_NAME_MARKER, "")
+    .replace(/\s*·\s*$/g, "")
+    .replace(/^\s*·\s*/g, "")
+    .replace(/\s*·\s*·\s*/g, " · ")
+    .trim();
+  return {
+    displayCargo: displayCargo || "Operario de Producción",
+    nit: (nitMatch?.[1] || "").trim(),
+    tnsName: (tnsMatch?.[1] || "").trim(),
+  };
+}
+
+function namesLooselyMatch(a: string, b: string): boolean {
+  const left = normalizeText(stripTnsRoleSuffix(a));
+  const right = normalizeText(stripTnsRoleSuffix(b));
+  if (!left || !right) return false;
+  if (left === right || right.includes(left) || left.includes(right)) return true;
+
+  const stopWords = new Set([
+    "satelite",
+    "taller",
+    "cortador",
+    "cortadora",
+    "confeccion",
+    "bordado",
+    "produccion",
+    "operario",
+    "y",
+    "de",
+    "la",
+    "el",
+    "los",
+    "las",
+    "del",
+  ]);
+  const tokens = left.split(" ").filter((t) => t.length > 2 && !stopWords.has(t));
+  if (tokens.length === 0) return false;
+  const matched = tokens.filter((token) => right.includes(token));
+  return matched.length >= Math.min(2, tokens.length);
+}
+
+function nitsMatch(a?: string | null, b?: string | null): boolean {
+  const left = normalizeNit(a);
+  const right = normalizeNit(b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  // Permite cédula con/sin dígito de verificación
+  return left.startsWith(right) || right.startsWith(left);
+}
+
+/** Compara dos personas/talleres por NIT o por nombre (flexible TNS). */
+export function isSamePersonIdentity(
+  a: { names?: Array<string | null | undefined>; nit?: string | null },
+  b: { names?: Array<string | null | undefined>; nit?: string | null }
+): boolean {
+  if (nitsMatch(a?.nit, b?.nit)) return true;
+  const left = (a?.names || []).map((n) => String(n || "").trim()).filter(Boolean);
+  const right = (b?.names || []).map((n) => String(n || "").trim()).filter(Boolean);
+  for (const x of left) {
+    for (const y of right) {
+      if (namesLooselyMatch(x, y)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Cruza un taller/usuario con un pedido de compra de TNS por NIT/Documento o Nombre.
  */
 export function matchesSatelliteTns(
-  ws: { name?: string; nit?: string; nit_tercero?: string; cod_tercero?: string; contact_name?: string } | null | undefined,
+  ws:
+    | {
+        name?: string;
+        nit?: string;
+        nit_tercero?: string;
+        cod_tercero?: string;
+        contact_name?: string;
+        phone?: string;
+        aliases?: string[];
+      }
+    | null
+    | undefined,
   pedido: PedidoCompra | null | undefined
 ): boolean {
   if (!ws || !pedido) return false;
@@ -154,41 +276,43 @@ export function matchesSatelliteTns(
   ).trim();
 
   // 1. Coincidencia directa por NIT o Documento (la más exacta)
-  if (wsNit && pedNit && wsNit === pedNit) {
+  if (nitsMatch(wsNit, pedNit)) {
     return true;
   }
 
-  // 2. Coincidencia por Nombre / Razón Social
-  const wsNameNorm = normalizeText(ws.name || "");
-  const pedNameNorm = normalizeText(
+  // 2. Teléfono (útil cuando el usuario se creó desde el pedido TNS)
+  const wsPhone = normalizeNit(ws.phone);
+  const pedPhone = normalizeNit(
+    (pedido as { telefono?: string; Tel?: string; telTercero?: string }).telefono ||
+      (pedido as { Tel?: string }).Tel ||
+      (pedido as { telTercero?: string }).telTercero ||
+      ""
+  );
+  if (wsPhone.length >= 7 && pedPhone.length >= 7) {
+    if (
+      wsPhone === pedPhone ||
+      wsPhone.endsWith(pedPhone) ||
+      pedPhone.endsWith(wsPhone)
+    ) {
+      return true;
+    }
+  }
+
+  const pedName =
     pedido.nomTercero ||
     pedido.tercero_nombre ||
     pedido.RAZONSOCIAL ||
     pedido.proveedor ||
-    ""
-  );
+    "";
 
-  if (!wsNameNorm || !pedNameNorm) return false;
+  const candidates = [
+    ws.name,
+    ws.contact_name,
+    ...(Array.isArray(ws.aliases) ? ws.aliases : []),
+  ].filter(Boolean) as string[];
 
-  if (
-    wsNameNorm === pedNameNorm ||
-    pedNameNorm.includes(wsNameNorm) ||
-    wsNameNorm.includes(pedNameNorm)
-  ) {
-    return true;
-  }
-
-  // Comprobar coincidencia por palabras clave del nombre
-  const stopWords = new Set(["satelite", "taller", "cortador", "confeccion", "bordado", "y", "de", "la", "el", "los", "las"]);
-  const wsTokens = wsNameNorm
-    .split(" ")
-    .filter((t) => t.length > 2 && !stopWords.has(t));
-
-  if (wsTokens.length > 0) {
-    const matchedTokens = wsTokens.filter((token) => pedNameNorm.includes(token));
-    if (matchedTokens.length >= Math.min(2, wsTokens.length)) {
-      return true;
-    }
+  for (const candidate of candidates) {
+    if (namesLooselyMatch(candidate, pedName)) return true;
   }
 
   return false;
@@ -410,16 +534,28 @@ export function buildSatelliteStagesWorked(params: {
   } = params || {};
   const byStage = new Map<string, SatelliteOrderStageWork>();
 
-  const primaryCard = cards[0];
-  const totalQty =
-    cards.reduce((sum, c) => sum + (Number(c.quantity) || 0), 0) ||
-    order?.items?.reduce((s, it) => s + (Number(it.cantidad) || 0), 0) ||
-    0;
+  const primaryCard =
+    cards.find((c) => c && (c.stageLaborConfig || c.stageAssignees || c.variants?.length)) ||
+    cards[0];
 
-  // Extraer desglose de tallas
+  // Cantidad del PEDIDO (una sola vez). No sumar quantity de todas las tarjetas Kanban.
+  const orderItemsQty =
+    order?.items?.reduce((s, it) => s + (Number(it.cantidad) || 0), 0) || 0;
+  const maxCardQty = cards.reduce(
+    (max, c) => Math.max(max, Number(c?.quantity) || 0),
+    0
+  );
+  const totalQty = orderItemsQty > 0 ? orderItemsQty : maxCardQty;
+
+  // Extraer desglose de tallas (sin duplicar por tarjeta)
   const tallasMap = new Map<string, number>();
-  if (primaryCard?.variants && primaryCard.variants.length > 0) {
-    for (const v of primaryCard.variants) {
+  const tallasSource =
+    primaryCard?.variants && primaryCard.variants.length > 0
+      ? primaryCard
+      : cards.find((c) => c?.variants && c.variants.length > 0) || primaryCard;
+
+  if (tallasSource?.variants && tallasSource.variants.length > 0) {
+    for (const v of tallasSource.variants) {
       if (v.tallas && v.tallas.length > 0) {
         for (const t of v.tallas) {
           if (t.nombre && t.nombre !== "—") {
@@ -432,7 +568,7 @@ export function buildSatelliteStagesWorked(params: {
     }
   } else if (order?.items && order.items.length > 0) {
     for (const it of order.items) {
-      const tName = (it.talla_nombre || (it as any).talla || "").trim();
+      const tName = (it.talla_nombre || (it as { talla?: string }).talla || "").trim();
       if (tName && tName !== "—") {
         tallasMap.set(tName, (tallasMap.get(tName) || 0) + (Number(it.cantidad) || 0));
       }
@@ -443,159 +579,293 @@ export function buildSatelliteStagesWorked(params: {
     .map(([talla, cant]) => `${talla}: ${cant} uds`)
     .join(" · ");
 
-  // Extraer prenda / producto
-  const prendaName =
-    primaryCard?.items ||
-    order?.items?.map((i) => i.subproducto_nombre || i.producto_nombre).filter(Boolean).join(", ") ||
-    order?.descripcion_resumida ||
-    null;
+  // Prendas únicas (evitar repetir por talla/línea)
+  const prendaNames = new Set<string>();
+  for (const it of order?.items || []) {
+    const n = String(it.subproducto_nombre || it.producto_nombre || "").trim();
+    if (n) prendaNames.add(n);
+  }
+  if (prendaNames.size === 0) {
+    for (const c of cards) {
+      const raw = String(c?.items || c?.title || "").trim();
+      if (!raw) continue;
+      for (const part of raw.split(",")) {
+        const n = part.trim();
+        if (n) prendaNames.add(n);
+      }
+    }
+  }
+  const prendaName = [...prendaNames].join(", ") || null;
 
   const isStageReq = (sKey: string) => {
     const k = sKey.toLowerCase();
     if (primaryCard?.hasBordado === false && (k.includes("bordad") || k === "embroidery")) return false;
-    if ((primaryCard as any)?.hasEstampado === false && (k.includes("estampad") || k === "printing")) return false;
+    if ((primaryCard as { hasEstampado?: boolean })?.hasEstampado === false && (k.includes("estampad") || k === "printing")) return false;
     return true;
   };
 
-  const addStage = (
+  const resolveUnit = (
     stageKey: string,
-    laborAmount = 0,
-    userName: string | null = null,
-    isCurrent = false,
-    perUnitOverride: number | null = null,
-    updatedAt: string | null = null
-  ) => {
-    if (!stageKey || !isStageReq(stageKey)) return;
-    const cleanKey = stageKey.replace(/__satellite$/, "");
-    const existing = byStage.get(cleanKey);
-
-    // Determinar valor unitario por prenda
-    const stageCfg = primaryCard?.stageLaborConfig?.[cleanKey] || primaryCard?.stageLaborConfig?.[stageKey];
-    let unitVal = perUnitOverride;
-    if (unitVal == null && stageCfg?.enabled && stageCfg.perUnit != null && Number(stageCfg.perUnit) > 0) {
-      unitVal = Number(stageCfg.perUnit);
+    perUnitOverride: number | null,
+    laborAmount: number
+  ): number | null => {
+    if (perUnitOverride != null && perUnitOverride > 0) return perUnitOverride;
+    for (const card of cards) {
+      const cfg =
+        card?.stageLaborConfig?.[stageKey] ||
+        card?.stageLaborConfig?.[`${stageKey}__satellite`];
+      if (cfg?.enabled && cfg.perUnit != null && Number(cfg.perUnit) > 0) {
+        return Number(cfg.perUnit);
+      }
     }
-    if (unitVal == null && laborAmount > 0 && totalQty > 0) {
-      unitVal = Math.round(laborAmount / totalQty);
+    if (laborAmount > 0 && totalQty > 0) {
+      return Math.round((laborAmount / totalQty) * 100) / 100;
     }
+    return null;
+  };
 
+  const buildActions = (unitVal: number | null): string[] => {
     const actions: string[] = [];
-    if (prendaName) {
-      actions.push(`Prenda: ${prendaName}`);
-    }
-    if (totalQty > 0) {
-      actions.push(`Cantidad total: ${totalQty} prendas`);
-    }
+    if (prendaName) actions.push(`Prenda: ${prendaName}`);
+    if (totalQty > 0) actions.push(`Cantidad total: ${totalQty} prendas`);
     if (unitVal != null && unitVal > 0) {
       actions.push(`Valor unitario por prenda: $${unitVal.toLocaleString("es-CO")}`);
     }
-    if (tallasSummary) {
-      actions.push(`Tallas y cantidades: ${tallasSummary}`);
+    if (tallasSummary) actions.push(`Tallas y cantidades: ${tallasSummary}`);
+    return actions;
+  };
+
+  /**
+   * Registra o actualiza una capa. Nunca acumula el mismo MO configurado
+   * varias veces (una por tarjeta Kanban). Prefiere el valor unitario × qty.
+   */
+  const upsertStage = (opts: {
+    stageKey: string;
+    laborAmount?: number;
+    userName?: string | null;
+    isCurrent?: boolean;
+    perUnit?: number | null;
+    updatedAt?: string | null;
+    /** Si true, no suma al labor existente: toma el mayor (evita 3× por N tarjetas). */
+    replaceLabor?: boolean;
+  }) => {
+    const stageKey = opts.stageKey;
+    if (!stageKey || !isStageReq(stageKey)) return;
+    const cleanKey = stageKey.replace(/__satellite$/, "");
+    const existing = byStage.get(cleanKey);
+    const unitVal = resolveUnit(cleanKey, opts.perUnit ?? null, opts.laborAmount || 0);
+
+    // Fuente de verdad: unitario × cantidad del pedido
+    let labor = Number(opts.laborAmount) || 0;
+    if (unitVal != null && unitVal > 0 && totalQty > 0) {
+      labor = Math.round(unitVal * totalQty * 100) / 100;
     }
 
+    const actions = buildActions(unitVal);
+
     if (existing) {
-      if (laborAmount > 0) existing.laborAmount += laborAmount;
-      if (!existing.userName && userName) existing.userName = userName;
-      if (isCurrent) existing.isCurrent = true;
-      if (updatedAt && (!existing.updatedAt || updatedAt > existing.updatedAt)) {
-        existing.updatedAt = updatedAt;
+      if (opts.replaceLabor || existing.laborAmount <= 0) {
+        existing.laborAmount = labor;
+      } else if (labor > 0) {
+        // Misma capa vista en otra tarjeta: quedarse con un solo monto (no sumar).
+        existing.laborAmount = Math.max(existing.laborAmount, labor);
+        // Si ambos son múltiplos del unitario×qty, forzar el unitario×qty
+        if (unitVal != null && unitVal > 0 && totalQty > 0) {
+          existing.laborAmount = Math.round(unitVal * totalQty * 100) / 100;
+        }
       }
-      if (actions.length > 0 && existing.actions.length === 0) {
-        existing.actions = actions;
+      if (!existing.userName && opts.userName) existing.userName = opts.userName;
+      if (opts.isCurrent) existing.isCurrent = true;
+      if (opts.updatedAt && (!existing.updatedAt || opts.updatedAt > existing.updatedAt)) {
+        existing.updatedAt = opts.updatedAt;
       }
+      existing.actions = actions;
     } else {
       byStage.set(cleanKey, {
         stageKey: cleanKey,
         stageLabel: stageLabels[cleanKey] || cleanKey,
-        userName,
-        laborAmount,
+        userName: opts.userName || null,
+        laborAmount: labor,
         materialsAmount: 0,
         materials: [],
         actions,
-        isCurrent,
+        isCurrent: Boolean(opts.isCurrent),
         novedadesCount: 0,
-        updatedAt: updatedAt || null,
+        updatedAt: opts.updatedAt || null,
       });
     }
   };
 
-  // 1. Etapas registradas en settlement.stages_done
-  if (settlement && (settlement as any).stages_done) {
-    for (const [stg, amt] of Object.entries((settlement as any).stages_done)) {
-      addStage(stg, Number(amt) || 0, null, false, null, settlement.confirmed_at || null);
+  // 1. Etapas en settlement.stages_done (monto acordado / liquidado)
+  if (settlement && (settlement as { stages_done?: Record<string, number> }).stages_done) {
+    for (const [stg, amt] of Object.entries(
+      (settlement as { stages_done: Record<string, number> }).stages_done
+    )) {
+      upsertStage({
+        stageKey: stg,
+        laborAmount: Number(amt) || 0,
+        updatedAt: settlement.confirmed_at || null,
+        replaceLabor: true,
+      });
     }
   }
 
-  // 2. Entradas en costLedger
+  // 2. Asignaciones por capa (una pasada deduplicada por stageKey)
+  const assigneeByStage = new Map<
+    string,
+    { name: string | null; perUnit: number | null; updatedAt: string | null }
+  >();
+  for (const card of cards) {
+    if (!card?.stageAssignees) continue;
+    for (const [sKey, assign] of Object.entries(card.stageAssignees)) {
+      if (!assign) continue;
+      const matches =
+        (assign.userId && userIds.has(String(assign.userId))) ||
+        (assign.name &&
+          Array.from(userNames.values()).some(
+            (n) =>
+              n.toLowerCase().includes(assign.name.toLowerCase()) ||
+              assign.name.toLowerCase().includes(n.toLowerCase())
+          ));
+      if (!matches) continue;
+      const cleanKey = sKey.replace(/__satellite$/, "");
+      if (!isStageReq(cleanKey)) continue;
+      const cfg = card.stageLaborConfig?.[cleanKey] || card.stageLaborConfig?.[sKey];
+      const perUnit =
+        cfg?.enabled && cfg.perUnit != null && Number(cfg.perUnit) > 0
+          ? Number(cfg.perUnit)
+          : null;
+      const histEntry = (card.stageHistory || []).find((h) => h.stage === cleanKey);
+      const stageDate = histEntry?.enteredAt || null;
+      const prev = assigneeByStage.get(cleanKey);
+      if (!prev) {
+        assigneeByStage.set(cleanKey, {
+          name: assign.name || null,
+          perUnit,
+          updatedAt: stageDate,
+        });
+      } else {
+        if (!prev.perUnit && perUnit) prev.perUnit = perUnit;
+        if (!prev.name && assign.name) prev.name = assign.name;
+        if (stageDate && (!prev.updatedAt || stageDate > prev.updatedAt)) {
+          prev.updatedAt = stageDate;
+        }
+      }
+    }
+  }
+
+  for (const [stageKey, info] of assigneeByStage) {
+    const labor =
+      info.perUnit != null && info.perUnit > 0 && totalQty > 0
+        ? Math.round(info.perUnit * totalQty * 100) / 100
+        : 0;
+    upsertStage({
+      stageKey,
+      laborAmount: labor,
+      userName: info.name,
+      perUnit: info.perUnit,
+      updatedAt: info.updatedAt,
+      replaceLabor: true,
+    });
+  }
+
+  // 3. costLedger: una entrada por capa+usuario (no repetir entre tarjetas)
+  const ledgerSeen = new Set<string>();
+  for (const card of cards) {
+    if (!card || !Array.isArray(card.costLedger)) continue;
+    for (const e of card.costLedger) {
+      if (!e || (e.category !== "labor" && e.category !== "satellite")) continue;
+      const matches =
+        (e.userId && userIds.has(String(e.userId))) ||
+        (e.userName &&
+          Array.from(userNames.values()).some(
+            (n) =>
+              n.toLowerCase().includes(e.userName!.toLowerCase()) ||
+              e.userName!.toLowerCase().includes(n.toLowerCase())
+          ));
+      if (!matches || !e.stage) continue;
+      const cleanKey = String(e.stage).replace(/__satellite$/, "");
+      const dedupeKey = `${cleanKey}|${e.userId || e.userName || ""}|${Number(e.amount) || 0}|${e.updatedAt || ""}`;
+      if (ledgerSeen.has(dedupeKey)) continue;
+      ledgerSeen.add(dedupeKey);
+
+      // Si ya hay MO por unitario×qty, no sumar ledger encima (evita doble conteo).
+      const existing = byStage.get(cleanKey);
+      if (existing && existing.laborAmount > 0) {
+        const unitVal = resolveUnit(cleanKey, null, existing.laborAmount);
+        if (unitVal != null && unitVal > 0 && totalQty > 0) {
+          existing.laborAmount = Math.round(unitVal * totalQty * 100) / 100;
+          if (!existing.userName && e.userName) existing.userName = e.userName;
+          continue;
+        }
+      }
+
+      upsertStage({
+        stageKey: cleanKey,
+        laborAmount: Number(e.amount) || 0,
+        userName: e.userName || null,
+        updatedAt: e.updatedAt || null,
+        replaceLabor: !existing || existing.laborAmount <= 0,
+      });
+    }
+  }
+
+  // 4. Capa actual asignada (solo marca isCurrent; no vuelve a sumar MO)
   for (const card of cards) {
     if (!card) continue;
-    if (Array.isArray(card.costLedger)) {
-      for (const e of card.costLedger) {
-        if (e && (e.category === "labor" || e.category === "satellite")) {
-          const matches =
-            (e.userId && userIds.has(String(e.userId))) ||
-            (e.userName &&
-              Array.from(userNames.values()).some((n) =>
-                n.toLowerCase().includes(e.userName!.toLowerCase())
-              ));
-          if (matches && e.stage) {
-            addStage(e.stage, Number(e.amount) || 0, e.userName || null, false, null, e.updatedAt || null);
-          }
-        }
-      }
-    }
-
-    // 3. Capas en stageAssignees asignadas a este usuario o satélite
-    if (card.stageAssignees) {
-      for (const [sKey, assign] of Object.entries(card.stageAssignees)) {
-        if (!assign) continue;
-        const matches =
-          (assign.userId && userIds.has(String(assign.userId))) ||
-          (assign.name &&
-            Array.from(userNames.values()).some((n) =>
-              n.toLowerCase().includes(assign.name.toLowerCase())
-            ));
-        if (matches) {
-          const cleanKey = sKey.replace(/__satellite$/, "");
-          const cfg = card.stageLaborConfig?.[cleanKey] || card.stageLaborConfig?.[sKey];
-          const laborAmt =
-            cfg?.enabled && cfg.perUnit
-              ? Number(cfg.perUnit) * (Number(card.quantity) || totalQty || 1)
-              : 0;
-          const perUnit = cfg?.enabled && cfg.perUnit ? Number(cfg.perUnit) : null;
-          const histEntry = (card.stageHistory || []).find((h) => h.stage === cleanKey);
-          const stageDate = histEntry?.enteredAt || (card as any).updatedAt || null;
-          addStage(cleanKey, laborAmt, assign.name || null, false, perUnit, stageDate);
-        }
-      }
-    }
-
-    // 4. Si la tarjeta está actualmente asignada en card.stage
     const isCurrentAssignee =
       (card.satelliteAssigneeId && userIds.has(String(card.satelliteAssigneeId))) ||
       (card.assigneeId && userIds.has(String(card.assigneeId)));
-
-    if (isCurrentAssignee) {
-      const labor = laborAmountForUsers(card, userIds);
-      const uName =
-        (card.satelliteAssigneeId && userNames.get(String(card.satelliteAssigneeId))) ||
-        card.satelliteAssignee ||
-        card.assignee ||
-        null;
-      addStage(card.stage, labor, uName, true);
+    if (!isCurrentAssignee || !card.stage) continue;
+    const uName =
+      (card.satelliteAssigneeId && userNames.get(String(card.satelliteAssigneeId))) ||
+      card.satelliteAssignee ||
+      card.assignee ||
+      null;
+    const cleanKey = String(card.stage).replace(/__satellite$/, "");
+    if (byStage.has(cleanKey)) {
+      const existing = byStage.get(cleanKey)!;
+      existing.isCurrent = true;
+      if (!existing.userName && uName) existing.userName = uName;
+    } else {
+      const cfg = card.stageLaborConfig?.[cleanKey] || card.stageLaborConfig?.[card.stage];
+      const perUnit =
+        cfg?.enabled && cfg.perUnit != null && Number(cfg.perUnit) > 0
+          ? Number(cfg.perUnit)
+          : card.laborCostPerUnit != null && Number(card.laborCostPerUnit) > 0
+            ? Number(card.laborCostPerUnit)
+            : null;
+      const labor =
+        perUnit != null && totalQty > 0
+          ? Math.round(perUnit * totalQty * 100) / 100
+          : 0;
+      upsertStage({
+        stageKey: cleanKey,
+        laborAmount: labor,
+        userName: uName,
+        isCurrent: true,
+        perUnit,
+        replaceLabor: true,
+      });
     }
   }
 
-  return [...byStage.values()]
-    .map((s) => ({
-      ...s,
-      laborAmount: Math.round((s.laborAmount || 0) * 100) / 100,
-      materialsAmount: Math.round((s.materialsAmount || 0) * 100) / 100,
-    }))
-    .sort((a, b) => {
-      if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
-      return String(a.stageLabel || "").localeCompare(String(b.stageLabel || ""));
-    });
+  // Normalizar: siempre unitario × qty cuando hay config
+  for (const stage of byStage.values()) {
+    const unitVal = resolveUnit(stage.stageKey, null, stage.laborAmount);
+    if (unitVal != null && unitVal > 0 && totalQty > 0) {
+      stage.laborAmount = Math.round(unitVal * totalQty * 100) / 100;
+      stage.actions = buildActions(unitVal);
+    } else {
+      stage.laborAmount = Math.round((stage.laborAmount || 0) * 100) / 100;
+    }
+    stage.materialsAmount = Math.round((stage.materialsAmount || 0) * 100) / 100;
+  }
+
+  return [...byStage.values()].sort((a, b) => {
+    if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
+    return String(a.stageLabel || "").localeCompare(String(b.stageLabel || ""));
+  });
 }
 
 /**
@@ -645,12 +915,10 @@ export function buildSatelliteOrderDetails(params: {
   for (const { card, order } of collectCardsFromOrders(orders)) {
     if (!cardAssignedToUsers(card, userIds, workshopId, userNamesList)) continue;
     const existing = byOrder.get(order.id);
-    const labor = laborAmountForUsers(card, userIds, workshopId, userNamesList);
     if (existing) {
       existing.cards.push(card);
-      existing.cost += labor;
     } else {
-      byOrder.set(order.id, { order, cards: [card], cost: labor });
+      byOrder.set(order.id, { order, cards: [card], cost: 0 });
     }
   }
 
@@ -695,10 +963,14 @@ export function buildSatelliteOrderDetails(params: {
 
     const paymentStatus: "pending" | "paid" =
       settlement?.status === "paid" ? "paid" : "pending";
-    const qty =
-      row.cards.reduce((sum, c) => sum + (Number(c.quantity) || 0), 0) ||
-      row.order.items?.reduce((s, it) => s + (Number(it.cantidad) || 0), 0) ||
-      0;
+
+    const orderItemsQty =
+      row.order.items?.reduce((s, it) => s + (Number(it.cantidad) || 0), 0) || 0;
+    const maxCardQty = row.cards.reduce(
+      (max, c) => Math.max(max, Number(c.quantity) || 0),
+      0
+    );
+    const qty = orderItemsQty > 0 ? orderItemsQty : maxCardQty;
 
     const workStatus: SatelliteWorkStatus =
       paymentStatus === "paid" ||
@@ -715,14 +987,6 @@ export function buildSatelliteOrderDetails(params: {
           ? Number(settlement.amount)
           : null;
 
-    let cost = row.cost;
-    if (agreedFromSettlement != null && agreedFromSettlement > 0) {
-      cost = agreedFromSettlement;
-    } else if (cost <= 0) {
-      const fromBreakdown = laborFromOrderBreakdown(row.order, userIds);
-      if (fromBreakdown > 0) cost = fromBreakdown;
-    }
-
     const stagesWorked = buildSatelliteStagesWorked({
       cards: row.cards,
       userIds,
@@ -732,6 +996,21 @@ export function buildSatelliteOrderDetails(params: {
       settlement,
       order: row.order,
     });
+
+    const stagesLaborTotal = stagesWorked.reduce(
+      (s, st) => s + (Number(st.laborAmount) || 0),
+      0
+    );
+
+    let cost = row.cost;
+    if (agreedFromSettlement != null && agreedFromSettlement > 0) {
+      cost = agreedFromSettlement;
+    } else if (stagesLaborTotal > 0) {
+      cost = stagesLaborTotal;
+    } else if (cost <= 0) {
+      const fromBreakdown = laborFromOrderBreakdown(row.order, userIds);
+      if (fromBreakdown > 0) cost = fromBreakdown;
+    }
 
     const workedLabels = stagesWorked.map((s) => s.stageLabel).filter(Boolean);
     const displayStageLabel =
@@ -833,8 +1112,11 @@ export function buildSatelliteOrderDetails(params: {
 
       const orderId = `tns-${p.kardexId || numDoc || Math.random()}`;
       const settlement = settlements[orderId];
-      const paymentStatus: "pending" | "paid" =
-        settlement?.status === "pending" ? "pending" : "paid";
+      // Lo que ya está en TNS (pedidos de compra / pagos) se considera pagado.
+      // Solo un settlement local explícito "pending" podría forzar lo contrario.
+      let paymentStatus: "pending" | "paid" = "paid";
+      if (settlement?.status === "pending") paymentStatus = "pending";
+      if (settlement?.status === "paid") paymentStatus = "paid";
 
       details.push({
         orderId,
@@ -848,7 +1130,11 @@ export function buildSatelliteOrderDetails(params: {
         orderStatus: isCerrado ? "delivered" : "in_production",
         cost: totalAmount,
         paymentStatus,
-        paidAt: settlement?.paid_at || (isCerrado ? getPedidoFechaEntrega(p) || getPedidoFecha(p) : null),
+        paidAt:
+          settlement?.paid_at ||
+          getPedidoFechaEntrega(p) ||
+          getPedidoFecha(p) ||
+          null,
         cardIds: [],
         enviado: true,
         workStatus: "recibido_completo",
@@ -986,13 +1272,27 @@ export function buildSatelliteDashboard(params: {
       settlements,
       workshopId: ws.id,
       userNamesById: Object.fromEntries(linked.map((u) => [u.id, u.name])),
-      workshop: ws,
+      workshop: {
+        ...ws,
+        // Amplía match TNS con contacto y nombres de usuarios vinculados
+        contact_name: ws.contact_name || userNames[0] || "",
+        aliases: [
+          ws.contact_name,
+          ...userNames,
+        ].filter(Boolean) as string[],
+      },
       tnsPedidos,
     });
 
     const summary = summarizeSatelliteOrders(orderDetails);
 
-    const hasTnsMatches = (tnsPedidos || []).some((p) => matchesSatelliteTns(ws, p));
+    const matchIdentity = {
+      name: ws.name,
+      nit: ws.nit || ws.nit_tercero || ws.cod_tercero || "",
+      contact_name: ws.contact_name || userNames[0] || "",
+      aliases: [ws.contact_name, ...userNames].filter(Boolean) as string[],
+    };
+    const hasTnsMatches = (tnsPedidos || []).some((p) => matchesSatelliteTns(matchIdentity, p));
 
     const contactName =
       userNames[0] ||

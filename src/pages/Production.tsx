@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { AppLayout } from "@/components/AppLayout";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useOrders } from "@/hooks/useOrders";
@@ -291,7 +292,10 @@ function getCardLaborInfoForStage(card: ProductionOrder, stageKey: string) {
 
 export default function Production() {
   const { toast } = useToast();
-  const { orders: rawOrders, fetchOrders, updateOrderStage, fetchEtapaLogs, updateKanbanAssignment, updateKanbanTarjetas } = useOrders();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const highlightHandledRef = useRef<string | null>(null);
+  const { orders: rawOrders, loading: ordersLoading, fetchOrders, updateOrderStage, fetchEtapaLogs, updateKanbanAssignment, updateKanbanTarjetas } = useOrders();
+  const [productionListReady, setProductionListReady] = useState(false);
   const {
     etapas,
     loading: loadingEtapas,
@@ -926,7 +930,10 @@ export default function Production() {
 
   // Cargar órdenes reales en producción + columnas Kanban desde BD
   useEffect(() => {
-    fetchOrders({ estado: "in_production" });
+    void (async () => {
+      await fetchOrders({ estado: "in_production" });
+      setProductionListReady(true);
+    })();
     fetchEtapas();
   }, []);
 
@@ -1220,6 +1227,44 @@ export default function Production() {
     if (!selectedOrderId) return;
     if (!selectedOrder) setSelectedOrderId(null);
   }, [selectedOrderId, selectedOrder]);
+
+  // Deep-link desde notificaciones: /production?highlight=<orderId>
+  useEffect(() => {
+    const highlight = (searchParams.get("highlight") || "").trim();
+    if (!highlight || highlightHandledRef.current === highlight) return;
+    if (!productionListReady || ordersLoading) return;
+
+    highlightHandledRef.current = highlight;
+    const inActive = activeOrders.some((o) => o.id === highlight);
+    const inRaw = rawOrders.some((o) => o.id === highlight);
+
+    if (inActive) {
+      setSelectedOrderId(highlight);
+    } else if (inRaw) {
+      toast({
+        title: "Pedido no disponible en Operativo",
+        description: "El pedido de la notificación no está activo en el tablero Kanban.",
+      });
+    } else {
+      toast({
+        title: "Pedido no encontrado",
+        description: "La notificación apunta a un pedido que ya no está disponible.",
+        variant: "destructive",
+      });
+    }
+
+    const next = new URLSearchParams(searchParams);
+    next.delete("highlight");
+    setSearchParams(next, { replace: true });
+  }, [
+    searchParams,
+    productionListReady,
+    ordersLoading,
+    activeOrders,
+    rawOrders,
+    setSearchParams,
+    toast,
+  ]);
 
   const stageLabels: Record<string, string> = {};
   stages.forEach((s) => { stageLabels[s.key] = s.label; });

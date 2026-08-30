@@ -223,11 +223,16 @@ function isCurrentProductionAssignee(card: ProductionOrder, userId: string): boo
 
 export function laborAmountForProductionUser(
   card: ProductionOrder,
-  userId: string
+  userId: string,
+  orderQtyOverride?: number
 ): number {
   if (!userId) return 0;
   let total = 0;
   const ledgerStages = new Set<string>();
+  const qty =
+    orderQtyOverride != null && orderQtyOverride > 0
+      ? orderQtyOverride
+      : Number(card.quantity) || 0;
 
   for (const entry of card.costLedger || []) {
     if (entry.category !== "labor") continue;
@@ -236,14 +241,29 @@ export function laborAmountForProductionUser(
     if (entry.stage) ledgerStages.add(`${entry.userId}:${entry.stage}`);
   }
 
+  // Preferir unitario × qty del pedido cuando hay config por capa asignada
+  if (card.stageAssignees && card.stageLaborConfig) {
+    let fromConfig = 0;
+    for (const [sKey, assign] of Object.entries(card.stageAssignees)) {
+      if (!assign?.userId || String(assign.userId) !== userId) continue;
+      if (sKey.endsWith("__satellite") || assign.kind === "satellite") continue;
+      const clean = sKey.replace(/__satellite$/, "");
+      const cfg = card.stageLaborConfig[clean] || card.stageLaborConfig[sKey];
+      if (cfg?.enabled && cfg.perUnit != null && Number(cfg.perUnit) > 0 && qty > 0) {
+        fromConfig += Number(cfg.perUnit) * qty;
+      }
+    }
+    if (fromConfig > 0) return Math.round(fromConfig * 100) / 100;
+  }
+
   if (card.laborCostEnabled && card.assigneeId && String(card.assigneeId) === userId) {
     const key = `${card.assigneeId}:${card.stage}`;
     if (!ledgerStages.has(key)) {
-      total += (Number(card.quantity) || 0) * (Number(card.laborCostPerUnit) || 0);
+      total += qty * (Number(card.laborCostPerUnit) || 0);
     }
   }
 
-  return total;
+  return Math.round(total * 100) / 100;
 }
 
 function userParticipatedInStage(
@@ -275,10 +295,9 @@ function collectUserStagesForCard(
 ): Map<string, ProductionStageActivity> {
   const byStage = new Map<string, ProductionStageActivity>();
 
-  const totalQty =
-    Number(card.quantity) ||
-    order?.items?.reduce((s, it) => s + (Number(it.cantidad) || 0), 0) ||
-    0;
+  const orderItemsQty =
+    order?.items?.reduce((s, it) => s + (Number(it.cantidad) || 0), 0) || 0;
+  const totalQty = orderItemsQty > 0 ? orderItemsQty : Number(card.quantity) || 0;
 
   // Extraer desglose de tallas
   const tallasMap = new Map<string, number>();
@@ -296,7 +315,7 @@ function collectUserStagesForCard(
     }
   } else if (order?.items && order.items.length > 0) {
     for (const it of order.items) {
-      const tName = (it.talla_nombre || (it as any).talla || "").trim();
+      const tName = (it.talla_nombre || (it as { talla?: string }).talla || "").trim();
       if (tName && tName !== "—") {
         tallasMap.set(tName, (tallasMap.get(tName) || 0) + (Number(it.cantidad) || 0));
       }
@@ -307,11 +326,20 @@ function collectUserStagesForCard(
     .map(([talla, cant]) => `${talla}: ${cant} uds`)
     .join(" · ");
 
+  const prendaNames = new Set<string>();
+  for (const it of order?.items || []) {
+    const n = String(it.subproducto_nombre || it.producto_nombre || "").trim();
+    if (n) prendaNames.add(n);
+  }
+  if (prendaNames.size === 0) {
+    const raw = String(card.items || card.title || "").trim();
+    for (const part of raw.split(",")) {
+      const n = part.trim();
+      if (n) prendaNames.add(n);
+    }
+  }
   const prendaName =
-    card.items ||
-    order?.items?.map((i) => i.subproducto_nombre || i.producto_nombre).filter(Boolean).join(", ") ||
-    order?.descripcion_resumida ||
-    null;
+    [...prendaNames].join(", ") || order?.descripcion_resumida || null;
 
   const isStageReq = (sKey: string) => {
     const k = sKey.toLowerCase();
@@ -389,7 +417,15 @@ function collectUserStagesForCard(
     if (!stageKey || !isStageReq(stageKey)) continue;
     const activity = ensure(stageKey);
     if (entry.category === "labor") {
-      activity.laborAmount += Number(entry.amount) || 0;
+      // No acumular ledger encima del unitario×qty
+      const stageCfg =
+        card.stageLaborConfig?.[activity.stageKey] ||
+        card.stageLaborConfig?.[stageKey];
+      if (stageCfg?.enabled && stageCfg.perUnit != null && totalQty > 0) {
+        activity.laborAmount = Math.round(totalQty * Number(stageCfg.perUnit) * 100) / 100;
+      } else if (activity.laborAmount <= 0) {
+        activity.laborAmount = Number(entry.amount) || 0;
+      }
     }
     if (entry.updatedAt) {
       if (!activity.updatedAt || entry.updatedAt > activity.updatedAt) {
@@ -400,14 +436,9 @@ function collectUserStagesForCard(
 
   if (card.assigneeId === userId && card.laborCostEnabled && card.stage && isStageReq(card.stage)) {
     const activity = ensure(card.stage);
-    const live =
-      (Number(card.quantity) || 0) * (Number(card.laborCostPerUnit) || 0);
-    const hasLedgerLabor = (card.costLedger || []).some(
-      (e) =>
-        e.userId === userId && e.stage === card.stage && e.category === "labor"
-    );
-    if (!hasLedgerLabor && live > 0) {
-      activity.laborAmount += live;
+    const live = totalQty * (Number(card.laborCostPerUnit) || 0);
+    if (activity.laborAmount <= 0 && live > 0) {
+      activity.laborAmount = live;
     }
   }
 
@@ -466,15 +497,13 @@ export function buildProductionOrderDetails(params: {
   for (const { card, order } of collectCardsFromOrders(orders)) {
     if (!cardVisibleToProductionUser(card, user)) continue;
     const existing = byOrder.get(order.id);
-    const labor = laborAmountForProductionUser(card, userId);
     const inWork =
       isCurrentProductionAssignee(card, userId) && order.estado !== "delivered";
     if (existing) {
       existing.cards.push(card);
-      existing.cost += labor;
       existing.inWork = existing.inWork || inWork;
     } else {
-      byOrder.set(order.id, { order, cards: [card], cost: labor, inWork });
+      byOrder.set(order.id, { order, cards: [card], cost: 0, inWork });
     }
   }
 
@@ -485,20 +514,24 @@ export function buildProductionOrderDetails(params: {
       row.cards.find((c) => c.assigneeId && String(c.assigneeId) === userId) ||
       row.cards[0];
     const stageKey = primary?.stage || row.order.etapa_produccion || "";
-    const qty =
-      row.cards.reduce((sum, c) => sum + (Number(c.quantity) || 0), 0) ||
-      row.order.items?.reduce((s, it) => s + (Number(it.cantidad) || 0), 0) ||
-      0;
+    const orderItemsQty =
+      row.order.items?.reduce((s, it) => s + (Number(it.cantidad) || 0), 0) || 0;
+    const maxCardQty = row.cards.reduce(
+      (max, c) => Math.max(max, Number(c.quantity) || 0),
+      0
+    );
+    const qty = orderItemsQty > 0 ? orderItemsQty : maxCardQty;
 
     const stageMap = new Map<string, ProductionStagePayment>();
     for (const card of row.cards) {
-      const stages = collectUserStagesForCard(card, userId, stageLabels);
+      const stages = collectUserStagesForCard(card, userId, stageLabels, row.order);
       for (const [key, activity] of stages) {
         const existing = stageMap.get(key);
         const inWork =
           activity.isCurrent && row.order.estado !== "delivered";
         if (existing) {
-          existing.cost += activity.laborAmount;
+          // No sumar MO de la misma capa en N tarjetas Kanban
+          existing.cost = Math.max(existing.cost, activity.laborAmount);
           existing.inWork = existing.inWork || inWork;
         } else {
           stageMap.set(key, {
@@ -513,13 +546,13 @@ export function buildProductionOrderDetails(params: {
       // Si no hubo actividad de capas pero hay MO en la tarjeta actual
       if (stages.size === 0 && card.stage) {
         const key = card.stage;
-        const labor = laborAmountForProductionUser(card, userId);
+        const labor = laborAmountForProductionUser(card, userId, qty);
         const existing = stageMap.get(key);
         const inWork =
           isCurrentProductionAssignee(card, userId) &&
           row.order.estado !== "delivered";
         if (existing) {
-          existing.cost += labor;
+          existing.cost = Math.max(existing.cost, labor);
           existing.inWork = existing.inWork || inWork;
         } else {
           stageMap.set(key, {
@@ -533,6 +566,18 @@ export function buildProductionOrderDetails(params: {
       }
     }
 
+    // Normalizar cada capa a unitario × qty del pedido si hay config
+    for (const card of row.cards) {
+      for (const st of stageMap.values()) {
+        const cfg =
+          card.stageLaborConfig?.[st.stageKey] ||
+          card.stageLaborConfig?.[`${st.stageKey}__production`];
+        if (cfg?.enabled && cfg.perUnit != null && Number(cfg.perUnit) > 0 && qty > 0) {
+          st.cost = Math.round(Number(cfg.perUnit) * qty * 100) / 100;
+        }
+      }
+    }
+
     const stagePayments = [...stageMap.values()].sort((a, b) => {
       if (a.inWork !== b.inWork) return a.inWork ? -1 : 1;
       return a.stageLabel.localeCompare(b.stageLabel);
@@ -542,7 +587,7 @@ export function buildProductionOrderDetails(params: {
       stagePayments.push({
         stageKey,
         stageLabel: stageLabels[stageKey] || stageKey || "Sin etapa",
-        cost: row.cost,
+        cost: 0,
         paymentStatus: "pending",
         inWork: row.inWork,
       });

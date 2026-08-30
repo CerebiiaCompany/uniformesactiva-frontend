@@ -38,6 +38,7 @@ import {
   Layers,
   UserPlus,
   Sparkles,
+  Factory,
 } from "lucide-react";
 import type { PedidoCompra } from "@/types/tns";
 import { usePedidosCompraTNS } from "@/hooks/usePedidosCompraTNS";
@@ -123,9 +124,13 @@ function EstadoBadge({ estado }: { estado: string }) {
 
 export interface PedidosCompraTNSTabProps {
   onRegisterSatellite?: (pedido: PedidoCompra) => void;
+  onRegisterProduction?: (pedido: PedidoCompra) => void;
 }
 
-export function PedidosCompraTNSTab({ onRegisterSatellite }: PedidosCompraTNSTabProps = {}) {
+export function PedidosCompraTNSTab({
+  onRegisterSatellite,
+  onRegisterProduction,
+}: PedidosCompraTNSTabProps = {}) {
   const {
     pedidos,
     rawPedidos,
@@ -540,20 +545,39 @@ export function PedidosCompraTNSTab({ onRegisterSatellite }: PedidosCompraTNSTab
                                     {pedido.dirTercero && (
                                       <span>Dir: <strong className="text-foreground">{pedido.dirTercero}</strong></span>
                                     )}
-                                    {onRegisterSatellite && (
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          onRegisterSatellite(pedido);
-                                        }}
-                                        className="h-7 text-xs gap-1 border-primary/40 text-primary hover:bg-primary/10 ml-auto"
-                                        title="Crear satélite con los datos y capas autocompletadas de este pedido"
-                                      >
-                                        <UserPlus className="h-3.5 w-3.5" />
-                                        Registrar como satélite
-                                      </Button>
+                                    {(onRegisterSatellite || onRegisterProduction) && (
+                                      <div className="flex items-center gap-1.5 flex-wrap ml-auto">
+                                        {onRegisterSatellite && (
+                                          <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              onRegisterSatellite(pedido);
+                                            }}
+                                            className="h-7 text-xs gap-1 border-primary/40 text-primary hover:bg-primary/10"
+                                            title="Crear satélite con los datos y capas autocompletadas de este pedido"
+                                          >
+                                            <UserPlus className="h-3.5 w-3.5" />
+                                            Registrar como satélite
+                                          </Button>
+                                        )}
+                                        {onRegisterProduction && (
+                                          <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              onRegisterProduction(pedido);
+                                            }}
+                                            className="h-7 text-xs gap-1 border-sky-500/40 text-sky-700 dark:text-sky-300 hover:bg-sky-500/10"
+                                            title="Crear usuario de producción con los datos y capas autocompletadas de este pedido"
+                                          >
+                                            <Factory className="h-3.5 w-3.5" />
+                                            Registrar como producción
+                                          </Button>
+                                        )}
+                                      </div>
                                     )}
                                   </div>
                                 </div>

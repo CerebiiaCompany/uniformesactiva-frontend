@@ -1,7 +1,6 @@
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
-import { Bell } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { AdminNotificationsBell } from "@/components/AdminNotificationsBell";
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -35,14 +34,7 @@ export function AppLayout({ children, title, subtitle, eyebrow }: AppLayoutProps
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="relative h-8 w-8 text-muted-foreground hover:text-foreground rounded-lg"
-              >
-                <Bell className="h-4 w-4" />
-                <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-primary" />
-              </Button>
+              <AdminNotificationsBell />
             </div>
           </header>
           <main className="flex-1 overflow-auto p-4 md:p-6 app-shell-main">{children}</main>

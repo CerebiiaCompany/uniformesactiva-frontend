@@ -117,7 +117,10 @@ export default function Login() {
                         .filter(Boolean)
                         .map((r: string) => {
                             const hit = knownRoles.find(
-                                (k) => k === r || r.includes(k)
+                                (k) =>
+                                    k === r ||
+                                    r.includes(k) ||
+                                    r.toLowerCase().includes(k.toLowerCase())
                             );
                             return hit || r;
                         });
@@ -134,6 +137,7 @@ export default function Login() {
                         email: userData.email,
                         first_name: userData.first_name,
                         last_name: userData.last_name,
+                        is_superuser: Boolean(userData.is_superuser),
                         roles: extractedRoles.length ? extractedRoles : [extractedRole],
                         permissions: userData.permissions || [],
                         production_stage_key: userData.production_stage_key || "",
@@ -152,6 +156,7 @@ export default function Login() {
                     };
 
                     localStorage.setItem("user", JSON.stringify(cleanUser));
+                    window.dispatchEvent(new Event("local-session-update"));
                 }
 
                 toast({

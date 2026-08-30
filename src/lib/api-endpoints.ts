@@ -127,4 +127,10 @@ export const endpoints = {
         detail: (id: string) => `${base()}/api/v1/users/${id}/`,
         me: () => `${base()}/api/v1/users/me/`,
     },
+    notifications: {
+        list: (params?: string) =>
+            `${base()}/api/v1/notifications/${params ? `?${params}` : ""}`,
+        detail: (id: string) => `${base()}/api/v1/notifications/${id}/`,
+        clearAll: () => `${base()}/api/v1/notifications/clear-all/`,
+    },
 };
