@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { AppLayout } from "@/components/AppLayout";
 import { StatCard } from "@/components/StatCard";
@@ -7,8 +7,12 @@ import { useDashboard } from "@/hooks/useDashboard";
 import type { StatusType } from "@/components/StatusBadge";
 import { SatelliteUserDashboard } from "@/components/SatelliteUserDashboard";
 import { ProductionUserDashboard } from "@/components/ProductionUserDashboard";
-import { InventoryMaterialStatusRings } from "@/components/inventory/InventoryOverview";
-import { useGetMaterials } from "@/hooks/useGetMaterials";
+import {
+  computeInventoryStatsFromTnsSummary,
+  InventoryMaterialStatusRings,
+} from "@/components/inventory/InventoryOverview";
+import { getTNSInventarioSummary } from "@/services/tnsService";
+import type { TNSInventarioSummary } from "@/types/tns";
 import { readStoredSatelliteUser } from "@/lib/satellite-user-dashboard";
 import { readStoredProductionUser } from "@/lib/production-user-dashboard";
 import {
@@ -49,7 +53,32 @@ export default function Dashboard() {
   const isProductionUser = useMemo(() => Boolean(readStoredProductionUser()), []);
   const { loading, error, stats, trends, recentOrders, alerts, unpaidOrders } =
     useDashboard();
-  const { materials, isLoading: isLoadingMaterials } = useGetMaterials({});
+  const [tnsSummary, setTnsSummary] = useState<TNSInventarioSummary | null>(null);
+  const [tnsSummaryLoading, setTnsSummaryLoading] = useState(true);
+
+  useEffect(() => {
+    if (isSatelliteUser || isProductionUser) return;
+    let cancelled = false;
+    setTnsSummaryLoading(true);
+    void getTNSInventarioSummary()
+      .then((data) => {
+        if (!cancelled) setTnsSummary(data);
+      })
+      .catch(() => {
+        if (!cancelled) setTnsSummary(null);
+      })
+      .finally(() => {
+        if (!cancelled) setTnsSummaryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSatelliteUser, isProductionUser]);
+
+  const inventoryStats = useMemo(
+    () => computeInventoryStatsFromTnsSummary(tnsSummary),
+    [tnsSummary]
+  );
 
   if (isSatelliteUser) {
     return <SatelliteUserDashboard />;
@@ -190,8 +219,8 @@ export default function Dashboard() {
         </div>
 
         <InventoryMaterialStatusRings
-          materials={materials}
-          isLoading={isLoadingMaterials}
+          stats={inventoryStats}
+          isLoading={tnsSummaryLoading}
           showInventoryLink
         />
 

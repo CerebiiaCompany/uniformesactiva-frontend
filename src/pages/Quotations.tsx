@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Plus, X, ShoppingCart, MessageSquare, FileText, Pencil, Package, Printer, Loader2 } from "lucide-react";
 import { useEffect, useState, useRef, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Dialog,
   DialogContent,
@@ -31,6 +31,7 @@ import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
 import { quotePayloadToArticleLines } from "@/lib/order-fields";
 import { printQuoteProductionGuide } from "@/lib/quote-production-guide";
+import { isAdminUser } from "@/lib/auth-roles";
 
 interface FilterUserOption {
   id: string;
@@ -109,6 +110,9 @@ function formatDateTimeShort(iso?: string | null): string {
 export default function Quotations() {
   const { toast } = useToast();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const highlightHandledRef = useRef<string | null>(null);
+  const [highlightedQuoteId, setHighlightedQuoteId] = useState<string | null>(null);
   const {
     quotes,
     setQuotes,
@@ -170,24 +174,12 @@ export default function Quotations() {
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const probabilidadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Verificar si el usuario es admin
-  const userStr = localStorage.getItem("user");
-  const user = userStr ? JSON.parse(userStr) : null;
-  const isAdmin = Boolean(
-    user?.is_superuser ||
-    user?.roles?.some((r: any) => {
-      const name = typeof r === "string" ? r : r?.name;
-      const lower = String(name || "").toLowerCase().trim();
-      return (
-        lower === "administrador" ||
-        lower === "admin" ||
-        lower === "superadmin" ||
-        lower === "administrador general"
-      );
-    })
-  );
+  // Verificar si el usuario es admin (solo admin cambia estado con Select)
+  const isAdmin = isAdminUser();
 
   // Obtener permisos del usuario desde localStorage
+  const userStr = localStorage.getItem("user");
+  const user = userStr ? JSON.parse(userStr) : null;
   const userPermissions = user?.permissions || [];
 
   // Permiso para crear cotizaciones
@@ -445,6 +437,40 @@ function isUserAllowedForTomadaPor(u: any): boolean {
     setIsFormOpen(true);
   };
 
+  // Deep-link desde notificaciones: /quotations?highlight=<quoteId>
+  useEffect(() => {
+    const highlight = (searchParams.get("highlight") || "").trim();
+    if (!highlight || highlightHandledRef.current === highlight) return;
+
+    let cancelled = false;
+    void (async () => {
+      const quote = await fetchQuoteById(highlight);
+      if (cancelled) return;
+      highlightHandledRef.current = highlight;
+      if (quote) {
+        setHighlightedQuoteId(quote.id);
+        if (quote.status !== "ordered" && quote.status !== "inactive") {
+          setEditQuote(quote);
+          setIsFormOpen(true);
+        }
+      } else {
+        toast({
+          title: "Cotización no encontrada",
+          description: "La notificación apunta a una cotización que ya no está disponible.",
+          variant: "destructive",
+        });
+      }
+      const next = new URLSearchParams(searchParams);
+      next.delete("highlight");
+      setSearchParams(next, { replace: true });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams.get("highlight")]);
+
   const handlePlaceOrder = async (quote: Quote) => {
     if (!quote.hasOrderPayload) {
       toast({
@@ -674,7 +700,13 @@ function isUserAllowedForTomadaPor(u: any): boolean {
                 </TableRow>
               ) : (
                 filteredQuotes.map((q) => (
-                  <TableRow key={q.id} className="hover:bg-muted/50">
+                  <TableRow
+                    key={q.id}
+                    className={cn(
+                      "hover:bg-muted/50",
+                      highlightedQuoteId === q.id && "bg-primary/10 ring-1 ring-primary/40"
+                    )}
+                  >
                     <TableCell className="font-semibold text-foreground text-sm">
                       {getFormattedId(q.id)}
                     </TableCell>

@@ -78,17 +78,21 @@ import { joinStageKeys } from "@/lib/production-capa-permissions";
 import {
   buildSatelliteDashboard,
   buildSatelliteOrderDetails,
+  encodeTnsUserMeta,
   exportSettlementCsv,
   formatMoneyCop,
+  isSamePersonIdentity,
   mapApiUserToSatelliteRef,
+  parseTnsUserMeta,
   summarizeSatelliteOrders,
   SATELLITE_WORK_STATUS_OPTIONS,
   workStatusLabel,
   type SatelliteDashboardCard,
   type SatelliteOrderDetail,
   type SatelliteUserRef,
+  type SatelliteWorkshop,
 } from "@/lib/satellite-dashboard";
-import type { SatelliteWorkStatus } from "@/hooks/useSatellites";
+import type { SatelliteSettlement, SatelliteWorkStatus } from "@/hooks/useSatellites";
 import {
   Dialog,
   DialogContent,
@@ -156,6 +160,7 @@ export default function Satellites() {
   const [appliedFilters, setAppliedFilters] = useState<SatelliteFilters>({ ...EMPTY_FILTERS });
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [createMode, setCreateMode] = useState<"satellite" | "production">("satellite");
   const [form, setForm] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -270,13 +275,21 @@ export default function Satellites() {
         const stageKeys = parseStageKeys(
           (u.production_stage_keys as string[] | string) ?? (u.production_stage_key as string)
         );
+        const cargoRaw = String(u.cargo || "Operario de Producción");
+        const tnsMeta = parseTnsUserMeta(cargoRaw);
+        const nit =
+          tnsMeta.nit ||
+          String(u.nit || u.documento || u.document || u.cedula || "").trim();
         return {
           id: String(u.id || "").trim(),
           name: fullName,
           fullName,
           email: String(u.email || ""),
           phone: String(u.phone || ""),
-          cargo: String(u.cargo || "Operario de Producción"),
+          cargo: tnsMeta.displayCargo,
+          cargoRaw,
+          nit,
+          tnsName: tnsMeta.tnsName,
           area: String(u.area || "Producción"),
           stageKeys,
           settlements: (u.settlements as Record<string, SatelliteSettlement>) || {},
@@ -286,6 +299,21 @@ export default function Satellites() {
 
   const productionCards = useMemo(() => {
     return productionUsers.map((user) => {
+      const virtualWorkshop: SatelliteWorkshop = {
+        id: `prod-ws-${user.id}`,
+        name: user.tnsName || user.fullName,
+        nit: user.nit || "",
+        contact_name: user.fullName,
+        phone: user.phone,
+        address: user.area,
+        specialties: user.stageKeys,
+        notes: user.email ? `Correo: ${user.email}` : "",
+        status: "active",
+        payment_status: "al_dia",
+        settlements: user.settlements,
+        aliases: [user.fullName, user.tnsName, user.name].filter(Boolean),
+      };
+
       const details = buildSatelliteOrderDetails({
         userIds: [user.id],
         orders,
@@ -293,15 +321,20 @@ export default function Satellites() {
         settlements: user.settlements,
         workshopId: null,
         userNamesById: { [user.id]: user.fullName },
+        workshop: virtualWorkshop,
+        tnsPedidos,
       });
       const summary = summarizeSatelliteOrders(details);
       const capas = user.stageKeys
         .map((k) => ({ key: k, label: stageLabels[k] || k }))
         .filter((c) => Boolean(c.label));
 
+      const hasTnsMatches = details.some((d) => d.source === "tns");
+
       const card: SatelliteDashboardCard = {
         id: `prod-${user.id}`,
         name: user.fullName,
+        nit: user.nit || "",
         contactName: user.cargo || user.area || "Producción",
         phone: user.phone,
         address: user.area,
@@ -316,6 +349,7 @@ export default function Satellites() {
         pendientes: summary.ordenesActivas,
         pagado: summary.pagado,
         porPagar: summary.porPagar,
+        isTnsSynced: hasTnsMatches,
       };
       return {
         card,
@@ -324,7 +358,7 @@ export default function Satellites() {
         summary,
       };
     });
-  }, [productionUsers, orders, stageLabels]);
+  }, [productionUsers, orders, stageLabels, tnsPedidos]);
 
   const selectedCard = useMemo(() => {
     const fromSat = dashboardCards.find((c) => c.id === selectedId);
@@ -588,8 +622,65 @@ export default function Satellites() {
     );
   }, [appliedFilters]);
 
+  const findDuplicateSatellite = useCallback(
+    (opts: { name?: string; nit?: string; contactName?: string }) => {
+      const names = [opts.name, opts.contactName].filter(Boolean) as string[];
+      const nit = opts.nit || "";
+      return (
+        satellites.find((s) =>
+          isSamePersonIdentity(
+            { names, nit },
+            {
+              names: [s.name, s.contact_name],
+              nit: s.nit || s.nit_tercero || "",
+            }
+          )
+        ) ||
+        dashboardCards.find((c) =>
+          isSamePersonIdentity(
+            { names, nit },
+            {
+              names: [c.name, c.contactName, ...(c.userNames || [])],
+              nit: c.nit || "",
+            }
+          )
+        ) ||
+        null
+      );
+    },
+    [satellites, dashboardCards]
+  );
+
+  const findDuplicateProductionUser = useCallback(
+    (opts: { name?: string; nit?: string; tnsName?: string; email?: string }) => {
+      const emailNorm = (opts.email || "").trim().toLowerCase();
+      if (emailNorm) {
+        const byEmail = productionUsers.find(
+          (u) => (u.email || "").trim().toLowerCase() === emailNorm
+        );
+        if (byEmail) return byEmail;
+      }
+
+      const names = [opts.name, opts.tnsName].filter(Boolean) as string[];
+      const nit = opts.nit || "";
+      return (
+        productionUsers.find((u) =>
+          isSamePersonIdentity(
+            { names, nit },
+            {
+              names: [u.fullName, u.tnsName, u.name],
+              nit: u.nit || "",
+            }
+          )
+        ) || null
+      );
+    },
+    [productionUsers]
+  );
+
   const openCreate = () => {
     const defaultStages = getDefaultSatelliteStageKeys(etapas);
+    setCreateMode("satellite");
     setForm({ ...EMPTY_FORM, production_stage_keys: defaultStages });
     setFormError("");
     setTnsAutoFilledInfo(null);
@@ -599,8 +690,44 @@ export default function Satellites() {
     void fetchEtapas();
   };
 
-  const openCreateWithTns = (pedido: PedidoCompra) => {
+  const openCreateWithTns = (
+    pedido: PedidoCompra,
+    mode: "satellite" | "production" = "satellite"
+  ) => {
     const extracted = extractTnsSatelliteData(pedido, etapas);
+
+    if (mode === "satellite") {
+      const existing = findDuplicateSatellite({
+        name: extracted.name,
+        nit: extracted.nit,
+        contactName: extracted.person_name,
+      });
+      if (existing) {
+        const existingId = "id" in existing ? String(existing.id) : "";
+        toast.error(
+          `«${extracted.name}» ya está registrado como satélite. No se puede crear de nuevo.`
+        );
+        setMainTab("satelites");
+        if (existingId) setSelectedId(existingId);
+        return;
+      }
+    } else {
+      const existing = findDuplicateProductionUser({
+        name: extracted.person_name,
+        tnsName: extracted.name,
+        nit: extracted.nit,
+      });
+      if (existing) {
+        toast.error(
+          `«${extracted.person_name || extracted.name}» ya está registrado como usuario de producción.`
+        );
+        setMainTab("produccion");
+        if (existing.id) setSelectedId(`prod-${existing.id}`);
+        return;
+      }
+    }
+
+    setCreateMode(mode);
     setForm({
       ...EMPTY_FORM,
       name: extracted.name,
@@ -608,7 +735,7 @@ export default function Satellites() {
       person_name: extracted.person_name,
       phone: extracted.phone,
       address: extracted.address,
-      cargo: extracted.cargo,
+      cargo: extracted.cargo || (mode === "production" ? "Operario de Producción" : ""),
       production_stage_keys: extracted.production_stage_keys,
     });
     setTnsAutoFilledInfo({
@@ -620,10 +747,14 @@ export default function Satellites() {
     setSelectedTnsKey(extracted.nit || extracted.name);
     setFormError("");
     setShowPassword(false);
-    setMainTab("satelites");
+    setMainTab(mode === "production" ? "produccion" : "satelites");
     setIsCreateOpen(true);
     void fetchEtapas();
-    toast.success(`Datos de «${extracted.name}» autocompletados.`);
+    toast.success(
+      mode === "production"
+        ? `Datos de «${extracted.name}» listos para registrar como producción.`
+        : `Datos de «${extracted.name}» autocompletados.`
+    );
   };
 
   const applyFilters = () => {
@@ -635,8 +766,117 @@ export default function Satellites() {
     setAppliedFilters({ ...EMPTY_FILTERS });
   };
 
+  const handleCreateProductionUser = async () => {
+    const personName = form.person_name.trim() || cleanContactName(form.name);
+    const email = form.email.trim();
+    const phone = form.phone.trim();
+
+    if (!personName) {
+      setFormError("El nombre de la persona es obligatorio.");
+      return;
+    }
+    if (!email) {
+      setFormError("El correo es obligatorio.");
+      return;
+    }
+    if (!phone) {
+      setFormError("El teléfono es obligatorio.");
+      return;
+    }
+    if (form.production_stage_keys.length === 0) {
+      setFormError("Selecciona al menos una capa (permisos de producción).");
+      return;
+    }
+
+    const duplicateProd = findDuplicateProductionUser({
+      name: personName,
+      tnsName: form.name.trim(),
+      nit: form.nit.trim(),
+      email,
+    });
+    if (duplicateProd) {
+      setFormError(
+        `Ya existe un usuario de producción con esos datos («${duplicateProd.fullName}»). No se puede registrar de nuevo.`
+      );
+      return;
+    }
+
+    const emailNorm = email.toLowerCase();
+    const emailTaken = rawUsers.some(
+      (u) => String(u.email || "").trim().toLowerCase() === emailNorm
+    );
+    if (emailTaken) {
+      setFormError("Ese correo ya está registrado en el sistema.");
+      return;
+    }
+
+    setIsCreatingAll(true);
+    setFormError("");
+
+    try {
+      const nameParts = personName.split(/\s+/);
+      const first_name = nameParts[0] || personName;
+      const last_name = nameParts.slice(1).join(" ");
+
+      const userPayload = {
+        full_name: personName,
+        first_name,
+        last_name,
+        email,
+        phone,
+        area: "Producción",
+        cargo: encodeTnsUserMeta(
+          form.cargo.trim() || "Operario de Producción",
+          form.nit.trim(),
+          form.name.trim()
+        ),
+        roles: ["Producción"],
+        production_stage_keys: form.production_stage_keys,
+        production_stage_key: joinStageKeys(form.production_stage_keys),
+        password: form.password.trim() || undefined,
+        status: form.status,
+      };
+
+      const userData = await http<{ username?: string }>(endpoints.users.list(), {
+        method: "POST",
+        body: JSON.stringify(userPayload),
+      });
+      const createdUsername = userData?.username || email;
+      const usedTempPassword = !form.password.trim();
+      toast.success(
+        usedTempPassword
+          ? `Usuario de producción creado. Usuario: ${createdUsername}. Contraseña temporal: Temp.${createdUsername}123!`
+          : `Usuario de producción ${createdUsername} creado correctamente.`
+      );
+
+      setIsCreateOpen(false);
+      setForm({ ...EMPTY_FORM, production_stage_keys: [] });
+      setTnsAutoFilledInfo(null);
+      setSelectedTnsKey("");
+      setCreateMode("satellite");
+      setMainTab("produccion");
+      await loadMetrics();
+    } catch (err: unknown) {
+      const msg =
+        err instanceof HttpError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "No se pudo crear el usuario de producción.";
+      setFormError(msg);
+    } finally {
+      setIsCreatingAll(false);
+    }
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (createMode === "production") {
+      await handleCreateProductionUser();
+      return;
+    }
+
     const name = form.name.trim();
     const personName = form.person_name.trim();
     const email = form.email.trim();
@@ -660,6 +900,30 @@ export default function Satellites() {
     }
     if (form.production_stage_keys.length === 0) {
       setFormError("Selecciona al menos una capa (permisos del satélite).");
+      return;
+    }
+
+    const duplicateSat = findDuplicateSatellite({
+      name,
+      nit: form.nit.trim(),
+      contactName: personName,
+    });
+    if (duplicateSat) {
+      const label =
+        "name" in duplicateSat ? String(duplicateSat.name || name) : name;
+      setFormError(
+        `Ya existe el satélite «${label}» (mismo NIT o nombre). No se puede crear de nuevo.`
+      );
+      return;
+    }
+
+    // Correo ya usado por cualquier usuario
+    const emailNorm = email.toLowerCase();
+    const emailTaken = rawUsers.some(
+      (u) => String(u.email || "").trim().toLowerCase() === emailNorm
+    );
+    if (emailTaken) {
+      setFormError("Ese correo ya está registrado en el sistema.");
       return;
     }
 
@@ -731,6 +995,7 @@ export default function Satellites() {
       setForm({ ...EMPTY_FORM, production_stage_keys: [] });
       setTnsAutoFilledInfo(null);
       setSelectedTnsKey("");
+      setCreateMode("satellite");
       await refetch();
       await loadMetrics();
     } catch (err: any) {
@@ -1263,7 +1528,10 @@ export default function Satellites() {
           </TabsContent>
 
           <TabsContent value="tns" className="m-0">
-            <PedidosCompraTNSTab onRegisterSatellite={openCreateWithTns} />
+            <PedidosCompraTNSTab
+              onRegisterSatellite={(pedido) => openCreateWithTns(pedido, "satellite")}
+              onRegisterProduction={(pedido) => openCreateWithTns(pedido, "production")}
+            />
           </TabsContent>
         </Tabs>
       )}
@@ -1302,12 +1570,24 @@ export default function Satellites() {
           <div className="bg-card text-card-foreground border rounded-xl shadow-lg w-full max-w-xl relative max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 pt-5 pb-3 sticky top-0 bg-card z-10 border-b">
               <div className="flex items-center gap-2">
-                <UserPlus className="h-5 w-5 text-red-600" />
-                <h3 className="text-lg font-semibold">Nuevo satélite</h3>
+                {createMode === "production" ? (
+                  <Factory className="h-5 w-5 text-sky-600" />
+                ) : (
+                  <UserPlus className="h-5 w-5 text-red-600" />
+                )}
+                <h3 className="text-lg font-semibold">
+                  {createMode === "production"
+                    ? "Nuevo usuario de producción"
+                    : "Nuevo satélite"}
+                </h3>
               </div>
               <button
                 type="button"
-                onClick={() => !isCreatingAll && setIsCreateOpen(false)}
+                onClick={() => {
+                  if (isCreatingAll) return;
+                  setIsCreateOpen(false);
+                  setCreateMode("satellite");
+                }}
                 className="p-1 hover:bg-muted rounded-md transition-colors"
                 aria-label="Cerrar"
                 disabled={isCreatingAll}
@@ -1318,10 +1598,21 @@ export default function Satellites() {
 
             <form onSubmit={handleCreate} className="px-6 pb-6 pt-4 space-y-4">
               <p className="text-xs text-muted-foreground">
-                Crea el taller y su usuario satélite en un solo paso. Área{" "}
-                <strong className="text-foreground">Producción</strong> y rol{" "}
-                <strong className="text-foreground">Satélite</strong> quedan asignados
-                automáticamente. Las capas definen en qué etapas puede trabajar.
+                {createMode === "production" ? (
+                  <>
+                    Crea un usuario de fábrica (no es satélite). Área{" "}
+                    <strong className="text-foreground">Producción</strong> y rol{" "}
+                    <strong className="text-foreground">Producción</strong> quedan asignados
+                    automáticamente. Aparecerá en la pestaña de usuarios de producción.
+                  </>
+                ) : (
+                  <>
+                    Crea el taller y su usuario satélite en un solo paso. Área{" "}
+                    <strong className="text-foreground">Producción</strong> y rol{" "}
+                    <strong className="text-foreground">Satélite</strong> quedan asignados
+                    automáticamente. Las capas definen en qué etapas puede trabajar.
+                  </>
+                )}
               </p>
 
               {/* Selector de autocompletado rápido desde TNS */}
@@ -1415,10 +1706,15 @@ export default function Satellites() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label className="text-xs font-semibold text-muted-foreground">
-                    Razón social / Nombre en TNS <span className="text-red-600">*</span>
+                    {createMode === "production"
+                      ? "Nombre según TNS"
+                      : "Razón social / Nombre en TNS"}{" "}
+                    {createMode === "satellite" ? (
+                      <span className="text-red-600">*</span>
+                    ) : null}
                   </Label>
                   <Input
-                    required
+                    required={createMode === "satellite"}
                     value={form.name}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -1433,7 +1729,11 @@ export default function Satellites() {
                       });
                       setFormError("");
                     }}
-                    placeholder="Ej. CLAUDIA MARIA BOHORQUEZ / SATELITE"
+                    placeholder={
+                      createMode === "production"
+                        ? "Ej. LADDY MILENA MARQUEZ / SATELITE"
+                        : "Ej. CLAUDIA MARIA BOHORQUEZ / SATELITE"
+                    }
                     className="h-10 rounded-lg bg-muted/40"
                   />
                 </div>
@@ -1530,7 +1830,7 @@ export default function Satellites() {
                     Rol <span className="text-red-600">*</span>
                   </Label>
                   <Input
-                    value="Satélite"
+                    value={createMode === "production" ? "Producción" : "Satélite"}
                     readOnly
                     disabled
                     className="h-10 rounded-lg bg-muted/60 text-foreground"
@@ -1601,7 +1901,9 @@ export default function Satellites() {
                   </div>
                 )}
                 <p className="text-xs text-muted-foreground">
-                  Define los permisos por capa. Puede encargarse de varias; puedes marcar o desmarcar libremente las opciones.
+                  {createMode === "production"
+                    ? "Define en qué capas del Kanban puede operar este usuario de producción."
+                    : "Define los permisos por capa. Puede encargarse de varias; puedes marcar o desmarcar libremente las opciones."}
                 </p>
               </div>
 
@@ -1610,7 +1912,9 @@ export default function Satellites() {
                 <Input
                   value={form.cargo}
                   onChange={(e) => setForm((p) => ({ ...p, cargo: e.target.value }))}
-                  placeholder="Ej. Satelite1"
+                  placeholder={
+                    createMode === "production" ? "Ej. Operario de Producción" : "Ej. Satelite1"
+                  }
                   className="h-10 rounded-lg bg-muted/40"
                 />
               </div>
@@ -1639,16 +1943,18 @@ export default function Satellites() {
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <Label className="text-xs font-semibold text-muted-foreground">Notas</Label>
-                <textarea
-                  value={form.notes}
-                  onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}
-                  placeholder="Tiempos de entrega, capacidad, condiciones..."
-                  rows={2}
-                  className="w-full rounded-lg border bg-muted/40 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 resize-y min-h-[64px]"
-                />
-              </div>
+              {createMode === "satellite" ? (
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-muted-foreground">Notas</Label>
+                  <textarea
+                    value={form.notes}
+                    onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}
+                    placeholder="Tiempos de entrega, capacidad, condiciones..."
+                    rows={2}
+                    className="w-full rounded-lg border bg-muted/40 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-red-600 resize-y min-h-[64px]"
+                  />
+                </div>
+              ) : null}
 
               <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-3">
                 <div>
@@ -1672,7 +1978,10 @@ export default function Satellites() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setIsCreateOpen(false)}
+                  onClick={() => {
+                    setIsCreateOpen(false);
+                    setCreateMode("satellite");
+                  }}
                   disabled={isPending || isCreatingAll}
                 >
                   Cancelar
@@ -1680,9 +1989,17 @@ export default function Satellites() {
                 <Button
                   type="submit"
                   disabled={isPending || isCreatingAll}
-                  className="bg-red-600 hover:bg-red-700 text-white"
+                  className={
+                    createMode === "production"
+                      ? "bg-sky-600 hover:bg-sky-700 text-white"
+                      : "bg-red-600 hover:bg-red-700 text-white"
+                  }
                 >
-                  {isPending || isCreatingAll ? "Creando..." : "Crear satélite y usuario"}
+                  {isPending || isCreatingAll
+                    ? "Creando..."
+                    : createMode === "production"
+                      ? "Crear usuario de producción"
+                      : "Crear satélite y usuario"}
                 </Button>
               </div>
             </form>

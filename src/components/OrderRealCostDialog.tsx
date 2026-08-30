@@ -1,6 +1,14 @@
 import type { ComponentType, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { Calculator, Package, Truck, X, type LucideIcon } from "lucide-react";
+import {
+  Calculator,
+  Layers,
+  Package,
+  Shirt,
+  Truck,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/format-number";
 import type { OrderItem } from "@/hooks/useOrders";
@@ -18,6 +26,11 @@ import {
   type RealCostLine,
 } from "@/lib/order-real-cost";
 import {
+  buildDeliveredMaterialsInfo,
+  type DeliveredInfoLine,
+  type DeliveredMaterialsInfo,
+} from "@/lib/delivered-materials-info";
+import {
   Table,
   TableBody,
   TableCell,
@@ -25,6 +38,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+
+type DeliveredMaterialsView = "pedido" | "prenda" | "variante";
 
 type OrderRealCostDialogProps = {
   open: boolean;
@@ -280,21 +295,133 @@ function LaborStageCard({ line }: { line: RealCostLine }) {
 function DetailCard({
   title,
   subtitle,
+  headerExtra,
   children,
 }: {
   title: string;
   subtitle?: string;
+  headerExtra?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <div className="rounded-xl border bg-card overflow-hidden">
-      <div className="px-4 py-3 border-b bg-muted/20">
-        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-        {subtitle ? (
-          <p className="text-[11px] text-muted-foreground mt-0.5">{subtitle}</p>
-        ) : null}
+      <div className="px-4 py-3 border-b bg-muted/20 space-y-2.5">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+          {subtitle ? (
+            <p className="text-[11px] text-muted-foreground mt-0.5">{subtitle}</p>
+          ) : null}
+        </div>
+        {headerExtra}
       </div>
       <div className="px-2 py-1">{children}</div>
+    </div>
+  );
+}
+
+function InfoMaterialRows({ lines }: { lines: DeliveredInfoLine[] }) {
+  if (!lines.length) {
+    return (
+      <p className="text-sm text-muted-foreground py-3 text-center">
+        Sin materiales de costeo para este grupo.
+      </p>
+    );
+  }
+  const total = lines.reduce((sum, line) => sum + line.amount, 0);
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Material</TableHead>
+          <TableHead className="text-right w-[120px]">Valor ref.</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {lines.map((line, idx) => (
+          <TableRow key={`${line.label}-${idx}`}>
+            <TableCell className="align-top">
+              <span className="text-sm text-foreground break-words leading-snug block">
+                {line.label}
+              </span>
+              <span className="text-[11px] text-muted-foreground block mt-0.5">
+                {line.detail}
+              </span>
+            </TableCell>
+            <TableCell className="text-right tabular-nums align-top">
+              {money(line.amount)}
+            </TableCell>
+          </TableRow>
+        ))}
+        <TableRow className="bg-muted/30 font-medium">
+          <TableCell>Subtotal ref.</TableCell>
+          <TableCell className="text-right tabular-nums">{money(total)}</TableCell>
+        </TableRow>
+      </TableBody>
+    </Table>
+  );
+}
+
+function DeliveredInfoByProduct({ info }: { info: DeliveredMaterialsInfo }) {
+  if (!info.byProduct.length) {
+    return (
+      <p className="text-sm text-muted-foreground py-4 text-center">
+        No hay prendas en la orden para desglosar.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-3 px-1 py-2">
+      {info.byProduct.map((product) => (
+        <div key={product.key} className="rounded-lg border bg-muted/10 overflow-hidden">
+          <div className="px-3 py-2.5 border-b bg-muted/20 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-foreground leading-snug">
+                {product.productName}
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {product.units.toLocaleString("es-CO")} uds · {product.variants.length}{" "}
+                {product.variants.length === 1 ? "variante" : "variantes"}
+              </p>
+            </div>
+            <span className="text-xs tabular-nums text-muted-foreground shrink-0">
+              {money(product.total)}
+            </span>
+          </div>
+          <InfoMaterialRows lines={product.lines} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DeliveredInfoByVariant({ info }: { info: DeliveredMaterialsInfo }) {
+  if (!info.byVariant.length) {
+    return (
+      <p className="text-sm text-muted-foreground py-4 text-center">
+        No hay variantes en la orden para desglosar.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-3 px-1 py-2">
+      {info.byVariant.map((variant) => (
+        <div key={variant.key} className="rounded-lg border bg-muted/10 overflow-hidden">
+          <div className="px-3 py-2.5 border-b bg-muted/20 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-foreground leading-snug">
+                {variant.variantName}
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {variant.productName} · {variant.units.toLocaleString("es-CO")} uds del pedido
+              </p>
+            </div>
+            <span className="text-xs tabular-nums text-muted-foreground shrink-0">
+              {money(variant.total)}
+            </span>
+          </div>
+          <InfoMaterialRows lines={variant.lines} />
+        </div>
+      ))}
     </div>
   );
 }
@@ -310,12 +437,21 @@ export function OrderRealCostDialog({
 }: OrderRealCostDialogProps) {
   const [estimatedLabor, setEstimatedLabor] = useState<number | null>(null);
   const [loadingLabor, setLoadingLabor] = useState(false);
+  const [deliveredView, setDeliveredView] = useState<DeliveredMaterialsView>("pedido");
+  const [deliveredInfo, setDeliveredInfo] = useState<DeliveredMaterialsInfo | null>(null);
+  const [loadingDeliveredInfo, setLoadingDeliveredInfo] = useState(false);
+  const [deliveredInfoError, setDeliveredInfoError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
       setEstimatedLabor(null);
+      setDeliveredView("pedido");
+      setDeliveredInfo(null);
+      setDeliveredInfoError(null);
       return;
     }
+    setDeliveredInfo(null);
+    setDeliveredInfoError(null);
     let cancelled = false;
     setLoadingLabor(true);
     void computeOrderEstimatedLaborCost(orderItems)
@@ -332,6 +468,28 @@ export function OrderRealCostDialog({
       cancelled = true;
     };
   }, [open, orderId, orderItems]);
+
+  useEffect(() => {
+    if (!open || deliveredView === "pedido") return;
+    let cancelled = false;
+    setLoadingDeliveredInfo(true);
+    setDeliveredInfoError(null);
+    void buildDeliveredMaterialsInfo(orderItems)
+      .then((info) => {
+        if (!cancelled) setDeliveredInfo(info);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDeliveredInfoError("No se pudo cargar el desglose informativo.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingDeliveredInfo(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, deliveredView, orderId, orderItems]);
 
   const data = breakdown || emptyRealCost(orderId);
   const { delivered: deliveredMaterials, additional: additionalMaterials } = useMemo(
@@ -359,6 +517,43 @@ export function OrderRealCostDialog({
     { title: "Satélites", amount: data.satellites },
     { title: "Envíos y domicilios", amount: data.shipping },
   ];
+
+  const deliveredSubtitle =
+    deliveredView === "pedido"
+      ? "Según costeo de variante × cantidad de la orden — base del costo real"
+      : deliveredView === "prenda"
+        ? "Vista informativa: materiales agrupados por prenda (no altera el costo real)"
+        : "Vista informativa: qué y cuánto lleva cada variante (no altera el costo real)";
+
+  const deliveredViewButtons = (
+    <div className="flex flex-wrap gap-1.5">
+      {(
+        [
+          { id: "pedido" as const, label: "Pedido", icon: Package },
+          { id: "prenda" as const, label: "Por prenda", icon: Shirt },
+          { id: "variante" as const, label: "Por variante", icon: Layers },
+        ] as const
+      ).map(({ id, label, icon: Icon }) => {
+        const active = deliveredView === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setDeliveredView(id)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition-colors",
+              active
+                ? "border-primary/30 bg-primary/10 text-primary"
+                : "border-border bg-background text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+            )}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
 
   if (!open) return null;
 
@@ -445,12 +640,29 @@ export function OrderRealCostDialog({
 
           <DetailCard
             title="Materiales entregados"
-            subtitle="Según costeo de variante × cantidad de la orden"
+            subtitle={deliveredSubtitle}
+            headerExtra={deliveredViewButtons}
           >
-            <MaterialTable
-              lines={deliveredMaterials}
-              emptyMessage="Sin materiales del costeo de variante."
-            />
+            {deliveredView === "pedido" ? (
+              <MaterialTable
+                lines={deliveredMaterials}
+                emptyMessage="Sin materiales del costeo de variante."
+              />
+            ) : loadingDeliveredInfo ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">
+                Cargando desglose informativo…
+              </p>
+            ) : deliveredInfoError ? (
+              <p className="text-sm text-red-600 py-4 text-center">{deliveredInfoError}</p>
+            ) : deliveredView === "prenda" && deliveredInfo ? (
+              <DeliveredInfoByProduct info={deliveredInfo} />
+            ) : deliveredView === "variante" && deliveredInfo ? (
+              <DeliveredInfoByVariant info={deliveredInfo} />
+            ) : (
+              <p className="text-sm text-muted-foreground py-4 text-center">
+                Sin datos para mostrar.
+              </p>
+            )}
           </DetailCard>
 
           {additionalMaterials.length > 0 ? (
