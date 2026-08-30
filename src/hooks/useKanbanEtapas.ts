@@ -12,6 +12,16 @@ export interface KanbanEtapa {
   activo: boolean;
 }
 
+export const DEFAULT_KANBAN_ETAPAS: KanbanEtapa[] = [
+  { id: "stage-design", key: "design", label: "Diseño", color_class: "design", orden: 0, is_system: true, activo: true },
+  { id: "stage-cutting", key: "cutting", label: "Corte", color_class: "cutting", orden: 1, is_system: true, activo: true },
+  { id: "stage-sewing", key: "sewing", label: "Confección", color_class: "sewing", orden: 2, is_system: true, activo: true },
+  { id: "stage-embroidery", key: "embroidery", label: "Bordado", color_class: "embroidery", orden: 3, is_system: true, activo: true },
+  { id: "stage-printing", key: "printing", label: "Estampado", color_class: "printing", orden: 4, is_system: true, activo: true },
+  { id: "stage-quality", key: "quality", label: "Calidad", color_class: "quality", orden: 5, is_system: true, activo: true },
+  { id: "stage-dispatch", key: "dispatch", label: "Despacho", color_class: "dispatch", orden: 6, is_system: true, activo: true },
+];
+
 function resolveError(err: unknown, fallback: string) {
   if (err instanceof HttpError && err.message?.trim()) return err.message;
   if (err instanceof Error && err.message?.trim()) return err.message;
@@ -19,7 +29,7 @@ function resolveError(err: unknown, fallback: string) {
 }
 
 export function useKanbanEtapas() {
-  const [etapas, setEtapas] = useState<KanbanEtapa[]>([]);
+  const [etapas, setEtapas] = useState<KanbanEtapa[]>(DEFAULT_KANBAN_ETAPAS);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,12 +38,21 @@ export function useKanbanEtapas() {
     setError(null);
     try {
       const data = await http<KanbanEtapa[]>(endpoints.orders.kanbanEtapas());
-      setEtapas(Array.isArray(data) ? data : []);
-      return data;
+      let list = Array.isArray(data) && data.length > 0 ? data : DEFAULT_KANBAN_ETAPAS;
+      const existingKeys = new Set(list.map((e) => e.key.toLowerCase()));
+      const missingDefaults = DEFAULT_KANBAN_ETAPAS.filter(
+        (def) => !existingKeys.has(def.key.toLowerCase())
+      );
+      if (missingDefaults.length > 0) {
+        list = [...list, ...missingDefaults].sort((a, b) => a.orden - b.orden);
+      }
+      setEtapas(list);
+      return list;
     } catch (err) {
       const msg = resolveError(err, "Error al cargar etapas del Kanban");
       setError(msg);
-      return [];
+      setEtapas(DEFAULT_KANBAN_ETAPAS);
+      return DEFAULT_KANBAN_ETAPAS;
     } finally {
       setLoading(false);
     }

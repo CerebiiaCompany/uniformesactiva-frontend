@@ -33,19 +33,16 @@ function shortQuoteId(id: string): string {
   return `COT-${id.slice(-3).toUpperCase()}`;
 }
 
-function colorEstampadoLabel(
+function estampadoLabel(
   payload: QuoteOrderPayload | undefined,
-  itemColor?: string | null
+  _itemColor?: string | null
 ): string {
-  const color =
-    (itemColor || "").trim() || (payload?.color || "").trim() || "—";
   const estampado = (payload?.estampado || "").trim();
   const logos = getActiveLogoLabels(payload || {});
   const printParts = [estampado, logos.length ? logos.join(", ") : ""]
     .filter(Boolean)
     .join(" · ");
-  if (!printParts) return color;
-  return `${color} / ${printParts}`;
+  return printParts || "—";
 }
 
 type QuotePrintItem = {
@@ -207,7 +204,7 @@ function buildQuoteGuideHtml(
         <tr>
           <td>${escapeHtml(productLabel)}</td>
           <td>${escapeHtml((item.talla_nombre || "—").trim() || "—")}</td>
-          <td>${escapeHtml(colorEstampadoLabel(payload, item.color))}</td>
+          <td>${escapeHtml(estampadoLabel(payload, item.color))}</td>
           <td class="num">${qty || "—"}</td>
           <td class="num">${escapeHtml(unit !== null ? fmtMoney(unit) : "—")}</td>
           <td class="num">${escapeHtml(lineTotal !== null ? fmtMoney(lineTotal) : "—")}</td>
@@ -338,7 +335,7 @@ function buildQuoteGuideHtml(
         <tr>
           <th>Producto</th>
           <th>Talla</th>
-          <th>Color / Estampado</th>
+          <th>Estampado</th>
           <th class="num">Cant.</th>
           <th class="num">P. unit.</th>
           <th class="num">Total</th>

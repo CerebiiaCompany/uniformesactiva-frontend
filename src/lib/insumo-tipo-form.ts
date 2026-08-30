@@ -83,12 +83,5 @@ export function getNewInsumoTipoFields(): FieldDefinition[] {
             placeholder: "Ej. YKK, Coats Cadena",
             required: false,
         },
-        {
-            name: "color",
-            label: "Color / Tono",
-            type: "text",
-            placeholder: "Ej. Negro, Níquel",
-            required: false,
-        },
     ];
 }

@@ -32,6 +32,7 @@ import {
   readStoredProductionUser,
   type ProductionUserPanelData,
 } from "@/lib/production-user-dashboard";
+import { mergeProductionUserFromApi } from "@/lib/production-capa-permissions";
 
 async function fetchAllOrders(): Promise<Order[]> {
   const all: Order[] = [];
@@ -79,25 +80,7 @@ export function ProductionUserDashboard() {
     try {
       const me = await http<Record<string, unknown>>(endpoints.users.me());
       if (me && typeof me === "object") {
-        const raw = localStorage.getItem("user");
-        const prev = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
-        const next = {
-          ...prev,
-          id: me.id || prev.id,
-          username: me.username || prev.username,
-          email: me.email || prev.email,
-          first_name: me.first_name || prev.first_name,
-          last_name: me.last_name || prev.last_name,
-          phone: me.phone || prev.phone || "",
-          area: me.area || prev.area || "",
-          cargo: me.cargo || prev.cargo || "",
-          roles: me.roles || prev.roles,
-          production_stage_key: me.production_stage_key || prev.production_stage_key || "",
-          production_stage_keys:
-            me.production_stage_keys || prev.production_stage_keys || [],
-          satellite_id: me.satellite_id ? String(me.satellite_id) : prev.satellite_id || "",
-        };
-        localStorage.setItem("user", JSON.stringify(next));
+        mergeProductionUserFromApi(me);
         user = readStoredProductionUser();
       }
     } catch {

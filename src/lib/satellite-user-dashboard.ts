@@ -1,6 +1,7 @@
 import type { Order } from "@/hooks/useOrders";
 import type { Satellite, SatelliteSettlement } from "@/hooks/useSatellites";
 import type { ProductionOrder } from "@/data/mockData";
+import type { PedidoCompra } from "@/types/tns";
 import {
   buildSatelliteOrderDetails,
   formatMoneyCop,
@@ -8,6 +9,7 @@ import {
   summarizeSatelliteOrders,
   workStatusLabel,
   type SatelliteOrderDetail,
+  type SatelliteWorkshop,
 } from "@/lib/satellite-dashboard";
 import { parseStageKeys } from "@/lib/production-capa-permissions";
 
@@ -302,82 +304,27 @@ export function buildSatelliteOrderHistory(params: {
   stageLabels: Record<string, string>;
   orderDetails: SatelliteOrderDetail[];
 }): SatelliteOrderHistory[] {
-  const { userId, orders, stageLabels, orderDetails } = params;
+  const { userId, orderDetails } = params;
   if (!userId) return [];
 
-  const detailById = new Map(orderDetails.map((d) => [d.orderId, d]));
   const history: SatelliteOrderHistory[] = [];
 
-  for (const order of orders) {
-    const detail = detailById.get(order.id);
-    if (!detail) continue;
-
-    const cards = (
-      Array.isArray(order.kanban_tarjetas) ? order.kanban_tarjetas : []
-    ).filter(
-      (c) =>
-        c.satelliteAssigneeId === userId ||
-        Object.entries(c.stageAssignees || {}).some(([k, a]) => {
-          if (!a?.userId || a.userId !== userId) return false;
-          return k.endsWith("__satellite") || a.kind === "satellite";
-        }) ||
-        (c.costLedger || []).some((e) => e.userId === userId)
-    );
-
-    const stageMap = new Map<string, SatelliteStageActivity>();
-    for (const card of cards) {
-      const partial = collectUserStagesForCard(card, userId, stageLabels);
-      for (const [key, activity] of partial) {
-        const existing = stageMap.get(key);
-        if (!existing) {
-          stageMap.set(key, { ...activity, materials: [...activity.materials] });
-          continue;
-        }
-        existing.laborAmount += activity.laborAmount;
-        existing.novedadesCount += activity.novedadesCount;
-        existing.isCurrent = existing.isCurrent || activity.isCurrent;
-        if (
-          activity.updatedAt &&
-          (!existing.updatedAt || activity.updatedAt > existing.updatedAt)
-        ) {
-          existing.updatedAt = activity.updatedAt;
-        }
-        for (const action of activity.actions) {
-          if (!existing.actions.includes(action)) existing.actions.push(action);
-        }
-        for (const mat of activity.materials) {
-          const hit = existing.materials.find((m) => m.name === mat.name);
-          if (hit) hit.quantity += mat.quantity;
-          else existing.materials.push({ ...mat });
-        }
-      }
-    }
-
-    if (stageMap.size === 0 && detail.stageKey) {
-      const fallbackCard = cards[0];
-      stageMap.set(detail.stageKey, {
-        stageKey: detail.stageKey,
-        stageLabel: detail.stageLabel,
-        actions: ["Asignado a la capa"],
-        laborAmount: fallbackCard
-          ? laborAmountForUsers(fallbackCard, new Set([userId]))
-          : detail.cost,
-        materials: [],
-        novedadesCount: 0,
-        isCurrent: true,
-        updatedAt: null,
-      });
-    }
-
-    const stages = [...stageMap.values()].sort((a, b) => {
-      if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
-      return (b.updatedAt || "").localeCompare(a.updatedAt || "");
-    });
+  for (const detail of orderDetails || []) {
+    const stages: SatelliteStageActivity[] = (detail.stagesWorked || []).map((s) => ({
+      stageKey: s.stageKey,
+      stageLabel: s.stageLabel,
+      actions: s.actions && s.actions.length > 0 ? s.actions : ["Asignado a la capa"],
+      laborAmount: s.laborAmount,
+      materials: s.materials || [],
+      novedadesCount: s.novedadesCount || 0,
+      isCurrent: Boolean(s.isCurrent),
+      updatedAt: s.updatedAt || null,
+    }));
 
     const totalLabor =
       detail.agreedCost != null && Number.isFinite(detail.agreedCost)
         ? detail.agreedCost
-        : stages.reduce((s, st) => s + st.laborAmount, 0) || detail.cost;
+        : stages.reduce((sum, st) => sum + st.laborAmount, 0) || detail.cost;
 
     history.push({
       orderId: detail.orderId,
@@ -400,18 +347,48 @@ export function buildSatelliteUserPanel(params: {
   user: StoredSatelliteUser;
   orders: Order[];
   stageLabels: Record<string, string>;
-  workshop: Satellite | null;
+  workshop: Satellite | SatelliteWorkshop | null;
+  tnsPedidos?: PedidoCompra[];
 }): SatelliteUserPanelData {
-  const { user, orders, stageLabels, workshop } = params;
+  const { user, orders, stageLabels, workshop, tnsPedidos = [] } = params;
   const settlements: Record<string, SatelliteSettlement> = workshop?.settlements || {};
+
+  const workshopRef: SatelliteWorkshop = workshop
+    ? {
+        id: workshop.id,
+        name: workshop.name,
+        nit: (workshop as Record<string, unknown>).nit as string || (workshop as Record<string, unknown>).nit_tercero as string || "",
+        contact_name: workshop.contact_name || user.fullName,
+        phone: workshop.phone || user.phone || "",
+        address: workshop.address || "",
+        specialties: workshop.specialties || user.stageKeys || [],
+        notes: workshop.notes || "",
+        status: workshop.status || "active",
+        payment_status: workshop.payment_status || "al_dia",
+        settlements,
+      }
+    : {
+        id: user.satelliteId || user.id,
+        name: user.fullName,
+        contact_name: user.fullName,
+        phone: user.phone || "",
+        address: "",
+        specialties: user.stageKeys || [],
+        notes: "",
+        status: "active",
+        payment_status: "al_dia",
+        settlements,
+      };
 
   const orderDetails = buildSatelliteOrderDetails({
     userIds: user.id ? [user.id] : [],
     orders,
     stageLabels,
     settlements,
-    workshopId: workshop?.id || user.satelliteId || null,
+    workshopId: workshopRef.id,
     userNamesById: user.id ? { [user.id]: user.fullName } : {},
+    workshop: workshopRef,
+    tnsPedidos,
   });
 
   const summary = summarizeSatelliteOrders(orderDetails);
@@ -427,6 +404,15 @@ export function buildSatelliteUserPanel(params: {
 
   const alerts: SatelliteUserAlert[] = orderDetails
     .map((d) => {
+      // Excluir órdenes de TNS y órdenes que ya están pagadas o entregadas
+      if (
+        d.source === "tns" ||
+        d.orderCode.startsWith("PED-") ||
+        d.paymentStatus === "paid" ||
+        d.orderStatus === "delivered"
+      ) {
+        return null;
+      }
       const late = daysLate(d.dueDate || null, d.orderStatus);
       if (late <= 0) return null;
       return {
@@ -450,9 +436,9 @@ export function buildSatelliteUserPanel(params: {
 
   return {
     user,
-    workshopName: workshop?.name || null,
+    workshopName: workshop?.name || workshopRef.name || null,
     assignedOrders: orderDetails.length,
-    pendingOrders: orderDetails.filter((d) => d.orderStatus !== "delivered").length,
+    pendingOrders: summary.ordenesActivas,
     debtPending: summary.porPagar,
     paidTotal: summary.pagado,
     confirmComplete,

@@ -2,6 +2,9 @@ import { useState, useCallback } from "react";
 import type { StatusType } from "@/components/StatusBadge";
 import { http, HttpError } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
+import {
+    notifyOrderRealCostUpdated,
+} from "@/lib/order-real-cost";
 
 export interface OrderItem {
     subproducto_id: string;
@@ -296,10 +299,14 @@ export function useOrders() {
         setLoading(true);
         setError(null);
         try {
-            await http<Order>(endpoints.orders.estado(ordenId), {
+            const updated = await http<Order>(endpoints.orders.estado(ordenId), {
                 method: "PATCH",
                 body: JSON.stringify({ nuevo_estado: nuevoEstado, observacion: observacion ?? "" }),
             });
+            mergeOrderInList(updated);
+            if (nuevoEstado === "in_production" || nuevoEstado === "delivered") {
+                notifyOrderRealCostUpdated(ordenId);
+            }
             return true;
         } catch (err: unknown) {
             setError(resolveHttpErrorMessage(err, "Error al actualizar estado"));

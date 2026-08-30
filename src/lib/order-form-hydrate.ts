@@ -18,6 +18,9 @@ export interface OrderFormSeed {
     medioPago: string;
     conceptoAbono: string;
     fechaLimiteSaldo: string;
+    registradoPorId?: string;
+    registradoPorNombre?: string;
+    fechaRegistro?: string;
     orderComments: string;
     logoPositions: LogoPositionKey[];
     logoPath: string | null;
@@ -58,7 +61,7 @@ function paymentSeedFromDetalle(
     detalle: QuoteOrderPayload["detalle_abono"] | Order["detalle_abono"] | null | undefined
 ): Pick<
     OrderFormSeed,
-    "paymentStatus" | "abonoAmountRaw" | "medioPago" | "conceptoAbono" | "fechaLimiteSaldo"
+    "paymentStatus" | "abonoAmountRaw" | "medioPago" | "conceptoAbono" | "fechaLimiteSaldo" | "registradoPorId" | "registradoPorNombre" | "fechaRegistro"
 > {
     const status =
         estadoPago === "parcial" || estadoPago === "pagado" || estadoPago === "no_pagado"
@@ -71,6 +74,9 @@ function paymentSeedFromDetalle(
         medioPago: (detalle?.medio_pago as string) || "",
         conceptoAbono: (detalle?.concepto as string) || "",
         fechaLimiteSaldo: toDateInput(detalle?.fecha_limite_saldo as string | undefined),
+        registradoPorId: (detalle?.registrado_por_id as string) || "",
+        registradoPorNombre: (detalle?.registrado_por_nombre as string) || "",
+        fechaRegistro: (detalle?.fecha_registro as string) || "",
     };
 }
 

@@ -20,6 +20,17 @@ import {
 import { FileText, CreditCard, Loader2, Lock } from "lucide-react";
 import { formatCurrency } from "@/lib/format-number";
 
+function formatNumberWithDots(val: string | number): string {
+  if (val === "" || val == null) return "";
+  const digitsOnly = String(val).replace(/\D/g, "");
+  if (!digitsOnly) return "";
+  return new Intl.NumberFormat("es-CO").format(Number(digitsOnly));
+}
+
+function parseRawNumber(val: string): string {
+  return val.replace(/\D/g, "");
+}
+
 type PaymentStatus = "pagado" | "parcial" | "no_pagado";
 
 export interface DetalleAbonoPayload {
@@ -242,14 +253,55 @@ export function OrderPaymentDetailDialog({
     resetFormFields();
   };
 
+  const getLoggedUserAudit = () => {
+    let loggedUser: any = null;
+    try {
+      const raw = localStorage.getItem("user");
+      if (raw) loggedUser = JSON.parse(raw);
+    } catch {
+      // ignore
+    }
+    const id = loggedUser?.id ? String(loggedUser.id) : "";
+    const nombre =
+      `${loggedUser?.first_name || ""} ${loggedUser?.last_name || ""}`.trim() ||
+      loggedUser?.username ||
+      (current as any).tomada_por ||
+      "";
+    const fecha = new Date().toISOString();
+    return { id, nombre, fecha };
+  };
+
   const handleConfirmPaid = async () => {
     if (!medioPago) {
       setError("Indica el medio de pago.");
       return;
     }
+    const audit = getLoggedUserAudit();
+    const prev = current.detalle_abono;
+    const hasPreviousPartial = Boolean(prev?.monto_abono || prev?.saldo_pendiente);
+
     await applyUpdate({
       estado_pago: "pagado",
-      detalle_abono: { medio_pago: medioPago },
+      detalle_abono: {
+        medio_pago: medioPago,
+        registrado_por_id: audit.id,
+        registrado_por_nombre: audit.nombre,
+        fecha_registro: audit.fecha,
+        ...(hasPreviousPartial
+          ? {
+              abono_detalle: {
+                monto_abono: prev?.monto_abono,
+                saldo_pendiente: prev?.saldo_pendiente,
+                medio_pago: prev?.medio_pago,
+                concepto: prev?.concepto,
+                fecha_limite_saldo: prev?.fecha_limite_saldo,
+                registrado_por_id: prev?.registrado_por_id,
+                registrado_por_nombre: prev?.registrado_por_nombre,
+                fecha_registro: prev?.fecha_registro,
+              },
+            }
+          : {}),
+      },
     });
   };
 
@@ -275,6 +327,7 @@ export function OrderPaymentDetailDialog({
       return;
     }
 
+    const audit = getLoggedUserAudit();
     await applyUpdate({
       estado_pago: "parcial",
       detalle_abono: {
@@ -284,6 +337,9 @@ export function OrderPaymentDetailDialog({
         medio_pago: medioPago,
         concepto: conceptoAbono.trim(),
         fecha_limite_saldo: fechaLimiteSaldo,
+        registrado_por_id: audit.id,
+        registrado_por_nombre: audit.nombre,
+        fecha_registro: audit.fecha,
       },
     });
   };
@@ -672,8 +728,8 @@ export function OrderPaymentDetailDialog({
                 )}
 
                 {showPartialForm && (
-                  <div className="rounded-xl border border-amber-200/80 bg-amber-50/40 p-3 space-y-3 dark:bg-amber-950/10 dark:border-amber-900/40">
-                    <p className="text-xs font-semibold">Detalle financiero del abono</p>
+                  <div className="rounded-xl border border-red-200/90 bg-red-50/40 p-3.5 space-y-3 dark:bg-red-950/20 dark:border-red-900/40">
+                    <p className="text-xs font-semibold text-red-950 dark:text-red-300">Detalle financiero del abono</p>
                     <div className="grid grid-cols-1 gap-2.5">
                       <div className="space-y-1">
                         <Label className="text-[11px]">Monto total de la deuda</Label>
@@ -684,13 +740,12 @@ export function OrderPaymentDetailDialog({
                           Monto del abono <span className="text-destructive">*</span>
                         </Label>
                         <Input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={abonoAmountRaw}
-                          onChange={(e) => setAbonoAmountRaw(e.target.value)}
+                          type="text"
+                          inputMode="numeric"
+                          value={formatNumberWithDots(abonoAmountRaw)}
+                          onChange={(e) => setAbonoAmountRaw(parseRawNumber(e.target.value))}
                           placeholder="0"
-                          className="h-9"
+                          className="h-9 tabular-nums"
                         />
                       </div>
                       <div className="space-y-1">
@@ -702,7 +757,7 @@ export function OrderPaymentDetailDialog({
                               ? formatMoney(saldoPendiente)
                               : formatMoney(saleValue)
                           }
-                          className="h-9 bg-muted/50 tabular-nums text-amber-800"
+                          className="h-9 bg-muted/50 tabular-nums text-red-700 dark:text-red-400 font-semibold"
                         />
                       </div>
                       <div className="space-y-1">
@@ -753,7 +808,11 @@ export function OrderPaymentDetailDialog({
 
                 {targetStatus && !confirmingPaidFromPartial && (
                   <Button
-                    className="w-full"
+                    className={
+                      targetStatus === "parcial"
+                        ? "w-full bg-red-500 hover:bg-red-600 text-white font-medium shadow-xs transition-colors"
+                        : "w-full"
+                    }
                     onClick={handleSaveFromSelect}
                     disabled={
                       saving ||
@@ -808,9 +867,9 @@ function DetailRow({
           multiline
             ? "text-right text-sm font-medium leading-snug"
             : emphasize
-              ? "tabular-nums text-primary"
+              ? "tabular-nums text-primary font-semibold"
               : warn
-                ? "tabular-nums text-amber-700 dark:text-amber-400"
+                ? "tabular-nums text-red-700 dark:text-red-400 font-semibold"
                 : "tabular-nums text-right"
         }
       >

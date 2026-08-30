@@ -63,6 +63,7 @@ import {
   isKanbanOperatorRole,
   type CapaActionsMap,
 } from "@/lib/production-capa-permissions";
+import { DEFAULT_KANBAN_ETAPAS } from "@/hooks/useKanbanEtapas";
 
 // Interfaz corregida con los datos reales que usamos de la API
 interface User {
@@ -125,7 +126,8 @@ const ROLE_CARD_META: Record<string, string> = {
   Inventario: "Administra materiales, proveedores y movimientos de stock.",
   Despachos: "Gestiona entregas a clientes y domicilios a satélites.",
   Diseño: "Crea y mantiene las líneas de producto y sus fichas técnicas.",
-  Satélite: "Opera tarjetas Kanban asignadas como satélite en sus capas configuradas.",
+  Satélite:
+    "Opera tarjetas Kanban asignadas. Puede solicitar materiales adicionales en todas las capas donde esté asignado.",
 };
 
 const USER_AREAS = [
@@ -390,7 +392,9 @@ export default function AdministrationSubmodule() {
   const [isEditing, setIsEditing] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [editFormData, setEditFormData] = useState<UserFormState>(emptyUserForm);
-  const [kanbanCapas, setKanbanCapas] = useState<KanbanCapa[]>([]);
+  const [kanbanCapas, setKanbanCapas] = useState<KanbanCapa[]>(
+    DEFAULT_KANBAN_ETAPAS.map(({ id, key, label }) => ({ id, key, label }))
+  );
   const [capaActions, setCapaActions] = useState<CapaActionsMap>({});
   const [newSatelliteName, setNewSatelliteName] = useState("");
   const [editNewSatelliteName, setEditNewSatelliteName] = useState("");
@@ -414,9 +418,19 @@ export default function AdministrationSubmodule() {
       const response = await apiFetch(endpoints.orders.kanbanEtapas(), {
         headers: { Authorization: token ? `Bearer ${token}` : "" },
       });
-      if (!response.ok) return;
+      if (!response.ok) {
+        setKanbanCapas(DEFAULT_KANBAN_ETAPAS.map(({ id, key, label }) => ({ id, key, label })));
+        return;
+      }
       const data = await response.json();
-      const list = Array.isArray(data) ? data : [];
+      let list = Array.isArray(data) && data.length > 0 ? data : DEFAULT_KANBAN_ETAPAS;
+      const existingKeys = new Set(list.map((e: any) => e.key?.toLowerCase()));
+      const missingDefaults = DEFAULT_KANBAN_ETAPAS.filter(
+        (def) => !existingKeys.has(def.key.toLowerCase())
+      );
+      if (missingDefaults.length > 0) {
+        list = [...list, ...missingDefaults].sort((a: any, b: any) => (a.orden ?? 0) - (b.orden ?? 0));
+      }
       setKanbanCapas(
         list
           .map((e: { id: string; key: string; label: string; orden?: number }) => ({
@@ -429,7 +443,7 @@ export default function AdministrationSubmodule() {
           .map(({ id, key, label }) => ({ id, key, label }))
       );
     } catch {
-      // silenciosamente: el select de capa quedará vacío si falla
+      setKanbanCapas(DEFAULT_KANBAN_ETAPAS.map(({ id, key, label }) => ({ id, key, label })));
     }
   }, []);
 
@@ -647,6 +661,14 @@ export default function AdministrationSubmodule() {
       }
 
       setMatrix(newMatrix);
+      if (data.capa_actions || data.kanban_capas_permissions) {
+        const backendCapas = data.capa_actions || data.kanban_capas_permissions;
+        setCapaActions(backendCapas);
+        const role = rolesList.find((r) => r.id === selectedRole);
+        if (role?.name) {
+          saveCapaActionsForRole(role.name, backendCapas, role.id);
+        }
+      }
     } catch (error: any) {
       if (error instanceof UnauthorizedError) return;
       console.error("Error cargando permisos:", error);
@@ -663,9 +685,11 @@ export default function AdministrationSubmodule() {
   const handleSelectRole = (roleId: string) => {
     setSelectedRole(roleId);
     const role = rolesList.find((r) => r.id === roleId);
-    if (role?.name === "Producción" || role?.name === "Satélite") {
-      fetchCapas();
+    if (role) {
+      const saved = getCapaActionsForRole(role.name) || getCapaActionsForRole(role.id);
+      setCapaActions(saved);
     }
+    fetchCapas();
   };
 
   const togglePerm = (mod: string, perm: Perm) => {
@@ -681,14 +705,9 @@ export default function AdministrationSubmodule() {
   const handleSave = async () => {
     if (!selectedRole) return;
 
-    // Producción / Satélite: permisos por capa Kanban
-    if (selectedRoleObj?.name === "Producción" || selectedRoleObj?.name === "Satélite") {
-      saveCapaActionsForRole(selectedRoleObj.name, capaActions);
-      toast({
-        title: "Cambios guardados",
-        description: `Los permisos por capa Kanban de ${selectedRoleObj.name} se guardaron correctamente.`,
-      });
-      return;
+    const currentRoleObj = rolesList.find((r) => r.id === selectedRole);
+    if (currentRoleObj?.name) {
+      saveCapaActionsForRole(currentRoleObj.name, capaActions, currentRoleObj.id);
     }
 
     const UPDATE_PERMISSIONS_URL = `${BASE_URL}/api/v1/users/permisos/roles/${selectedRole}/permissions/`;
@@ -702,7 +721,9 @@ export default function AdministrationSubmodule() {
     }));
 
     const payload = {
-      permissions: formattedPermissions
+      permissions: formattedPermissions,
+      capa_actions: capaActions,
+      kanban_capas_permissions: capaActions,
     };
 
     try {
@@ -721,7 +742,7 @@ export default function AdministrationSubmodule() {
 
       toast({
         title: "Cambios guardados",
-        description: `La matriz de permisos para el rol ${currentRoleObj?.name || ""} se sincronizó con éxito.`,
+        description: `Los permisos y configuración Kanban para ${currentRoleObj?.name || "el rol"} se sincronizaron con éxito.`,
       });
     } catch (error: any) {
       if (error instanceof UnauthorizedError) return;
@@ -1330,136 +1351,140 @@ export default function AdministrationSubmodule() {
                 </div>
 
                 {selectedRoleObj ? (
-                  <div className="space-y-4 rounded-xl border p-4">
-                    {selectedRoleObj.name === "Producción" ||
-                    selectedRoleObj.name === "Satélite" ? (
-                      <div className="space-y-3">
-                        <div>
-                          <h4 className="text-sm font-semibold text-foreground">
-                            Permisos por capa Kanban — {selectedRoleObj.name}
-                          </h4>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            Cada usuario de {selectedRoleObj.name} solo opera tarjetas de su capa y
-                            puede moverlas únicamente a la siguiente. Marca qué acciones puede hacer
-                            en su capa.
-                          </p>
-                        </div>
+                  <div className="space-y-6 rounded-xl border p-5">
+                    {/* Sección Módulos del sistema */}
+                    <div className="space-y-3">
+                      <div>
+                        <h4 className="text-sm font-semibold text-foreground">
+                          Módulos del sistema — {selectedRoleObj.name}
+                        </h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Marca qué módulos generales del sistema puede ver y operar este rol.
+                        </p>
+                      </div>
 
-                        {kanbanCapas.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">
-                            No hay capas Kanban. Configúralas primero en Fábrica.
-                          </p>
-                        ) : (
-                          <div className="border border-border rounded-lg overflow-hidden">
-                            <Table>
-                              <TableHeader>
-                                <TableRow className="bg-muted/50">
-                                  <TableHead>Capa</TableHead>
-                                  {CAPA_KANBAN_ACTIONS.map((action) => (
-                                    <TableHead key={action.code} className="text-center">
-                                      <span className="block">{action.label}</span>
-                                    </TableHead>
+                      <div className="border border-border rounded-lg overflow-hidden relative">
+                        <div className={loading ? "opacity-40 pointer-events-none" : ""}>
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="bg-muted/50">
+                                <TableHead>Módulo</TableHead>
+                                <TableHead className="text-center">Ver</TableHead>
+                                <TableHead className="text-center">Crear</TableHead>
+                                <TableHead className="text-center">Editar</TableHead>
+                                <TableHead className="text-center">Eliminar</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {dbModules.map((mod) => (
+                                <TableRow key={mod.code}>
+                                  <TableCell className="font-medium">{mod.name}</TableCell>
+                                  {PERMS.map((p) => (
+                                    <TableCell key={p} className="text-center">
+                                      <div className="flex justify-center">
+                                        <Checkbox
+                                          checked={matrix[mod.code]?.[p] ?? false}
+                                          onCheckedChange={() => togglePerm(mod.code, p)}
+                                        />
+                                      </div>
+                                    </TableCell>
                                   ))}
                                 </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {kanbanCapas.map((capa, idx) => {
-                                  const nextLabel =
-                                    idx < kanbanCapas.length - 1
-                                      ? kanbanCapas[idx + 1].label
-                                      : null;
-                                  const selected = getCapaActionsForStage(
-                                    capaActions,
-                                    capa.key
-                                  );
-                                  return (
-                                    <TableRow key={capa.id}>
-                                      <TableCell>
-                                        <KanbanStageChip
-                                          stageKey={capa.key}
-                                          label={capa.label}
-                                          className="font-semibold"
-                                        />
-                                        <p className="text-[11px] text-muted-foreground mt-1.5">
-                                          {nextLabel
-                                            ? `Mueve solo a → ${nextLabel}`
-                                            : "Última etapa (sin siguiente)"}
-                                        </p>
-                                      </TableCell>
-                                      {CAPA_KANBAN_ACTIONS.map((action) => (
-                                        <TableCell key={action.code} className="text-center">
-                                          <div className="flex justify-center">
-                                            <Checkbox
-                                              checked={selected.includes(action.code)}
-                                              onCheckedChange={() =>
-                                                setCapaActions((prev) =>
-                                                  toggleCapaAction(prev, capa.key, action.code)
-                                                )
-                                              }
-                                            />
-                                          </div>
-                                        </TableCell>
-                                      ))}
-                                    </TableRow>
-                                  );
-                                })}
-                              </TableBody>
-                            </Table>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                        {loading && (
+                          <div className="absolute inset-0 flex items-center justify-center font-semibold text-sm text-muted-foreground">
+                            Cargando permisos reales...
                           </div>
                         )}
                       </div>
-                    ) : (
-                      <>
-                        <div>
-                          <h4 className="text-sm font-semibold text-foreground">
-                            Módulos — {selectedRoleObj.name}
-                          </h4>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            Marca qué módulos puede ver y operar este rol.
-                          </p>
-                        </div>
+                    </div>
 
-                        <div className="border border-border rounded-lg overflow-hidden relative">
-                          <div className={loading ? "opacity-40 pointer-events-none" : ""}>
-                            <Table>
-                              <TableHeader>
-                                <TableRow className="bg-muted/50">
-                                  <TableHead>Módulo</TableHead>
-                                  <TableHead className="text-center">Ver</TableHead>
-                                  <TableHead className="text-center">Crear</TableHead>
-                                  <TableHead className="text-center">Editar</TableHead>
-                                  <TableHead className="text-center">Eliminar</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {dbModules.map((mod) => (
-                                  <TableRow key={mod.code}>
-                                    <TableCell className="font-medium">{mod.name}</TableCell>
-                                    {PERMS.map((p) => (
-                                      <TableCell key={p} className="text-center">
+                    {/* Sección Permisos por capa Kanban */}
+                    <div className="space-y-3 pt-3 border-t">
+                      <div>
+                        <h4 className="text-sm font-semibold text-foreground">
+                          Permisos por capa Kanban — {selectedRoleObj.name}
+                        </h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Personaliza qué tableros y acciones puede ver y operar cada usuario con este rol.
+                          En <span className="font-medium text-foreground">Satélite</span>, solicitar
+                          inventario está siempre permitido en las capas asignadas al usuario.
+                        </p>
+                      </div>
+
+                      {kanbanCapas.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          No hay capas Kanban. Configúralas primero en Fábrica.
+                        </p>
+                      ) : (
+                        <div className="border border-border rounded-lg overflow-hidden">
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="bg-muted/50">
+                                <TableHead>Capa</TableHead>
+                                {CAPA_KANBAN_ACTIONS.map((action) => (
+                                  <TableHead key={action.code} className="text-center">
+                                    <span className="block">{action.label}</span>
+                                  </TableHead>
+                                ))}
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {kanbanCapas.map((capa, idx) => {
+                                const nextLabel =
+                                  idx < kanbanCapas.length - 1
+                                    ? kanbanCapas[idx + 1].label
+                                    : null;
+                                const selected = getCapaActionsForStage(
+                                  capaActions,
+                                  capa.key
+                                );
+                                return (
+                                  <TableRow key={capa.id}>
+                                    <TableCell>
+                                      <KanbanStageChip
+                                        stageKey={capa.key}
+                                        label={capa.label}
+                                        className="font-semibold"
+                                      />
+                                      <p className="text-[11px] text-muted-foreground mt-1.5">
+                                        {nextLabel
+                                          ? `Mueve solo a → ${nextLabel}`
+                                          : "Última etapa (sin siguiente)"}
+                                      </p>
+                                    </TableCell>
+                                    {CAPA_KANBAN_ACTIONS.map((action) => (
+                                      <TableCell key={action.code} className="text-center">
                                         <div className="flex justify-center">
                                           <Checkbox
-                                            checked={matrix[mod.code]?.[p] ?? false}
-                                            onCheckedChange={() => togglePerm(mod.code, p)}
+                                            checked={selected.includes(action.code)}
+                                            onCheckedChange={() =>
+                                              setCapaActions((prev) =>
+                                                toggleCapaAction(
+                                                  prev,
+                                                  capa.key,
+                                                  action.code,
+                                                  kanbanCapas.map((c) => c.key)
+                                                )
+                                              )
+                                            }
                                           />
                                         </div>
                                       </TableCell>
                                     ))}
                                   </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
-                          </div>
-                          {loading && (
-                            <div className="absolute inset-0 flex items-center justify-center font-semibold text-sm text-muted-foreground">
-                              Cargando permisos reales...
-                            </div>
-                          )}
+                                );
+                              })}
+                            </TableBody>
+                          </Table>
                         </div>
-                      </>
-                    )}
+                      )}
+                    </div>
 
-                    <div className="flex justify-end">
+                    <div className="flex justify-end pt-2">
                       <Button
                         onClick={handleSave}
                         disabled={loading}
