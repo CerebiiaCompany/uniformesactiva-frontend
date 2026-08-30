@@ -1,9 +1,21 @@
 import type { ProductionOrder } from "@/data/mockData";
+import { formatCurrency, formatUnitCost } from "@/lib/format-number";
+import { getTNSOrderRealMaterialCost } from "@/services/tnsService";
+import type { TNSOrderRealMaterialCostLine, TNSOrderRealMaterialCostResponse } from "@/types/tns";
+import { fetchVariantCostSummary } from "@/hooks/useGetCostSummary";
+import { parseApiNumber } from "@/lib/format-number";
 
 export const ORDER_REAL_COST_EVENT = "ua:order-real-cost-updated";
 
+/** Materiales entregados y acumulación operativa aplican desde «en producción». */
+export function orderIncludesDeliveredMaterials(estado?: string | null): boolean {
+  return estado === "in_production" || estado === "delivered";
+}
+
 export type RealCostLine = {
   label: string;
+  /** Detalle opcional (cantidad × precio) */
+  detail?: string;
   amount: number;
   stage?: string;
   stageLabel?: string;
@@ -11,7 +23,81 @@ export type RealCostLine = {
   userName?: string;
   actorKind?: "production" | "satellite" | "provider" | "unassigned";
   category?: "materials" | "labor" | "mold" | "satellite" | "shipping";
+  /** Origen del material en costo real (costeo vs solicitud Kanban) */
+  materialSource?: "delivered" | "kanban_additional";
+  /** Código TNS exacto (prod_Dist_Cod) para deduplicar y consumo de inventario */
+  materialCode?: string;
 };
+
+/** Etiqueta de material sin repetir código cuando el nombre ya lo incluye. */
+export function formatMaterialDisplayLabel(codigo: string, nombre: string): string {
+  const c = (codigo || "").trim();
+  const n = (nombre || "").trim();
+  if (!c || c === "—") return n || c;
+  if (!n) return c;
+  const nCompact = n.replace(/\s+/g, " ").trim();
+  const cUpper = c.toUpperCase();
+  if (nCompact.toUpperCase() === cUpper) return nCompact;
+  if (nCompact.toUpperCase().startsWith(`${cUpper} `)) return nCompact;
+  const escaped = c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (new RegExp(`\\b${escaped}\\b`, "i").test(nCompact)) return nCompact;
+  return `${c} ${nCompact}`.trim();
+}
+
+/** Extrae código TNS de una etiqueta o nombre de material. */
+export function extractMaterialCodeFromText(text: string): string {
+  const t = (text || "").trim();
+  if (!t) return "";
+  const first = t.split(/\s+/)[0] ?? "";
+  if (/^[A-Z0-9][A-Z0-9._-]{2,}$/i.test(first) && /\d/.test(first)) {
+    return first.toUpperCase();
+  }
+  const tokens = t.split(/\s+/);
+  for (let i = tokens.length - 1; i >= 0; i -= 1) {
+    const tok = tokens[i] ?? "";
+    if (/^\d{4,}$/.test(tok)) return tok.toUpperCase();
+  }
+  return "";
+}
+
+function normalizeKanbanMaterialCode(codeOrLabel: string): string {
+  const raw = (codeOrLabel || "").trim();
+  if (!raw || raw === "—") return "";
+  const extracted = extractMaterialCodeFromText(raw);
+  if (extracted) return extracted.toUpperCase();
+  return raw.replace(/\s+/g, "").toUpperCase();
+}
+
+function kanbanAdditionalDedupKey(line: RealCostLine): string {
+  const code = normalizeKanbanMaterialCode(
+    line.materialCode || extractMaterialCodeFromText(line.label) || line.label
+  );
+  const stage = (line.stage || "").trim().toLowerCase();
+  // Misma tela en capas distintas = líneas distintas (cada capa aporta su solicitud)
+  if (code && !code.startsWith("SIN-")) {
+    return `stage:${stage}|code:${code}`;
+  }
+  const baseLabel = (line.label || "").replace(/^\[[^\]]+\]\s*/, "").trim().toLowerCase();
+  return `stage:${stage}|label:${baseLabel}`;
+}
+
+/** Una sola línea por código TNS; al editar gana la cantidad/monto más reciente (mayor). */
+export function dedupeKanbanAdditionalLines(lines: RealCostLine[]): RealCostLine[] {
+  const map = new Map<string, RealCostLine>();
+  for (const line of lines) {
+    const key = kanbanAdditionalDedupKey(line);
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, line);
+      continue;
+    }
+    // Preferir la línea con mayor monto (solicitud actualizada), no la de TNS antigua
+    if (line.amount > existing.amount) {
+      map.set(key, line);
+    }
+  }
+  return [...map.values()];
+}
 
 export type RealCostByUser = {
   userId: string;
@@ -167,10 +253,14 @@ function sanitizeLines(lines: RealCostLine[]): RealCostLine[] {
   return lines.filter((l) => {
     if (l.userId) return true;
     if (l.category === "satellite" || l.actorKind === "provider") return true;
+    // Materiales del costeo / entregados siempre permanecen en el desglose
+    if (l.category === "materials" && l.materialSource === "delivered") return true;
     if (l.category === "materials") {
       const base = (l.label || "").replace(/^\[[^\]]+\]\s*/, "").trim();
       const key = `${base}|${money(l.amount)}`;
       if (assignedMaterialKeys.has(key)) return false;
+      // Adicionales Kanban sin usuario: conservar si tienen monto/etiqueta
+      if (l.materialSource === "kanban_additional") return true;
       return false;
     }
     if (
@@ -351,6 +441,7 @@ export type FrozenWorkingCosts = Pick<
   ProductionOrder,
   | "costLedger"
   | "requestedMaterials"
+  | "materialsDeducted"
   | "laborCostEnabled"
   | "laborCostPerUnit"
   | "moldEnabled"
@@ -368,7 +459,7 @@ export type FrozenWorkingCosts = Pick<
 /**
  * Congela costos vivos del responsable actual en el ledger y deja
  * materiales / MO en blanco para el siguiente usuario (sin borrar el historial).
- * Conserva materialsDeducted para no re-descontar inventario.
+ * Pasa requestedMaterials de la capa saliente a materialsDeducted (histórico inmutable).
  */
 export function freezeWorkingCostsForNextAssignee(
   card: ProductionOrder,
@@ -376,9 +467,33 @@ export function freezeWorkingCostsForNextAssignee(
   stageLabel?: string
 ): FrozenWorkingCosts {
   const costLedger = upsertStageCostLedger(card, stage, stageLabel);
+  const attr = workingAttribution(card, stage);
+  const label = stageLabel || stage;
+  const frozenFromLive = (card.requestedMaterials || [])
+    .filter((m) => m?.materialId && (Number(m.quantity) || 0) > 0)
+    .map((m) => ({
+      materialId: m.materialId,
+      materialName: m.materialName || m.materialId,
+      materialCode: m.materialCode?.trim() || undefined,
+      quantity: Number(m.quantity) || 0,
+      unitCost: Number(m.unitCost) || 0,
+      stage,
+      stageLabel: label,
+      userId: attr.userId ?? null,
+      userName: attr.userName,
+    }));
+
+  const prevHistory = (card.materialsDeducted || []).filter((m) => {
+    if (!m?.materialId) return false;
+    // Quitar entradas de esta misma capa (se reemplazan por el snapshot vivo)
+    if (m.stage && m.stage === stage) return false;
+    return (Number(m.quantity) || 0) > 0;
+  });
+
   return {
     costLedger,
     requestedMaterials: [],
+    materialsDeducted: [...prevHistory, ...frozenFromLive],
     laborCostEnabled: false,
     laborCostPerUnit: null,
     moldEnabled: false,
@@ -570,17 +685,107 @@ export function prepareCardsWithLedger(
   cards: ProductionOrder[],
   stageLabels?: Record<string, string>
 ): ProductionOrder[] {
-  return cards.map((c) => ({
-    ...c,
-    costLedger: upsertStageCostLedger(
-      {
-        ...c,
-        costLedger: sanitizeCostLedger(c.costLedger || []),
-      },
-      c.stage,
-      stageLabels?.[c.stage] || c.stage
-    ),
+  return cards.map((c) => {
+    const reconciled = reconcileOrphanLiveMaterials(c, stageLabels);
+    return {
+      ...reconciled,
+      costLedger: upsertStageCostLedger(
+        {
+          ...reconciled,
+          costLedger: sanitizeCostLedger(reconciled.costLedger || []),
+        },
+        reconciled.stage,
+        stageLabels?.[reconciled.stage] || reconciled.stage
+      ),
+    };
+  });
+}
+
+/**
+ * Solo congela vivos residuales cuando la tarjeta YA avanzó de capa y quedó
+ * sin asignar (pendiente de admin). Si hay responsable en la capa actual,
+ * requestedMaterials son de ESTA capa y deben permanecer editables («Solicitaste»).
+ */
+export function reconcileOrphanLiveMaterials(
+  card: ProductionOrder,
+  stageLabels?: Record<string, string>
+): ProductionOrder {
+  const live = (card.requestedMaterials || []).filter(
+    (m) => m?.materialId && (Number(m.quantity) || 0) > 0
+  );
+  if (!live.length) return card;
+
+  // Con asignación en la capa actual: no tocar solicitudes vivas
+  if (card.assigneeId || card.satelliteAssigneeId) return card;
+
+  const history = card.stageHistory || [];
+  const visitedStages = new Set(
+    history.map((h) => h.stage).filter(Boolean) as string[]
+  );
+  visitedStages.add(card.stage);
+  if (visitedStages.size <= 1) return card;
+
+  const hist = card.materialsDeducted || [];
+  const hasTaggedPrevious = hist.some(
+    (m) => m.stage && m.stage !== card.stage && (Number(m.quantity) || 0) > 0
+  );
+  // Ya hay histórico de otras capas → no mover los vivos (no debería haber sin asignar)
+  if (hasTaggedPrevious) return card;
+
+  const prevFromHistory = [...history]
+    .reverse()
+    .find((h) => h.stage && h.stage !== card.stage);
+  const prevStage =
+    prevFromHistory?.stage || [...visitedStages].find((s) => s !== card.stage);
+  if (!prevStage) return card;
+
+  const prevLabel = stageLabels?.[prevStage] || prevStage;
+  const attr = workingAttribution(card, prevStage);
+  const frozen = live.map((m) => ({
+    materialId: m.materialId,
+    materialName: m.materialName || m.materialId,
+    materialCode: m.materialCode?.trim() || undefined,
+    quantity: Number(m.quantity) || 0,
+    unitCost: Number(m.unitCost) || 0,
+    stage: prevStage,
+    stageLabel: prevLabel,
+    userId: attr.userId ?? null,
+    userName: attr.userName,
   }));
+
+  const prevHistory = hist.filter((m) => {
+    if (!m?.materialId || (Number(m.quantity) || 0) <= 0) return false;
+    if (m.stage === prevStage) return false;
+    return true;
+  });
+
+  return {
+    ...card,
+    requestedMaterials: [],
+    materialsDeducted: [...prevHistory, ...frozen],
+  };
+}
+
+/** Costos Kanban sin líneas de materiales (estas vienen de TNS / costeo al estar en producción). */
+function stripKanbanMaterialLines(breakdown: OrderRealCostBreakdown): OrderRealCostBreakdown {
+  const operationalLines = [
+    ...breakdown.laborLines,
+    ...breakdown.satelliteLines,
+    ...breakdown.shippingLines,
+  ];
+  const labor = money(breakdown.labor);
+  const satellites = money(breakdown.satellites);
+  const shipping = money(breakdown.shipping);
+  return {
+    ...breakdown,
+    materials: 0,
+    materialsLines: [],
+    labor,
+    satellites,
+    shipping,
+    total: money(labor + satellites + shipping),
+    byUser: groupByUser(operationalLines),
+  };
 }
 
 /** Agrega costos operativos de todas las tarjetas Kanban de una orden. */
@@ -659,6 +864,349 @@ export function computeRealCostFromCards(
   };
 }
 
+function tnsMaterialToRealCostLine(line: TNSOrderRealMaterialCostLine): RealCostLine {
+  const unitShort =
+    (line.unit || "").trim().toLowerCase() === "metro" ? "m" : (line.unit || "u.").trim();
+  const stageLabel = (line.stage_label || line.stage || "").trim();
+  const unitCostFmt = formatUnitCost(line.unit_cost_tns);
+  const isTnsPrice = line.price_source === "tns" || line.material_kind === "tela";
+  const priceLabel =
+    line.unit_cost_tns > 0
+      ? isTnsPrice
+        ? `$${unitCostFmt} TNS`
+        : `$${unitCostFmt} costeo`
+      : isTnsPrice
+        ? "sin precio TNS"
+        : "sin precio costeo";
+  const qtyFmt = Number(line.quantity).toLocaleString("es-CO", {
+    maximumFractionDigits: 4,
+  });
+  const materialCode = (line.codigo || "").trim();
+  const materialLabel = formatMaterialDisplayLabel(materialCode, line.nombre || "");
+  const isKanban = line.source === "kanban";
+  const requester = (line.user_name || "").trim();
+  const qtyPart = `(${qtyFmt} ${unitShort} × ${priceLabel})`;
+  const detail = isKanban && requester
+    ? `Solicitado por ${requester} · ${qtyPart}`
+    : qtyPart;
+
+  return {
+    label: materialLabel,
+    materialCode: materialCode && materialCode !== "—" ? materialCode : undefined,
+    detail,
+    amount: money(line.amount),
+    stage: line.stage || undefined,
+    stageLabel: stageLabel || undefined,
+    userId:
+      line.source === "costeo_variante"
+        ? "tns-costeo-variante"
+        : line.user_id || undefined,
+    userName: line.user_name || undefined,
+    actorKind: line.source === "kanban" ? "production" : "unassigned",
+    category: "materials",
+    materialSource: line.source === "kanban" ? "kanban_additional" : "delivered",
+  };
+}
+
+export function splitMaterialLines(lines: RealCostLine[]) {
+  const delivered: RealCostLine[] = [];
+  const additional: RealCostLine[] = [];
+  for (const line of lines) {
+    if (line.materialSource === "kanban_additional") {
+      additional.push(line);
+    } else {
+      delivered.push(line);
+    }
+  }
+  return { delivered, additional };
+}
+
+export type KanbanMaterialRequest = {
+  materialId: string;
+  materialName: string;
+  materialCode?: string;
+  quantity: number;
+  unitCost?: number;
+  stage?: string;
+  stageLabel?: string;
+  userId?: string | null;
+  userName?: string;
+};
+
+/**
+ * Solo solicitudes VIVAS de la capa actual (para editar en el modal).
+ * Nunca incluye el histórico de capas anteriores.
+ */
+export function getLiveMaterialRequestsForEdit(card: ProductionOrder): KanbanMaterialRequest[] {
+  return (card.requestedMaterials || [])
+    .filter((mat) => mat?.materialId && (Number(mat.quantity) || 0) > 0)
+    .map((mat) => ({
+      materialId: mat.materialId,
+      materialName: mat.materialName || mat.materialId,
+      materialCode: mat.materialCode?.trim() || undefined,
+      quantity: Number(mat.quantity) || 0,
+      unitCost: Number(mat.unitCost) || 0,
+    }));
+}
+
+/** @deprecated Prefer getLiveMaterialRequestsForEdit — el histórico no se edita. */
+export function mergeMaterialRequestsForEdit(card: ProductionOrder): KanbanMaterialRequest[] {
+  return getLiveMaterialRequestsForEdit(card);
+}
+
+export function cardHasKanbanMaterialRequests(card: ProductionOrder): boolean {
+  return getLiveMaterialRequestsForEdit(card).length > 0;
+}
+
+/**
+ * Une histórico de capas cerradas + solicitudes vivas de la capa actual
+ * para el desglose de costo real (todas las capas, sin mezclar edición).
+ */
+export function collectAllKanbanMaterialRequests(card: ProductionOrder): KanbanMaterialRequest[] {
+  const out: KanbanMaterialRequest[] = [];
+  const currentStage = card.stage || "";
+
+  for (const mat of card.materialsDeducted || []) {
+    if (!mat?.materialId) continue;
+    const qty = Number(mat.quantity) || 0;
+    if (qty <= 0) continue;
+    // Histórico de otras capas (o legacy sin stage)
+    if (mat.stage && mat.stage === currentStage) continue;
+    out.push({
+      materialId: mat.materialId,
+      materialName: mat.materialName || mat.materialId,
+      materialCode: mat.materialCode?.trim() || undefined,
+      quantity: qty,
+      unitCost: Number(mat.unitCost) || 0,
+      stage: mat.stage,
+      stageLabel: mat.stageLabel || mat.stage,
+      userId: mat.userId,
+      userName: mat.userName,
+    });
+  }
+
+  for (const mat of getLiveMaterialRequestsForEdit(card)) {
+    out.push({
+      ...mat,
+      stage: currentStage || undefined,
+      stageLabel: currentStage || undefined,
+    });
+  }
+
+  return out;
+}
+
+/** Materiales adicionales solicitados en tarjetas Kanban (todas las capas). */
+export function collectKanbanAdditionalMaterialLines(
+  cards: ProductionOrder[]
+): RealCostLine[] {
+  const lines: RealCostLine[] = [];
+
+  for (const card of cards) {
+    if (!card) continue;
+    const liveAttr = workingAttribution(card, card.stage);
+
+    for (const mat of collectAllKanbanMaterialRequests(card)) {
+      const qty = Number(mat.quantity) || 0;
+      if (qty <= 0) continue;
+      const unit = Number(mat.unitCost) || 0;
+      const amount = money(qty * unit);
+      const qtyFmt = qty.toLocaleString("es-CO", { maximumFractionDigits: 4 });
+      const stageKey = mat.stage || card.stage || "";
+      const stageLabel = mat.stageLabel || stageKey;
+      const requester =
+        mat.userName ||
+        (stageKey === card.stage ? liveAttr.userName : undefined) ||
+        "Kanban · solicitud adicional";
+      const userId =
+        mat.userId ?? (stageKey === card.stage ? liveAttr.userId : undefined);
+      const materialCode =
+        mat.materialCode || extractMaterialCodeFromText(mat.materialName) || undefined;
+      const label = materialCode
+        ? formatMaterialDisplayLabel(materialCode, mat.materialName)
+        : mat.materialName;
+      lines.push({
+        label,
+        materialCode,
+        detail:
+          unit > 0
+            ? `Solicitado por ${requester}${stageLabel ? ` · ${stageLabel}` : ""} · (${qtyFmt} uds × $${formatUnitCost(unit)})`
+            : `Solicitado por ${requester}${stageLabel ? ` · ${stageLabel}` : ""} · (${qtyFmt} uds)`,
+        amount,
+        stage: stageKey || undefined,
+        stageLabel: stageLabel || undefined,
+        userId,
+        userName: requester,
+        actorKind: stageKey === card.stage ? liveAttr.actorKind : "production",
+        category: "materials",
+        materialSource: "kanban_additional",
+      });
+    }
+  }
+
+  return dedupeKanbanAdditionalLines(sanitizeLines(lines));
+}
+
+function rebuildMaterialsBreakdown(
+  breakdown: OrderRealCostBreakdown,
+  materialsLines: RealCostLine[]
+): OrderRealCostBreakdown {
+  const clean = sanitizeLines(materialsLines);
+  const materials = money(clean.reduce((s, l) => s + l.amount, 0));
+  const allLines = [
+    ...clean,
+    ...breakdown.laborLines,
+    ...breakdown.satelliteLines,
+    ...breakdown.shippingLines,
+  ];
+  return {
+    ...breakdown,
+    materials,
+    materialsLines: clean,
+    total: money(materials + breakdown.labor + breakdown.satellites + breakdown.shipping),
+    byUser: groupByUser(allLines),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/** Completa adicionales Kanban desde las tarjetas (reemplaza, no acumula sobre TNS). */
+export function mergeKanbanAdditionalMaterialsFromCards(
+  breakdown: OrderRealCostBreakdown,
+  cards: ProductionOrder[]
+): OrderRealCostBreakdown {
+  const fromCards = collectKanbanAdditionalMaterialLines(cards);
+  const delivered = breakdown.materialsLines.filter(
+    (l) => l.materialSource !== "kanban_additional"
+  );
+
+  return rebuildMaterialsBreakdown(breakdown, [...delivered, ...fromCards]);
+}
+
+/**
+ * Une materiales entregados (costeo) + adicionales (Kanban).
+ * Nunca descarta entregados solo porque el Kanban ya tenga MO u otros costos.
+ */
+export function composeMaterialBreakdown(
+  operational: OrderRealCostBreakdown,
+  deliveredLines: RealCostLine[],
+  additionalLines: RealCostLine[]
+): OrderRealCostBreakdown {
+  const delivered = sanitizeLines(
+    deliveredLines.map((l) => ({
+      ...l,
+      category: "materials" as const,
+      materialSource: "delivered" as const,
+    }))
+  );
+  const additional = dedupeKanbanAdditionalLines(
+    sanitizeLines(
+      additionalLines.map((l) => ({
+        ...l,
+        category: "materials" as const,
+        materialSource: "kanban_additional" as const,
+      }))
+    )
+  );
+  return rebuildMaterialsBreakdown(operational, [...delivered, ...additional]);
+}
+
+/** MO configurada en costeo de variante × cantidades de la orden. */
+export async function computeOrderEstimatedLaborCost(
+  items: Array<{ subproducto_id?: string; talla_id?: string | null; cantidad?: number }>
+): Promise<number> {
+  if (!items?.length) return 0;
+
+  const summaryCache = new Map<string, Awaited<ReturnType<typeof fetchVariantCostSummary>>>();
+  let total = 0;
+
+  for (const item of items) {
+    const variantId = item.subproducto_id?.trim();
+    const qty = Number(item.cantidad) || 0;
+    if (!variantId || qty <= 0) continue;
+
+    let summary = summaryCache.get(variantId);
+    if (!summary) {
+      try {
+        summary = await fetchVariantCostSummary(variantId);
+        summaryCache.set(variantId, summary);
+      } catch {
+        continue;
+      }
+    }
+
+    const sizeRow = item.talla_id
+      ? summary.sizes.find((s) => s.talla_id === item.talla_id)
+      : undefined;
+    const laborPerUnit = parseApiNumber(sizeRow?.labor_total ?? summary.labor_total ?? 0);
+    total += laborPerUnit * qty;
+  }
+
+  return money(total);
+}
+
+/** Costo real operativo principal: materiales (entregados + adicionales) + MO Kanban. */
+export function computeRealAccumulatedCost(breakdown: OrderRealCostBreakdown): number {
+  return money(breakdown.materials + breakdown.labor);
+}
+
+/**
+ * Incorpora materiales TNS (costeo + Kanban) sin borrar entregados ya persistidos
+ * si la API no devolvió líneas de costeo.
+ */
+export function mergeTnsMaterialsIntoRealCost(
+  breakdown: OrderRealCostBreakdown,
+  tnsMaterials: TNSOrderRealMaterialCostResponse | null | undefined
+): OrderRealCostBreakdown {
+  if (!tnsMaterials?.materials_lines?.length) {
+    return breakdown;
+  }
+
+  const fromTns = tnsMaterials.materials_lines.map(tnsMaterialToRealCostLine);
+  // Solo costeo/entregados desde TNS. Los adicionales Kanban salen de las tarjetas
+  // (fuente de verdad al editar); mezclar TNS aquí duplicaba 1 m + 2 uds.
+  const tnsDelivered = fromTns.filter((l) => l.materialSource !== "kanban_additional");
+
+  const prevDelivered = breakdown.materialsLines.filter(
+    (l) => l.materialSource !== "kanban_additional"
+  );
+  const prevAdditional = breakdown.materialsLines.filter(
+    (l) => l.materialSource === "kanban_additional"
+  );
+
+  const delivered = tnsDelivered.length > 0 ? tnsDelivered : prevDelivered;
+
+  return composeMaterialBreakdown(breakdown, delivered, prevAdditional);
+}
+
+/** Costo real operativo + materiales valorizados en TNS (solo en producción). */
+export async function computeFullRealCostFromOrder(
+  orderId: string,
+  cards: ProductionOrder[],
+  options?: {
+    estado?: string | null;
+    /** Desglose previo para no perder materiales entregados si falla TNS */
+    previousBreakdown?: OrderRealCostBreakdown | null;
+  }
+): Promise<OrderRealCostBreakdown> {
+  if (!orderIncludesDeliveredMaterials(options?.estado)) {
+    return emptyRealCost(orderId);
+  }
+
+  const operational = stripKanbanMaterialLines(computeRealCostFromCards(orderId, cards));
+  const previousDelivered = (options?.previousBreakdown?.materialsLines || []).filter(
+    (l) => l.materialSource !== "kanban_additional"
+  );
+  const seeded = composeMaterialBreakdown(operational, previousDelivered, []);
+
+  try {
+    const tnsMaterials = await getTNSOrderRealMaterialCost(orderId);
+    const merged = mergeTnsMaterialsIntoRealCost(seeded, tnsMaterials);
+    return mergeKanbanAdditionalMaterialsFromCards(merged, cards);
+  } catch {
+    return mergeKanbanAdditionalMaterialsFromCards(seeded, cards);
+  }
+}
+
 /** Normaliza desglose recibido desde la API. */
 export function normalizeRealCostBreakdown(
   orderId: string,
@@ -670,7 +1218,21 @@ export function normalizeRealCostBreakdown(
     if (!Object.keys(d).length) return null;
   }
   const materialsLines = sanitizeLines(
-    Array.isArray(d.materialsLines) ? d.materialsLines : []
+    (Array.isArray(d.materialsLines) ? d.materialsLines : []).map((line) => {
+      const inferredSource =
+        line.materialSource ||
+        (line.userId === "tns-costeo-variante" ||
+        (line.userName || "").toLowerCase().includes("costeo de variante")
+          ? "delivered"
+          : line.stage || line.materialSource === "kanban_additional"
+            ? "kanban_additional"
+            : "delivered");
+      return {
+        ...line,
+        category: line.category || "materials",
+        materialSource: inferredSource,
+      };
+    })
   );
   const laborLines = sanitizeLines(Array.isArray(d.laborLines) ? d.laborLines : []);
   const satelliteLines = sanitizeLines(
@@ -734,19 +1296,56 @@ export function normalizeRealCostBreakdown(
 
 export function getOrderRealCostFromOrder(order: {
   id: string;
+  estado?: string;
   costo_real_desglose?: unknown;
   kanban_tarjetas?: ProductionOrder[] | null;
 }): OrderRealCostBreakdown | null {
+  if (!orderIncludesDeliveredMaterials(order.estado)) {
+    return emptyRealCost(order.id);
+  }
+
   const cards = Array.isArray(order.kanban_tarjetas) ? order.kanban_tarjetas : [];
-  // Preferir recálculo desde tarjetas para limpiar fantasmas «Sin asignar» persistidos
-  if (cards.length) {
-    return computeRealCostFromCards(order.id, cards);
+  const operational = cards.length
+    ? stripKanbanMaterialLines(computeRealCostFromCards(order.id, cards))
+    : emptyRealCost(order.id);
+
+  const persisted = normalizeRealCostBreakdown(order.id, order.costo_real_desglose);
+  const persistedDelivered = (persisted?.materialsLines || []).filter(
+    (l) => l.materialSource !== "kanban_additional"
+  );
+  const fromCardsAdditional = collectKanbanAdditionalMaterialLines(cards);
+  // Tarjetas = fuente de verdad al editar; no mezclar con adicionales viejos del desglose
+  const additional = fromCardsAdditional.length
+    ? fromCardsAdditional
+    : dedupeKanbanAdditionalLines(
+        (persisted?.materialsLines || []).filter((l) => l.materialSource === "kanban_additional")
+      );
+
+  // Sin tarjetas: usar desglose persistido completo si existe
+  if (!cards.length && persisted) {
+    return composeMaterialBreakdown(
+      {
+        ...operational,
+        labor: persisted.labor || operational.labor,
+        laborLines: persisted.laborLines?.length
+          ? persisted.laborLines
+          : operational.laborLines,
+        satellites: persisted.satellites || operational.satellites,
+        satelliteLines: persisted.satelliteLines?.length
+          ? persisted.satelliteLines
+          : operational.satelliteLines,
+        shipping: persisted.shipping || operational.shipping,
+        shippingLines: persisted.shippingLines?.length
+          ? persisted.shippingLines
+          : operational.shippingLines,
+      },
+      persistedDelivered,
+      additional
+    );
   }
-  const fromApi = normalizeRealCostBreakdown(order.id, order.costo_real_desglose);
-  if (fromApi && (fromApi.total > 0 || fromApi.byUser.length > 0 || fromApi.materialsLines.length > 0)) {
-    return fromApi;
-  }
-  return fromApi;
+
+  // Con tarjetas: MO/satélites del Kanban + materiales entregados persistidos + adicionales
+  return composeMaterialBreakdown(operational, persistedDelivered, additional);
 }
 
 export function emptyRealCost(orderId: string): OrderRealCostBreakdown {

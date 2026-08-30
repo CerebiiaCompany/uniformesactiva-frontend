@@ -44,6 +44,8 @@ export interface FabricRecord {
     proveedor_id: string;
     proveedor_nombre?: string;
     reference: string;
+    /** Código exacto TNS (prod_Dist_Cod) para descuentos de inventario */
+    codigo?: string;
     meters: string;
     price_per_meter: string;
     tiene_iva: boolean;
@@ -57,6 +59,9 @@ export interface SupplyRecord {
     tipo: string;
     tipo_id?: string;
     tipo_label?: string;
+    /** Código exacto del insumo (codigo_sku / TNS) */
+    codigo?: string;
+    codigo_sku?: string;
     color?: string;
     talla_id?: string | null;
     talla_nombre?: string | null;
@@ -114,6 +119,7 @@ export interface CreateFabricPayload {
     variant_id: string;
     proveedor_id?: string;
     reference: string;
+    codigo?: string;
     meters: string | number;
     price_per_meter: string | number;
     tiene_iva?: boolean;
@@ -123,6 +129,7 @@ export interface CreateFabricPayload {
 export interface UpdateFabricPayload {
     proveedor_id?: string;
     reference?: string;
+    codigo?: string;
     meters?: string | number;
     price_per_meter?: string | number;
     tiene_iva?: boolean;

@@ -2,6 +2,7 @@ import { useMemo, useState, type ComponentType } from "react";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -11,7 +12,6 @@ import {
   Eye,
   Layers,
   Ruler,
-  Palette,
   Shirt,
   Hash,
   DollarSign,
@@ -234,6 +234,9 @@ function ArticleCostStructureDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
         <DialogHeader>
+          <DialogDescription className="sr-only">
+            Desglose de costos, telas, insumos y mano de obra del artículo seleccionado.
+          </DialogDescription>
           <DialogTitle className="flex items-start gap-2 text-base pr-6">
             <Calculator className="h-4 w-4 text-primary shrink-0 mt-0.5" />
             <span className="min-w-0">
@@ -263,7 +266,6 @@ function ArticleCostStructureDialog({
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <CostField label="Referencia" value={fabricRef} />
-                <CostField label="Color" value={line.color || "—"} />
                 <CostField
                   label="Costo tela / metro"
                   value={money(fabricPricePerMeter)}
@@ -367,10 +369,9 @@ function ArticleLineCard({
         <p className="text-sm font-semibold text-foreground">{line.variation}</p>
       </div>
 
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         <DetailField icon={Layers} label="Línea" value={line.material} />
         <DetailField icon={Ruler} label="Talla" value={line.size} />
-        <DetailField icon={Palette} label="Color" value={line.color} />
         <DetailField icon={Shirt} label="Estampado" value={line.print} />
         <DetailField
           icon={Hash}
@@ -423,6 +424,9 @@ export function ArticlesDetailDialog({
       >
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
+            <DialogDescription className="sr-only">
+              Listado de artículos del documento con variación, talla y costos unitarios.
+            </DialogDescription>
             <DialogTitle className="flex items-start gap-2 text-base pr-6">
               <Package className="h-5 w-5 text-primary shrink-0 mt-0.5" />
               <span className="min-w-0">

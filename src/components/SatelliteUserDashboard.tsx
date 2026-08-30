@@ -177,10 +177,9 @@ export function SatelliteUserDashboard() {
           });
           const nextStage = getNextStageKey(visibleEtapas, currentStage) || currentStage;
 
-          await http(endpoints.orders.detail(orderId), {
+          await http(endpoints.orders.kanbanAsignacion(orderId), {
             method: "PATCH",
             body: JSON.stringify({
-              etapa_produccion: nextStage,
               kanban_asignaciones: {
                 [cardId]: {
                   stage: nextStage,
@@ -189,6 +188,10 @@ export function SatelliteUserDashboard() {
                 },
               },
             }),
+          });
+          await http(endpoints.orders.etapa(orderId), {
+            method: "PATCH",
+            body: JSON.stringify({ etapa: nextStage }),
           });
         } catch {
           /* ignore unassign error */

@@ -21,6 +21,8 @@ import { formatCurrency, formatForInput } from "@/lib/format-number";
 import { normalizeDecimalInput } from "@/lib/decimal-input";
 import { cn } from "@/lib/utils";
 import type { Size } from "@/types/variant";
+import { fabricBodegaShortLabel } from "@/lib/tns-fabric-bodega";
+import { formatFabricSelectionValue } from "@/services/tnsService";
 
 export interface InventorySupplyRef {
     code: string;
@@ -31,6 +33,9 @@ export interface InventorySupplyRef {
     unidad: string;
     color?: string;
     stock?: number;
+    bodega_cod?: string;
+    bodega_desc?: string;
+    bodega_kind?: "materia_prima" | "produccion";
 }
 
 export interface SupplyFormSubmitData {
@@ -104,7 +109,9 @@ export function SupplyFormDialog({
                 setUnitPrice(initialData.unit_price ? formatForInput(initialData.unit_price) : "");
 
                 const matched = inventorySupplyRefs.find(
-                    (r) => r.reference.toLowerCase() === refText.toLowerCase() || r.code === initialData.code
+                    (r) =>
+                        r.code === initialData.code ||
+                        r.reference.toLowerCase() === refText.toLowerCase()
                 );
                 setSelectedRef(matched || null);
             } else {
@@ -139,8 +146,9 @@ export function SupplyFormDialog({
     // Al seleccionar una referencia de TNS de la lista
     const handleSelectReference = (item: InventorySupplyRef) => {
         setSelectedRef(item);
-        setReferenceInput(item.reference || item.full_desc);
-        setSearchQuery(item.reference || item.full_desc);
+        const label = formatFabricSelectionValue(item.code || "", item.reference || item.full_desc);
+        setReferenceInput(label);
+        setSearchQuery(label);
         setIsDropdownOpen(false);
         if (item.unit_cost && item.unit_cost > 0) {
             setUnitPrice(formatForInput(item.unit_cost));
@@ -173,7 +181,7 @@ export function SupplyFormDialog({
         try {
             const ok = await onSubmit({
                 tipo_categoria: "Insumos",
-                reference: refName,
+                reference: selectedRef?.reference || refName,
                 code: selectedRef?.code,
                 talla_id: tallaId,
                 quantity: normQty,
@@ -228,6 +236,7 @@ export function SupplyFormDialog({
                                 onChange={(e) => {
                                     setSearchQuery(e.target.value);
                                     setReferenceInput(e.target.value);
+                                    setSelectedRef(null);
                                     setIsDropdownOpen(true);
                                 }}
                                 onFocus={() => setIsDropdownOpen(true)}
@@ -257,7 +266,13 @@ export function SupplyFormDialog({
                                     </div>
                                 ) : (
                                     searchResults.map((item, idx) => {
-                                        const isSelected = selectedRef?.code === item.code || referenceInput === item.reference;
+                                        const isSelected =
+                                            selectedRef?.code === item.code ||
+                                            referenceInput ===
+                                                formatFabricSelectionValue(
+                                                    item.code || "",
+                                                    item.reference || item.full_desc
+                                                );
                                         return (
                                             <div
                                                 key={`supply-${item.code || "nocode"}-${item.reference || "noref"}-${idx}`}
@@ -276,7 +291,14 @@ export function SupplyFormDialog({
                                                 )}
                                             >
                                                 <div className="min-w-0 flex-1">
-                                                    <div className="flex items-center gap-1.5">
+                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                        {(item.bodega_kind || item.bodega_desc) && (
+                                                            <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[9px] font-semibold text-muted-foreground">
+                                                                {item.bodega_kind
+                                                                    ? fabricBodegaShortLabel(item.bodega_kind)
+                                                                    : item.bodega_desc}
+                                                            </span>
+                                                        )}
                                                         <span className="font-mono text-[11px] text-muted-foreground font-bold shrink-0">
                                                             {item.code}
                                                         </span>

@@ -52,9 +52,9 @@ export function SuppliesTable({ data, onAdd, onCreateTipo, onEdit, onDelete }: S
             <CardContent>
                 {data.length > 0 ? (
                     <div className="space-y-2">
-                        <div className="grid grid-cols-[1.2fr_0.7fr_0.8fr_0.6fr_0.8fr_1fr] gap-2 text-xs font-semibold text-muted-foreground border-b pb-2">
+                        <div className="grid grid-cols-[0.7fr_1.2fr_0.8fr_0.6fr_0.8fr_1fr] gap-2 text-xs font-semibold text-muted-foreground border-b pb-2">
+                            <div>Código</div>
                             <div>Tipo</div>
-                            <div>Color</div>
                             <div>Talla</div>
                             <div>Cantidad</div>
                             <div>Valor unit.</div>
@@ -63,12 +63,12 @@ export function SuppliesTable({ data, onAdd, onCreateTipo, onEdit, onDelete }: S
                         {data.map((item) => (
                             <div
                                 key={item.id}
-                                className="grid grid-cols-[1.2fr_0.7fr_0.8fr_0.6fr_0.8fr_1fr] gap-2 text-sm items-center border-b py-2"
+                                className="grid grid-cols-[0.7fr_1.2fr_0.8fr_0.6fr_0.8fr_1fr] gap-2 text-sm items-center border-b py-2"
                             >
-                                <div className="truncate font-medium">{item.tipo_label || item.tipo || "—"}</div>
-                                <div className="truncate text-muted-foreground">
-                                    {item.color?.trim() ? item.color : "—"}
+                                <div className="truncate font-mono text-xs" title={item.codigo || item.codigo_sku || ""}>
+                                    {(item.codigo || item.codigo_sku || "").trim() || "—"}
                                 </div>
+                                <div className="truncate font-medium">{item.tipo_label || item.tipo || "—"}</div>
                                 <div className="text-xs text-muted-foreground truncate">{formatTalla(item)}</div>
                                 <div>{formatQuantity(item.quantity)}</div>
                                 <div>${formatCurrency(item.unit_price)}</div>
@@ -90,8 +90,7 @@ export function SuppliesTable({ data, onAdd, onCreateTipo, onEdit, onDelete }: S
                             </div>
                         ))}
 
-                        {/* Fila de Total de Insumos */}
-                        <div className="grid grid-cols-[1.2fr_0.7fr_0.8fr_0.6fr_0.8fr_1fr] gap-2 text-sm items-center pt-3 mt-1 border-t-2 border-border font-semibold bg-muted/20 px-2 py-2.5 rounded-lg">
+                        <div className="grid grid-cols-[0.7fr_1.2fr_0.8fr_0.6fr_0.8fr_1fr] gap-2 text-sm items-center pt-3 mt-1 border-t-2 border-border font-semibold bg-muted/20 px-2 py-2.5 rounded-lg">
                             <div className="col-span-3 text-foreground font-bold flex items-center gap-1.5">
                                 <span>Total insumos</span>
                                 <span className="text-xs text-muted-foreground font-normal">
@@ -101,9 +100,7 @@ export function SuppliesTable({ data, onAdd, onCreateTipo, onEdit, onDelete }: S
                             <div className="text-xs text-muted-foreground font-medium">
                                 {totalCantidad.toLocaleString("es-CO", { maximumFractionDigits: 2 })} und
                             </div>
-                            <div className="text-xs text-muted-foreground">
-                                —
-                            </div>
+                            <div className="text-xs text-muted-foreground">—</div>
                             <div className="flex items-center justify-between gap-1 text-primary font-bold text-base font-mono">
                                 <span>${formatCurrency(Math.round(totalInsumos))}</span>
                             </div>

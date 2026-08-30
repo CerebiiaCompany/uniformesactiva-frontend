@@ -1,7 +1,7 @@
 import type { Order } from "@/hooks/useOrders";
 import type { ProductionOrder } from "@/data/mockData";
 import { formatMoneyCop } from "@/lib/satellite-dashboard";
-import { parseStageKeys } from "@/lib/production-capa-permissions";
+import { parseStageKeys, cardAssignedToOperatorOnAllowedStage, type ProductionSession } from "@/lib/production-capa-permissions";
 
 export type StoredProductionUser = {
   id: string;
@@ -179,6 +179,29 @@ function orderDescription(order: Order, cards: ProductionOrder[]): string {
     return `${name} × ${it.cantidad}`;
   });
   return labels.slice(0, 3).join(" · ");
+}
+
+function productionSessionForUser(user: StoredProductionUser): ProductionSession {
+  return {
+    roles: user.roles,
+    isAdmin: false,
+    isProduction: user.isProduction,
+    isSatellite: false,
+    isKanbanOperator: user.isProduction,
+    stageKey: user.stageKeys[0] || null,
+    stageKeys: user.stageKeys,
+    userId: user.id,
+    unrestricted: false,
+  };
+}
+
+function cardVisibleToProductionUser(
+  card: ProductionOrder,
+  user: StoredProductionUser
+): boolean {
+  if (!cardAssignedToProductionUser(card, user.id)) return false;
+  if (user.stageKeys.length === 0) return false;
+  return cardAssignedToOperatorOnAllowedStage(productionSessionForUser(user), card);
 }
 
 function cardAssignedToProductionUser(card: ProductionOrder, userId: string): boolean {
@@ -422,11 +445,12 @@ function collectUserStagesForCard(
 }
 
 export function buildProductionOrderDetails(params: {
-  userId: string;
+  user: StoredProductionUser;
   orders: Order[];
   stageLabels: Record<string, string>;
 }): ProductionOrderDetail[] {
-  const { userId, orders, stageLabels } = params;
+  const { user, orders, stageLabels } = params;
+  const userId = user.id;
   if (!userId) return [];
 
   const byOrder = new Map<
@@ -440,7 +464,7 @@ export function buildProductionOrderDetails(params: {
   >();
 
   for (const { card, order } of collectCardsFromOrders(orders)) {
-    if (!cardAssignedToProductionUser(card, userId)) continue;
+    if (!cardVisibleToProductionUser(card, user)) continue;
     const existing = byOrder.get(order.id);
     const labor = laborAmountForProductionUser(card, userId);
     const inWork =
@@ -667,7 +691,7 @@ export function buildProductionUserPanel(params: {
   const { user, orders, stageLabels } = params;
 
   const orderDetails = buildProductionOrderDetails({
-    userId: user.id,
+    user,
     orders,
     stageLabels,
   });

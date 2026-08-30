@@ -24,6 +24,7 @@ import {
   ArrowDownRight,
   ArrowLeftRight,
   Calendar,
+  Printer,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -50,9 +51,8 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/format-number";
-import { http } from "@/lib/http";
-import { endpoints } from "@/lib/api-endpoints";
-import { fetchVariantCostSummary } from "@/hooks/useGetCostSummary";
+import { printInventoryMovementHistory } from "@/lib/inventory-movement-history-print";
+import { toast } from "sonner";
 import { useTNSInventario } from "@/hooks/useTNSInventario";
 import {
   parseTNSNumber,
@@ -62,10 +62,12 @@ import {
   getTNSItemUnit,
   getTNSMaterialComprasHistorial,
   getTNSMaterialVentasHistorial,
+  getTNSOrderConsumption,
+  getTNSInventoryMovementHistory,
+  matchTNSOrderConsumptionAlerts,
   cleanTNSProveedorName,
   parseTnsDate,
   formatDateToDDMMYYYY,
-  COMMON_COLORS,
 } from "@/services/tnsService";
 import type {
   TNSInventarioItem,
@@ -73,6 +75,7 @@ import type {
   TNSProveedorOferta,
   TNSCompraItem,
   TNSMaterialComprasHistorialResponse,
+  TNSOrderConsumptionResponse,
   TNSVentaItem,
   TNSMaterialVentasHistorialResponse,
 } from "@/types/tns";
@@ -649,9 +652,25 @@ function parseTNSVendedor(v: TNSVentaItem): string {
   return ven ? ven.trim() : "—";
 }
 
-const SEEN_MOVEMENTS_STORAGE_KEY = "tns_material_movements_seen_v1";
+const SEEN_MOVEMENTS_STORAGE_KEY = "tns_material_movements_seen_v2";
 
-function getSeenMovementsMap(): Record<string, { stock: number; timestamp: number }> {
+type SeenMovementEntry = {
+  stock: number;
+  timestamp: number;
+  /** Firma del día en que el usuario ya revisó la alerta (YYYY-MM-DD) */
+  seenAlertDay?: string;
+};
+
+/** Clave única por código + bodega + descripción (evita mezclar filas con el mismo código). */
+function getMaterialMovementKey(m: Pick<TNSInventarioItem, "prod_Dist_Cod" | "bodega_Cod" | "prod_Dist_Desc">): string {
+  return [
+    (m.prod_Dist_Cod || "").trim().toUpperCase(),
+    (m.bodega_Cod || "").trim().toUpperCase(),
+    (m.prod_Dist_Desc || "").trim().toUpperCase(),
+  ].join("|");
+}
+
+function getSeenMovementsMap(): Record<string, SeenMovementEntry> {
   try {
     const raw = localStorage.getItem(SEEN_MOVEMENTS_STORAGE_KEY);
     return raw ? JSON.parse(raw) : {};
@@ -660,64 +679,14 @@ function getSeenMovementsMap(): Record<string, { stock: number; timestamp: numbe
   }
 }
 
-function saveSeenMovement(codArticulo: string, currentStock: number) {
+function saveSeenMovement(key: string, entry: SeenMovementEntry) {
   try {
     const map = getSeenMovementsMap();
-    map[codArticulo] = { stock: currentStock, timestamp: Date.now() };
+    map[key] = entry;
     localStorage.setItem(SEEN_MOVEMENTS_STORAGE_KEY, JSON.stringify(map));
   } catch {
     /* ignore */
   }
-}
-
-/** Verifica si un material de TNS coincide con la tela o insumo configurado en una variante */
-function doesMaterialMatchFabricOrSupply(
-  material: TNSInventarioItem,
-  fabricOrSupplyRef?: string | null,
-  fabricOrSupplyName?: string | null
-): boolean {
-  if (!fabricOrSupplyRef && !fabricOrSupplyName) return false;
-
-  const matCod = (material.prod_Dist_Cod || "").trim().toUpperCase();
-  const matProvCod = (material.prod_Prov_Cod || "").trim().toUpperCase();
-  const matDesc = (material.prod_Dist_Desc || "").trim().toUpperCase();
-  const matParsedName = parseTNSDescription(material.prod_Dist_Desc).name.trim().toUpperCase();
-
-  const targetRef = (fabricOrSupplyRef || "").trim().toUpperCase();
-  const targetName = (fabricOrSupplyName || "").trim().toUpperCase();
-
-  // 1. Coincidencia exacta de código o referencia
-  if (targetRef && (matCod === targetRef || matProvCod === targetRef)) return true;
-
-  // 2. Coincidencia en descripción
-  if (
-    targetRef &&
-    (matDesc.includes(targetRef) ||
-      targetRef.includes(matCod) ||
-      (matCod.length > 3 && targetRef.includes(matCod.replace(/-.*/, ""))))
-  ) {
-    return true;
-  }
-
-  // 3. Coincidencia en nombre base del material
-  if (
-    matParsedName &&
-    targetRef &&
-    (matParsedName.includes(targetRef) || targetRef.includes(matParsedName))
-  ) {
-    return true;
-  }
-
-  if (
-    targetName &&
-    (matDesc.includes(targetName) ||
-      matParsedName.includes(targetName) ||
-      targetName.includes(matParsedName))
-  ) {
-    return true;
-  }
-
-  return false;
 }
 
 export function TNSInventarioTab() {
@@ -771,80 +740,78 @@ export function TNSInventarioTab() {
   const [movimientosFechaHasta, setMovimientosFechaHasta] = useState<string>(getTodayDateString);
   const [movimientosCopied, setMovimientosCopied] = useState<boolean>(false);
 
-  // Órdenes de producción del sistema y mapeo de costos de variantes para cálculo real de consumo
-  const [ordersList, setOrdersList] = useState<any[]>([]);
-  const [variantCostMap, setVariantCostMap] = useState<Record<string, { summary: any; fabrics: any[]; supplies: any[] }>>({});
+  const [orderConsumptionData, setOrderConsumptionData] = useState<TNSOrderConsumptionResponse | null>(null);
+  const [orderConsumptionLoading, setOrderConsumptionLoading] = useState<boolean>(false);
 
-  // Cargar órdenes del sistema y datos de costeo de variantes para calcular consumo de telas e insumos
-  useEffect(() => {
-    let isMounted = true;
-    http<any[]>(endpoints.orders.list())
-      .then(async (orders) => {
-        if (!isMounted || !Array.isArray(orders)) return;
-        setOrdersList(orders);
+  /** IDs de fila con salidas por consumo de órdenes HOY (match exacto BE). */
+  const [orderAlertMatchedIds, setOrderAlertMatchedIds] = useState<Set<string>>(() => new Set());
 
-        // Extraer IDs únicos de variantes presentes en las órdenes
-        const variantIds = Array.from(
-          new Set(
-            orders
-              .flatMap((o) => o.items || [])
-              .map((it: any) => it.subproducto_id)
-              .filter(Boolean)
-          )
-        );
+  const [historyFechaDesde, setHistoryFechaDesde] = useState<string>("");
+  const [historyFechaHasta, setHistoryFechaHasta] = useState<string>("");
+  const [historyPrinting, setHistoryPrinting] = useState<boolean>(false);
 
-        // Cargar costos/telas/insumos de cada variante
-        const newMap: Record<string, { summary: any; fabrics: any[]; supplies: any[] }> = {};
-        await Promise.all(
-          variantIds.map(async (vid) => {
-            try {
-              const [summary, fabrics, supplies] = await Promise.all([
-                fetchVariantCostSummary(vid).catch(() => null),
-                http<any[]>(endpoints.costos.telaByVariant(vid)).catch(() => []),
-                http<any[]>(endpoints.costos.insumosByVariant(vid)).catch(() => []),
-              ]);
-              newMap[vid] = { summary, fabrics: fabrics || [], supplies: supplies || [] };
-            } catch {
-              /* ignore */
-            }
-          })
-        );
+  const canPrintMovementHistory =
+    Boolean(historyFechaDesde.trim()) && Boolean(historyFechaHasta.trim());
 
-        if (isMounted) {
-          setVariantCostMap((prev) => ({ ...prev, ...newMap }));
-        }
-      })
-      .catch((err) => {
-        console.error("Error al cargar órdenes para cálculo de movimientos:", err);
-      });
+  const handlePrintMovementHistory = async () => {
+    if (!canPrintMovementHistory || historyPrinting) return;
 
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+    const printWin = window.open("", "_blank", "width=920,height=1100");
+    if (!printWin) {
+      toast.error("Permite ventanas emergentes para imprimir el historial.");
+      return;
+    }
 
-  // Mapa de movimientos inspeccionados en localStorage para notificar cuando hay movimientos o descuentos de stock
-  const [seenMovementsMap, setSeenMovementsMap] = useState<Record<string, { stock: number; timestamp: number }>>(() => {
+    setHistoryPrinting(true);
+    try {
+      const report = await getTNSInventoryMovementHistory(
+        historyFechaDesde.trim(),
+        historyFechaHasta.trim()
+      );
+      await printInventoryMovementHistory(report, printWin);
+    } catch (err) {
+      try {
+        if (!printWin.closed) printWin.close();
+      } catch {
+        /* ignore */
+      }
+      const message =
+        err instanceof Error ? err.message : "No se pudo generar el historial.";
+      toast.error(message);
+    } finally {
+      setHistoryPrinting(false);
+    }
+  };
+
+  // Mapa de movimientos inspeccionados en localStorage
+  const [seenMovementsMap, setSeenMovementsMap] = useState<Record<string, SeenMovementEntry>>(() => {
     return getSeenMovementsMap();
   });
 
-  const markMovementAsSeen = (codArticulo: string, currentStock: number) => {
-    saveSeenMovement(codArticulo, currentStock);
+  const markMovementAsSeen = (m: TNSInventarioItem) => {
+    const key = getMaterialMovementKey(m);
+    const entry: SeenMovementEntry = {
+      stock: parseTNSNumber(m.cant_Stock),
+      timestamp: Date.now(),
+      seenAlertDay: getTodayDateString(),
+    };
+    saveSeenMovement(key, entry);
     setSeenMovementsMap((prev) => ({
       ...prev,
-      [codArticulo]: { stock: currentStock, timestamp: Date.now() },
+      [key]: entry,
     }));
   };
 
-  // Guardar baseline inicial al primer contacto para que cualquier cambio posterior active la notificación
+  // Baseline por fila (código+bodega+desc) para detectar cambios reales de stock
   useEffect(() => {
     if (!items.length) return;
     try {
       const currentMap = getSeenMovementsMap();
       let updated = false;
       items.forEach((item) => {
-        if (!currentMap[item.prod_Dist_Cod]) {
-          currentMap[item.prod_Dist_Cod] = {
+        const key = getMaterialMovementKey(item);
+        if (!currentMap[key]) {
+          currentMap[key] = {
             stock: parseTNSNumber(item.cant_Stock),
             timestamp: Date.now(),
           };
@@ -860,23 +827,75 @@ export function TNSInventarioTab() {
     }
   }, [items]);
 
+  // Alertas de salidas por órdenes: solo productos cuya referencia coincide exactamente
+  useEffect(() => {
+    if (!items.length) {
+      setOrderAlertMatchedIds(new Set());
+      return;
+    }
+    let isMounted = true;
+    const today = getTodayDateString();
+    const materials = items.map((item) => {
+      const parsed = parseTNSDescription(item.prod_Dist_Desc);
+      return {
+        id: getMaterialMovementKey(item),
+        codigo_articulo: item.prod_Dist_Cod,
+        descripcion: item.prod_Dist_Desc || "",
+        color: parsed.color || "",
+      };
+    });
+
+    matchTNSOrderConsumptionAlerts(materials, {
+      fecha_desde: today,
+      fecha_hasta: today,
+    })
+      .then((res) => {
+        if (!isMounted) return;
+        setOrderAlertMatchedIds(new Set(res.matched_ids || []));
+      })
+      .catch((err) => {
+        console.error("Error al cargar alertas de consumo por órdenes:", err);
+        if (isMounted) setOrderAlertMatchedIds(new Set());
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [items]);
+
   const hasNewMovement = (m: TNSInventarioItem): boolean => {
-    // Notificar ÚNICAMENTE si el movimiento o compra registrada ocurrió HOY
-    const isPurchaseToday = isDateToday(m.ultima_compra_fecha);
-    const isInventoryDateToday = isDateToday(m.inventario_Fecha);
-    if (!isPurchaseToday && !isInventoryDateToday) {
+    const key = getMaterialMovementKey(m);
+    const seen = seenMovementsMap[key];
+    const today = getTodayDateString();
+    const alreadyReviewedToday = seen?.seenAlertDay === today;
+
+    // 1) Entrada real: compra registrada HOY en ESTE artículo
+    const hasEntradaHoy = isDateToday(m.ultima_compra_fecha);
+
+    // 2) Salida informativa por consumo de órdenes HOY en ESTA referencia exacta
+    const hasSalidaOrdenHoy = orderAlertMatchedIds.has(key);
+
+    // 3) Cambio de stock en ESTA fila (código + bodega + descripción)
+    const currentStock = parseTNSNumber(m.cant_Stock);
+    const hasStockChange = Boolean(seen) && Math.abs((seen?.stock ?? currentStock) - currentStock) > 0.001;
+
+    if (!hasEntradaHoy && !hasSalidaOrdenHoy && !hasStockChange) {
       return false;
     }
-    const currentStock = parseTNSNumber(m.cant_Stock);
-    const seen = seenMovementsMap[m.prod_Dist_Cod];
-    if (!seen) return true;
-    return Math.abs(seen.stock - currentStock) > 0.001;
+
+    // Si ya abrió Movimientos hoy, solo re-notificar si el stock cambió después
+    if (alreadyReviewedToday) {
+      return hasStockChange;
+    }
+
+    return true;
   };
 
   useEffect(() => {
     if (!selectedItemDetail) {
       setComprasHistorialData(null);
       setVentasHistorialData(null);
+      setOrderConsumptionData(null);
       setActiveModalTab("info");
       setComprasSearchFactura("");
       setComprasSearchProveedor("");
@@ -925,27 +944,35 @@ export function TNSInventarioTab() {
         }
       });
 
+    setOrderConsumptionLoading(true);
+    const parsedMaterial = parseTNSDescription(selectedItemDetail.prod_Dist_Desc);
+    getTNSOrderConsumption(selectedItemDetail.prod_Dist_Cod, {
+      descripcion: selectedItemDetail.prod_Dist_Desc || "",
+      color: parsedMaterial.color || "",
+    })
+      .then((res) => {
+        if (isMounted) {
+          setOrderConsumptionData(res);
+        }
+      })
+      .catch((err) => {
+        console.error("Error al cargar consumo por órdenes del material TNS:", err);
+        if (isMounted) {
+          setOrderConsumptionData(null);
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setOrderConsumptionLoading(false);
+        }
+      });
+
     return () => {
       isMounted = false;
     };
   }, [selectedItemDetail]);
 
   const [tipoMateriaFilter, setTipoMateriaFilter] = useState<string>("TODOS");
-  const [colorInputVal, setColorInputVal] = useState<string>(params.color || "");
-
-  useEffect(() => {
-    setColorInputVal(params.color || "");
-  }, [params.color]);
-
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      if ((params.color || "") !== colorInputVal.trim()) {
-        updateFilters({ color: colorInputVal.trim() });
-      }
-    }, 400);
-
-    return () => clearTimeout(handler);
-  }, [colorInputVal, params.color, updateFilters]);
 
   const processedItems = useMemo(() => {
     return items.map((m) => {
@@ -956,7 +983,6 @@ export function TNSInventarioTab() {
         ...m,
         prd_UnidadInventario: standardUnit,
         materialBaseName: parsed.name,
-        materialColor: parsed.color,
         category: clasificacion.categoria,
         requiere_revision: clasificacion.requiere_revision,
         metodo_clasificacion: clasificacion.metodo_clasificacion,
@@ -984,16 +1010,6 @@ export function TNSInventarioTab() {
     return counts;
   }, [processedItems]);
 
-  const availableColors = useMemo(() => {
-    const set = new Set<string>(COMMON_COLORS);
-    processedItems.forEach((item) => {
-      if (item.materialColor && item.materialColor.trim()) {
-        set.add(item.materialColor.trim().toUpperCase());
-      }
-    });
-    return Array.from(set).sort();
-  }, [processedItems]);
-
   const displayItems = useMemo(() => {
     return processedItems.filter((item) => {
       if (tipoMateriaFilter !== "TODOS") {
@@ -1001,17 +1017,9 @@ export function TNSInventarioTab() {
           return false;
         }
       }
-      if (colorInputVal.trim()) {
-        const q = colorInputVal.trim().toLowerCase();
-        const matchColor = item.materialColor.toLowerCase().includes(q);
-        const matchDesc = (item.prod_Dist_Desc || "").toLowerCase().includes(q);
-        if (!matchColor && !matchDesc) {
-          return false;
-        }
-      }
       return true;
     });
-  }, [processedItems, tipoMateriaFilter, colorInputVal]);
+  }, [processedItems, tipoMateriaFilter]);
 
   const availableBodegas = useMemo(() => {
     if (!summary?.distribucion_bodegas) return [];
@@ -1047,7 +1055,7 @@ export function TNSInventarioTab() {
         name: parsed.name,
         value: p.costo_stock,
         formattedValue: `$${formatCurrency(Math.round(p.costo_stock))}`,
-        subtext: `${p.codigo}${parsed.color ? ` • ${parsed.color}` : ""} • ${Math.round(p.cant_stock).toLocaleString("es-CO")} ${p.unidad}`,
+        subtext: `${p.codigo} • ${Math.round(p.cant_stock).toLocaleString("es-CO")} ${p.unidad}`,
       };
     });
   }, [summary]);
@@ -1062,7 +1070,7 @@ export function TNSInventarioTab() {
         name: parsed.name,
         value: p.cant_stock,
         formattedValue: `${Math.round(p.cant_stock).toLocaleString("es-CO")} ${p.unidad}`,
-        subtext: `${p.codigo}${parsed.color ? ` • ${parsed.color}` : ""} • ${p.bodega_desc || p.bodega_cod}`,
+        subtext: `${p.codigo} • ${p.bodega_desc || p.bodega_cod}`,
       };
     });
   }, [summary]);
@@ -1077,7 +1085,7 @@ export function TNSInventarioTab() {
         name: parsed.name,
         value: p.cant_stock,
         formattedValue: `${Math.round(p.cant_stock).toLocaleString("es-CO")} ${p.unidad}`,
-        subtext: `${p.codigo}${parsed.color ? ` • ${parsed.color}` : ""} • ${p.bodega_desc || p.bodega_cod}`,
+        subtext: `${p.codigo} • ${p.bodega_desc || p.bodega_cod}`,
       };
     });
   }, [summary]);
@@ -1090,19 +1098,16 @@ export function TNSInventarioTab() {
 
   const hasAnyFilterActive = Boolean(
     params.search ||
-      params.color ||
       (params.bodega && params.bodega !== "TODAS") ||
       (params.estado && params.estado !== "TODOS") ||
       (params.stock_status && params.stock_status !== "todos") ||
       (params.ordenar_por && params.ordenar_por !== "stock_desc") ||
-      tipoMateriaFilter !== "TODOS" ||
-      colorInputVal.trim() !== ""
+      tipoMateriaFilter !== "TODOS"
   );
 
   const handleClearAllFilters = () => {
     clearFilters();
     setTipoMateriaFilter("TODOS");
-    setColorInputVal("");
   };
 
   // Facturas de compra filtradas en el modal
@@ -1287,102 +1292,26 @@ export function TNSInventarioTab() {
       }
     });
 
-    // 2. Salidas calculadas desde Órdenes de Producción del Sistema
-    if (ordersList.length > 0) {
-      ordersList.forEach((o, oIdx) => {
-        const orderItems = o.items || [];
-        orderItems.forEach((it: any, itIdx: number) => {
-          const vid = it.subproducto_id;
-          if (!vid) return;
-          const costData = variantCostMap[vid];
-          if (!costData) return;
-
-          const { summary, fabrics, supplies } = costData;
-          const qtyPrendas = Number(it.cantidad || 0);
-          if (qtyPrendas <= 0) return;
-
-          const prendaDesc = it.producto_nombre || o.producto_nombre || "Prendas";
-          const lineaDesc = it.linea_nombre || "Línea";
-          const subproductoDesc = it.subproducto_nombre || "Variante";
-          const tallaDesc = it.talla_nombre ? ` (Talla ${it.talla_nombre})` : "";
-          const shortOrderId = String(o.id || oIdx).slice(0, 8).toUpperCase();
-          const valUnit = baseMaterialUnitCost;
-
-          // A) ¿Coincide con la tela principal o adicional de la variante?
-          let matchedFabric = false;
-          let fabricConsumption = 0;
-
-          if (
-            summary?.fabric_reference &&
-            doesMaterialMatchFabricOrSupply(selectedItemDetail, summary.fabric_reference, summary.fabric_color)
-          ) {
-            matchedFabric = true;
-            const sizeData = summary.sizes?.find(
-              (s: any) => s.talla_id === it.talla_id || s.talla_nombre === it.talla_nombre
-            );
-            fabricConsumption = Number(sizeData?.consumption || summary.average_consumption || 1.45);
-          } else if (fabrics && fabrics.length > 0) {
-            const fMatch = fabrics.find((f: any) =>
-              doesMaterialMatchFabricOrSupply(selectedItemDetail, f.reference, f.tela_referencia || f.name)
-            );
-            if (fMatch) {
-              matchedFabric = true;
-              const sizeData = summary?.sizes?.find(
-                (s: any) => s.talla_id === it.talla_id || s.talla_nombre === it.talla_nombre
-              );
-              fabricConsumption = Number(sizeData?.consumption || summary?.average_consumption || 1.45);
-            }
-          }
-
-          if (matchedFabric && fabricConsumption > 0) {
-            const totalMetros = qtyPrendas * fabricConsumption;
-            allMovimientos.push({
-              id: `orden-tela-${o.id}-${vid}-${it.talla_id || itIdx}`,
-              fecha: formatTNSDate(o.fecha_creacion),
-              fechaRaw: o.fecha_creacion || "",
-              tipo: "SALIDA",
-              tipoLabel: "Salida (Orden)",
-              cantidad: -totalMetros,
-              referencia: `Orden #${shortOrderId} · ${qtyPrendas} ${prendaDesc}${tallaDesc}`,
-              tercero: o.cliente_nombre || "Cliente",
-              costoUnitario: valUnit,
-              costoTotal: totalMetros * valUnit,
-              nota: `Consumo de ${totalMetros.toLocaleString("es-CO", { maximumFractionDigits: 2 })} ${unidad} en ${qtyPrendas} prendas (${lineaDesc} - ${subproductoDesc})`,
-            });
-          }
-
-          // B) ¿Coincide con algún insumo o accesorio de la variante?
-          if (supplies && supplies.length > 0) {
-            const sMatch = supplies.find((s: any) =>
-              doesMaterialMatchFabricOrSupply(
-                selectedItemDetail,
-                s.reference,
-                s.insumo_referencia || s.name || s.insumo_nombre
-              )
-            );
-            if (sMatch) {
-              const qtyPerGarment = Number(sMatch.quantity || sMatch.cantidad || 1);
-              const totalUnits = qtyPrendas * qtyPerGarment;
-              const insumoValUnit = parseTNSNumber(sMatch.unit_cost) || baseMaterialUnitCost;
-
-              allMovimientos.push({
-                id: `orden-insumo-${o.id}-${vid}-${sMatch.id || itIdx}`,
-                fecha: formatTNSDate(o.fecha_creacion),
-                fechaRaw: o.fecha_creacion || "",
-                tipo: "SALIDA",
-                tipoLabel: "Salida (Insumo)",
-                cantidad: -totalUnits,
-                referencia: `Orden #${shortOrderId} · ${qtyPrendas} ${prendaDesc}${tallaDesc}`,
-                tercero: o.cliente_nombre || "Cliente",
-                costoUnitario: insumoValUnit,
-                costoTotal: totalUnits * insumoValUnit,
-                nota: `Consumo de ${totalUnits.toLocaleString("es-CO", { maximumFractionDigits: 2 })} ${unidad} en ${qtyPrendas} prendas (${lineaDesc} - ${subproductoDesc})`,
-              });
-            }
-          }
-        });
+    // 2. Salidas calculadas desde Órdenes de Producción (backend: costeo por talla + insumos)
+    const rawOrderConsumption = orderConsumptionData?.movimientos || [];
+    rawOrderConsumption.forEach((m) => {
+      const qty = Math.abs(Number(m.cantidad || 0));
+      if (qty <= 0) return;
+      const valUnit = Number(m.costo_unitario || 0) || baseMaterialUnitCost;
+      allMovimientos.push({
+        id: m.id,
+        fecha: formatTNSDate(m.fecha),
+        fechaRaw: m.fecha || "",
+        tipo: "SALIDA",
+        tipoLabel: m.tipo_label || "Salida (Orden)",
+        cantidad: -qty,
+        referencia: m.referencia || "Orden de producción",
+        tercero: m.tercero || "Cliente",
+        costoUnitario: valUnit,
+        costoTotal: Number(m.costo_total || 0) || qty * valUnit,
+        nota: m.nota || "Consumo calculado según costeo de variante",
       });
-    }
+    });
 
     // 3. Salidas adicionales desde Facturas de Venta registradas en TNS (si aplican)
     const rawVentas = ventasHistorialData?.ventas_historial || [];
@@ -1470,8 +1399,7 @@ export function TNSInventarioTab() {
     selectedItemDetail,
     comprasHistorialData,
     ventasHistorialData,
-    ordersList,
-    variantCostMap,
+    orderConsumptionData,
     movimientosTipoFilter,
     movimientosSearch,
     movimientosFechaDesde,
@@ -1737,7 +1665,51 @@ export function TNSInventarioTab() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+            <div className="flex items-center gap-2 text-xs mr-1">
+              <div className="flex items-center gap-1">
+                <span className="text-muted-foreground text-[11px] whitespace-nowrap">Desde:</span>
+                <input
+                  type="date"
+                  value={historyFechaDesde}
+                  onChange={(e) => setHistoryFechaDesde(e.target.value)}
+                  className="px-2 py-1 text-xs rounded border bg-background text-foreground font-mono focus:ring-1 focus:ring-red-500"
+                />
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-muted-foreground text-[11px] whitespace-nowrap">Hasta:</span>
+                <input
+                  type="date"
+                  value={historyFechaHasta}
+                  onChange={(e) => setHistoryFechaHasta(e.target.value)}
+                  className="px-2 py-1 text-xs rounded border bg-background text-foreground font-mono focus:ring-1 focus:ring-red-500"
+                />
+              </div>
+              {(historyFechaDesde || historyFechaHasta) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHistoryFechaDesde("");
+                    setHistoryFechaHasta("");
+                  }}
+                  className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-muted"
+                  title="Limpiar fechas"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={handlePrintMovementHistory}
+              disabled={!canPrintMovementHistory || historyPrinting}
+              className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-white hover:bg-muted text-foreground border border-border text-sm font-medium rounded-md transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Printer className={cn("h-4 w-4", historyPrinting && "animate-pulse")} />
+              {historyPrinting ? "Generando…" : "Imprimir historial"}
+            </button>
+
             <button
               type="button"
               onClick={() => forceSync()}
@@ -1788,7 +1760,7 @@ export function TNSInventarioTab() {
             })}
           </div>
 
-          {/* Barra de Búsqueda y Filtros de Bodega/Color/Stock/Estado/Orden */}
+          {/* Barra de Búsqueda y Filtros de Bodega/Stock/Estado/Orden */}
           <div className="flex flex-wrap items-center gap-2.5 px-6 py-3 border-b bg-muted/20">
             {/* Input de Búsqueda */}
             <div className="flex-1 min-w-[180px] max-w-xs relative">
@@ -1822,36 +1794,6 @@ export function TNSInventarioTab() {
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-
-            {/* Filtro de Color */}
-            <div className="w-[160px] relative">
-              <input
-                type="text"
-                placeholder="Filtrar por color..."
-                className="w-full border rounded-md pl-2.5 pr-6 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-red-600 bg-background text-foreground font-mono"
-                value={colorInputVal}
-                onChange={(e) => setColorInputVal(e.target.value)}
-                list="tns-color-suggestions"
-              />
-              {colorInputVal && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setColorInputVal("");
-                    updateFilters({ color: "" });
-                  }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  title="Borrar color"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-              <datalist id="tns-color-suggestions">
-                {availableColors.map((c) => (
-                  <option key={c} value={c} />
-                ))}
-              </datalist>
             </div>
 
             {/* Selector de Nivel de Stock */}
@@ -1953,25 +1895,23 @@ export function TNSInventarioTab() {
                     <TableHead className="whitespace-nowrap min-w-[95px]">Código</TableHead>
                     {/* 2. Material / Producto */}
                     <TableHead className="whitespace-nowrap min-w-[210px]">Material / Producto</TableHead>
-                    {/* 3. Color */}
-                    <TableHead className="whitespace-nowrap min-w-[110px]">Color</TableHead>
-                    {/* 4. Unidad */}
+                    {/* 3. Unidad */}
                     <TableHead className="whitespace-nowrap min-w-[65px]">Unidad</TableHead>
-                    {/* 5. Categoría */}
+                    {/* 4. Categoría */}
                     <TableHead className="whitespace-nowrap min-w-[90px]">Categoría</TableHead>
-                    {/* 6. Proveedor Principal */}
+                    {/* 5. Proveedor Principal */}
                     <TableHead className="whitespace-nowrap min-w-[200px]">Proveedor Principal</TableHead>
-                    {/* 7. Bodega */}
+                    {/* 6. Bodega */}
                     <TableHead className="whitespace-nowrap min-w-[130px]">Bodega</TableHead>
-                    {/* 8. Stock */}
+                    {/* 7. Stock */}
                     <TableHead className="whitespace-nowrap text-right min-w-[85px]">Stock</TableHead>
-                    {/* 9. Costo Total */}
+                    {/* 8. Costo Total */}
                     <TableHead className="whitespace-nowrap text-right min-w-[105px]">Costo Total</TableHead>
-                    {/* 10. Estado */}
+                    {/* 9. Estado */}
                     <TableHead className="whitespace-nowrap min-w-[80px]">Estado</TableHead>
-                    {/* 11. Nivel Stock */}
+                    {/* 10. Nivel Stock */}
                     <TableHead className="whitespace-nowrap text-right min-w-[95px]">Nivel Stock</TableHead>
-                    {/* 12. Acción Historial */}
+                    {/* 11. Acción Historial */}
                     <TableHead className="whitespace-nowrap text-center min-w-[110px]">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -2014,21 +1954,7 @@ export function TNSInventarioTab() {
                           )}
                         </TableCell>
 
-                        {/* 3. Color extraído */}
-                        <TableCell className="max-w-[130px]">
-                          {m.materialColor ? (
-                            <span
-                              className="inline-flex items-center rounded-md bg-muted/90 px-2 py-0.5 text-xs font-semibold text-foreground font-mono truncate max-w-[120px]"
-                              title={m.materialColor}
-                            >
-                              {m.materialColor}
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground text-xs">—</span>
-                          )}
-                        </TableCell>
-
-                        {/* 4. Unidad */}
+                        {/* 3. Unidad */}
                         <TableCell className="text-xs whitespace-nowrap">
                           {m.prd_UnidadInventario || "UND"}
                         </TableCell>
@@ -2143,7 +2069,7 @@ export function TNSInventarioTab() {
                             onClick={() => {
                               setSelectedItemDetail(m);
                               setActiveModalTab("movimientos");
-                              markMovementAsSeen(m.prod_Dist_Cod, parseTNSNumber(m.cant_Stock));
+                              markMovementAsSeen(m);
                             }}
                             className="relative inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-red-600 dark:text-red-400 hover:text-white hover:bg-red-600 rounded-md border border-red-200 dark:border-red-800/40 bg-red-50/50 dark:bg-red-950/20 transition-all shadow-2xs"
                             title={
@@ -2190,11 +2116,6 @@ export function TNSInventarioTab() {
                   Bodega: {params.bodega}
                 </span>
               )}
-              {colorInputVal && (
-                <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium font-mono">
-                  Color: {colorInputVal}
-                </span>
-              )}
             </div>
 
             <div className="text-[11px] text-muted-foreground">
@@ -2230,12 +2151,6 @@ export function TNSInventarioTab() {
             <DialogTitle className="text-base mt-2 font-semibold text-foreground">
               {selectedItemDetail && parseTNSDescription(selectedItemDetail.prod_Dist_Desc).name}
             </DialogTitle>
-
-            {selectedItemDetail && parseTNSDescription(selectedItemDetail.prod_Dist_Desc).color && (
-              <div className="text-xs text-muted-foreground font-mono">
-                Color: <strong className="text-foreground">{parseTNSDescription(selectedItemDetail.prod_Dist_Desc).color}</strong>
-              </div>
-            )}
 
             {/* Pestañas de Navegación dentro del Modal */}
             <div className="flex items-center gap-1.5 pt-3 overflow-x-auto">
@@ -2300,7 +2215,10 @@ export function TNSInventarioTab() {
               </button>
               <button
                 type="button"
-                onClick={() => setActiveModalTab("movimientos")}
+                onClick={() => {
+                  setActiveModalTab("movimientos");
+                  if (selectedItemDetail) markMovementAsSeen(selectedItemDetail);
+                }}
                 className={cn(
                   "px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap flex items-center gap-1.5",
                   activeModalTab === "movimientos" || activeModalTab === "consumo"
@@ -3076,7 +2994,12 @@ export function TNSInventarioTab() {
                   </div>
 
                   {/* Tabla de registros de movimientos */}
-                  {movimientosReport.records.length === 0 ? (
+                  {orderConsumptionLoading ? (
+                    <div className="py-8 px-4 text-center text-xs text-muted-foreground border rounded-lg bg-muted/20">
+                      <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-red-600" />
+                      <p className="font-medium text-foreground">Calculando consumo por órdenes de producción…</p>
+                    </div>
+                  ) : movimientosReport.records.length === 0 ? (
                     <div className="py-8 px-4 text-center text-xs text-muted-foreground border rounded-lg bg-muted/20 space-y-2">
                       <p className="font-medium text-foreground">
                         {movimientosFechaDesde === getTodayDateString() &&

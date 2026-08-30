@@ -137,11 +137,26 @@ export interface ProductionOrder {
   requestedMaterials?: {
     materialId: string;
     materialName: string;
+    /** Código TNS exacto (prod_Dist_Cod) para inventario y deduplicación */
+    materialCode?: string;
     quantity: number;
     unitCost?: number;
   }[];
-  /** Cantidades ya descontadas del inventario por material (idempotencia). */
-  materialsDeducted?: { materialId: string; quantity: number }[];
+  /**
+   * Histórico de materiales solicitados en capas YA cerradas/avanzadas.
+   * No se edita en la capa actual; sí cuenta en el desglose de costo real.
+   */
+  materialsDeducted?: {
+    materialId: string;
+    materialName?: string;
+    materialCode?: string;
+    quantity: number;
+    unitCost?: number;
+    stage?: string;
+    stageLabel?: string;
+    userId?: string | null;
+    userName?: string;
+  }[];
   shippingCost?: number | null;
   /**
    * Libro de costos por capa/usuario.

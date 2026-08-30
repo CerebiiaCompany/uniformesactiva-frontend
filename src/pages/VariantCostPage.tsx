@@ -64,11 +64,18 @@ import {
     getAllTNSInventario,
     parseTNSDescription,
     parseTNSNumber,
+    resolveTNSMaterialUnitCost,
     clasificarArticuloTNS,
     getTNSItemUnit,
     cleanTNSProveedorName,
+    resolveTNSProveedorPrincipal,
 } from "@/services/tnsService";
 import type { TNSInventarioItem } from "@/types/tns";
+import {
+    classifyFabricBodega,
+    cleanFabricBodegaDisplayName,
+    type FabricBodegaKind,
+} from "@/lib/tns-fabric-bodega";
 
 /** IVA Colombia (19%). */
 const IVA_RATE = 0.19;
@@ -223,10 +230,11 @@ export default function VariantCostPage() {
             return NON_FABRIC_KEYWORDS.some((kw) => upper.includes(kw));
         };
 
-        // Extraer proveedores ÚNICAMENTE de artículos clasificados como Telas en TNS
+        // Extraer proveedores de telas en bodega materia prima o producción
         const tnsTelas = tnsItems.filter((item) => {
             const c = clasificarArticuloTNS(item);
-            return c.categoria === "Telas";
+            if (c.categoria !== "Telas") return false;
+            return classifyFabricBodega(item.bodega_Desc, item.bodega_Cod) !== null;
         });
 
         tnsTelas.forEach((item) => {
@@ -246,6 +254,7 @@ export default function VariantCostPage() {
 
             addValidName(item.proveedor_principal);
             addValidName(item.ter_Emp_Nom);
+            addValidName(resolveTNSProveedorPrincipal(item));
             if (Array.isArray(item.proveedores)) {
                 item.proveedores.forEach((p) => {
                     addValidName(p.ter_Emp_Nom, p.ter_Emp_Cod);
@@ -256,28 +265,31 @@ export default function VariantCostPage() {
         return Array.from(provMap.values()).sort((a, b) => a.name.localeCompare(b.name, "es-CO"));
     }, [tnsItems, proveedores, NON_FABRIC_KEYWORDS]);
 
-    // Telas 100% extraídas del inventario TNS
+    // Telas de inventario TNS: solo bodega materia prima y producción
     const inventoryFabricRefs = useMemo(() => {
         const tnsTelas = tnsItems.filter((item) => {
             const c = clasificarArticuloTNS(item);
-            return c.categoria === "Telas";
+            if (c.categoria !== "Telas") return false;
+            return classifyFabricBodega(item.bodega_Desc, item.bodega_Cod) !== null;
         });
 
         return tnsTelas.map((m) => {
             const parsed = parseTNSDescription(m.prod_Dist_Desc);
-            const unitCost = parseTNSNumber(
-                m.ultimo_costo_compra || m.inventario_CostoUnitario || m.costo_unitario
+            const mainProv = cleanTNSProveedorName(
+                resolveTNSProveedorPrincipal(m) || m.proveedor_principal || m.ter_Emp_Nom
             );
+            const unitCost = resolveTNSMaterialUnitCost(m, mainProv);
             const rawProvList = [
+                resolveTNSProveedorPrincipal(m),
                 m.proveedor_principal,
                 m.ter_Emp_Nom,
-                ...(m.proveedores?.map((p) => p.ter_Emp_Nom) || []),
+                ...(m.proveedores?.map((p) => p.ter_Emp_Nom || p.nombre) || []),
             ]
                 .filter(Boolean)
                 .map((s) => cleanTNSProveedorName(s))
                 .filter((s) => s.length > 0);
 
-            const mainProv = cleanTNSProveedorName(m.proveedor_principal || m.ter_Emp_Nom);
+            const bodega_kind = classifyFabricBodega(m.bodega_Desc, m.bodega_Cod) as FabricBodegaKind;
 
             return {
                 code: m.prod_Dist_Cod,
@@ -287,12 +299,15 @@ export default function VariantCostPage() {
                 color: parsed.color || "",
                 proveedor: mainProv || "",
                 proveedoresList: [...new Set(rawProvList)],
-                stock: parseTNSNumber(m.inventario_Cantidad),
+                stock: parseTNSNumber(m.cant_Stock),
+                bodega_cod: m.bodega_Cod || "",
+                bodega_desc: cleanFabricBodegaDisplayName(m.bodega_Desc || m.bodega_Cod),
+                bodega_kind,
             };
         });
     }, [tnsItems]);
 
-    // Insumos extraídos de TNS (únicamente los que tienen precio registrado, deduplicados por código/referencia)
+    // Insumos de todo el inventario TNS (todas las bodegas)
     const inventorySupplyRefs: InventorySupplyRef[] = useMemo(() => {
         const map = new Map<string, InventorySupplyRef>();
 
@@ -303,69 +318,41 @@ export default function VariantCostPage() {
             })
             .forEach((m) => {
                 const parsed = parseTNSDescription(m.prod_Dist_Desc);
-                const clasificacion = clasificarArticuloTNS(m);
-                
-                let unitCost = parseTNSNumber(
-                    m.ultimo_costo_compra ||
-                    (m as any).inventario_CostoUnitario ||
-                    (m as any).costo_unitario ||
-                    (m as any).valunit ||
-                    (m as any).costo_promedio ||
-                    (m as any).costo ||
-                    (m as any).precio
-                );
+                const mainProv = cleanTNSProveedorName(resolveTNSProveedorPrincipal(m));
+                const unitCost = resolveTNSMaterialUnitCost(m, mainProv);
+                const bodega_kind = classifyFabricBodega(m.bodega_Desc, m.bodega_Cod) as FabricBodegaKind | null;
+                const key =
+                    (m.prod_Dist_Cod || "").trim().toUpperCase() ||
+                    (parsed.name || m.prod_Dist_Desc).trim().toUpperCase();
 
-                if (unitCost <= 0) {
-                    const cantStock = parseTNSNumber(m.cant_Stock);
-                    const costoStock = parseTNSNumber(m.costo_Stock);
-                    if (cantStock > 0 && costoStock > 0) {
-                        unitCost = costoStock / cantStock;
-                    }
-                }
+                if (!key) return;
 
-                if (unitCost <= 0) {
-                    const cantDisp = parseTNSNumber(m.cant_Disponible);
-                    const costoDisp = parseTNSNumber(m.costo_Disponible);
-                    if (cantDisp > 0 && costoDisp > 0) {
-                        unitCost = costoDisp / cantDisp;
-                    }
-                }
-
-                if (unitCost <= 0 && m.proveedores && m.proveedores.length > 0) {
-                    for (const p of m.proveedores) {
-                        const pCost = parseTNSNumber(
-                            (p as any).ultimo_costo_unitario ||
-                            (p as any).costo_unitario ||
-                            (p as any).valunit ||
-                            (p as any).precio
-                        );
-                        if (pCost > 0) {
-                            unitCost = pCost;
-                            break;
-                        }
-                    }
-                }
-
-                const key = (m.prod_Dist_Cod || "").trim().toUpperCase() || (parsed.name || m.prod_Dist_Desc).trim().toUpperCase();
-                if (key) {
-                    const existing = map.get(key);
-                    const stock = parseTNSNumber(m.cant_Stock);
-                    if (!existing || (stock > (existing.stock || 0)) || (!existing.unit_cost && unitCost > 0)) {
-                        map.set(key, {
-                            code: m.prod_Dist_Cod,
-                            reference: parsed.name || m.prod_Dist_Desc,
-                            full_desc: m.prod_Dist_Desc,
-                            categoria: "Insumos",
-                            unit_cost: unitCost > 0 ? unitCost : (existing?.unit_cost || 0),
-                            unidad: getTNSItemUnit(m),
-                            color: parsed.color || "",
-                            stock: Math.max(stock, existing?.stock || 0),
-                        });
-                    }
+                const stock = parseTNSNumber(m.cant_Stock);
+                const existing = map.get(key);
+                if (
+                    !existing ||
+                    stock > (existing.stock || 0) ||
+                    (!existing.unit_cost && unitCost > 0)
+                ) {
+                    map.set(key, {
+                        code: m.prod_Dist_Cod,
+                        reference: parsed.name || m.prod_Dist_Desc,
+                        full_desc: m.prod_Dist_Desc,
+                        categoria: "Insumos",
+                        unit_cost: unitCost > 0 ? unitCost : existing?.unit_cost || 0,
+                        unidad: getTNSItemUnit(m),
+                        color: parsed.color || "",
+                        stock: Math.max(stock, existing?.stock || 0),
+                        bodega_cod: m.bodega_Cod || "",
+                        bodega_desc: cleanFabricBodegaDisplayName(m.bodega_Desc || m.bodega_Cod),
+                        bodega_kind: bodega_kind || undefined,
+                    });
                 }
             });
 
-        return Array.from(map.values());
+        return Array.from(map.values()).sort((a, b) =>
+            a.reference.localeCompare(b.reference, "es", { sensitivity: "base" })
+        );
     }, [tnsItems]);
 
     const { data: summary, isLoading: isSummaryLoading } = useGetCostSummary(activeVariantId);
@@ -677,12 +664,25 @@ export default function VariantCostPage() {
         refCode?: string
     ): Promise<string | undefined> => {
         const target = (refName || tipoIdentifier || "").trim();
-        if (!target) return undefined;
+        const code = (refCode || "").trim();
+        if (!target && !code) return undefined;
 
-        // 1. Si coincide con algún supplyType existente por ID o por Nombre
+        const codeNorm = code.toUpperCase();
+
+        // 1. Priorizar coincidencia exacta por código TNS (prod_Dist_Cod / codigo_sku)
+        if (codeNorm) {
+            const byCode = supplyTypes.find((t) => {
+                const sku = String(t.codigo_sku || t.code || "").trim().toUpperCase();
+                return sku && sku === codeNorm;
+            });
+            if (byCode) return byCode.id;
+        }
+
+        // 2. Si coincide con algún supplyType existente por ID
         const byId = supplyTypes.find((t) => t.id === target || t.id === tipoIdentifier);
         if (byId) return byId.id;
 
+        // 3. Por nombre (legacy)
         const byName = supplyTypes.find(
             (t) =>
                 t.name.trim().toLowerCase() === target.toLowerCase() ||
@@ -690,13 +690,13 @@ export default function VariantCostPage() {
         );
         if (byName) return byName.id;
 
-        // 2. Si no existe en la base de datos local de Django, crear automáticamente el InsumoTipo
+        // 4. Si no existe, crear automáticamente el InsumoTipo con código TNS
         try {
             const res = await createInsumoTipo({
-                name: target,
+                name: target || code,
                 categoria: refCategory || "Insumos",
                 unidad_medida: "UND",
-                codigo_sku: refCode || "",
+                codigo_sku: code,
                 precio_unitario_default: refUnitCost != null && refUnitCost > 0 ? refUnitCost : null,
             });
             if (res.success && res.data?.id) {
@@ -849,6 +849,20 @@ export default function VariantCostPage() {
                     if (resolvedProvId) payload.proveedor_id = resolvedProvId;
                 }
                 if (data.reference !== initial.reference) payload.reference = data.reference;
+                const nextCodigo = (data.codigo || "").trim();
+                const initialCodigo = String(initial.codigo || "").trim();
+                if (nextCodigo !== initialCodigo) payload.codigo = nextCodigo;
+                // Si cambió la referencia, intentar resolver código desde TNS
+                if (data.reference !== initial.reference && !nextCodigo) {
+                    const refLower = data.reference.trim().toLowerCase();
+                    const match = inventoryFabricRefs.find(
+                        (r) =>
+                            (nextCodigo && r.code?.trim().toLowerCase() === nextCodigo.toLowerCase()) ||
+                            r.reference.trim().toLowerCase() === refLower ||
+                            (r.code && r.code.trim().toLowerCase() === refLower)
+                    );
+                    if (match?.code) payload.codigo = match.code.trim();
+                }
                 if (meters !== normalizeDecimalInput(String(initial.meters))) payload.meters = meters;
                 if (pricePerMeter !== normalizeDecimalInput(String(initial.price_per_meter))) {
                     payload.price_per_meter = pricePerMeter;
@@ -947,7 +961,7 @@ export default function VariantCostPage() {
                         : null,
                     codigo_sku: data.codigo_sku,
                     proveedor_marca: data.proveedor_marca,
-                    color: data.color,
+                    color: "",
                     stock_minimo: data.stock_minimo ? Number(data.stock_minimo) : null,
                     stock_inicial: data.stock_inicial ? Number(data.stock_inicial) : null,
                 });
@@ -1078,6 +1092,7 @@ export default function VariantCostPage() {
     const fabricEditFields: FieldDefinition[] = [
         { name: "proveedor_id", label: "Proveedor", type: "select", options: proveedorOptions },
         { name: "reference", label: "Referencia", type: "text", placeholder: "REF-001" },
+        { name: "codigo", label: "Código TNS", type: "text", placeholder: "Código exacto inventario" },
         {
             name: "meters",
             label: "metro",

@@ -19,13 +19,18 @@ const resolveTipoLabel = (item: any, catalogById: Map<string, string>): string =
     return "";
 };
 
-const resolveTipoColor = (item: any, colorById: Map<string, string>): string => {
-    if (item.tipo_color) return String(item.tipo_color);
-    if (typeof item.tipo === "object" && item.tipo?.color) return String(item.tipo.color);
-    if (item.color) return String(item.color);
+const resolveTipoCodigo = (item: any, codigoById: Map<string, string>): string => {
+    if (item.codigo) return String(item.codigo).trim();
+    if (item.codigo_sku) return String(item.codigo_sku).trim();
+    if (typeof item.tipo === "object" && item.tipo?.codigo_sku) {
+        return String(item.tipo.codigo_sku).trim();
+    }
+    if (typeof item.tipo === "object" && item.tipo?.code) {
+        return String(item.tipo.code).trim();
+    }
 
     const tipoId = item.tipo_id ?? (typeof item.tipo === "object" ? item.tipo?.id : undefined);
-    if (tipoId && colorById.has(tipoId)) return colorById.get(tipoId)!;
+    if (tipoId && codigoById.has(tipoId)) return codigoById.get(tipoId)!;
 
     return "";
 };
@@ -33,13 +38,13 @@ const resolveTipoColor = (item: any, colorById: Map<string, string>): string => 
 const mapSupply = (
     item: any,
     catalogById: Map<string, string>,
-    colorById: Map<string, string>
+    codigoById: Map<string, string>
 ): SupplyRecord => {
     const tipoId = item.tipo_id ?? (typeof item.tipo === "object" ? item.tipo?.id : undefined);
     const tipoLabel = resolveTipoLabel(item, catalogById);
+    const codigo = resolveTipoCodigo(item, codigoById);
     const quantity = Number(item.quantity ?? 0);
     const unitPrice = Number(item.unit_price ?? 0);
-    // Siempre qty × precio: el total persistido puede quedar desfasado.
     const total = Math.round(quantity * unitPrice * 100) / 100;
 
     return {
@@ -48,7 +53,8 @@ const mapSupply = (
         tipo_id: tipoId ?? (typeof item.tipo === "string" ? item.tipo : ""),
         tipo: tipoId ?? (typeof item.tipo === "string" ? item.tipo : ""),
         tipo_label: tipoLabel,
-        color: resolveTipoColor(item, colorById).trim(),
+        codigo,
+        codigo_sku: codigo,
         talla_id: item.talla_id ?? null,
         talla_nombre: item.talla_nombre ?? null,
         quantity: String(item.quantity ?? "0"),
@@ -65,11 +71,14 @@ const buildCatalogMap = (catalog: any[]): Map<string, string> =>
         ])
     );
 
-const buildColorMap = (catalog: any[]): Map<string, string> =>
+const buildCodigoMap = (catalog: any[]): Map<string, string> =>
     new Map(
         catalog
-            .filter((item) => item.id && (item.color || "").trim())
-            .map((item) => [item.id, String(item.color).trim()])
+            .map((item) => {
+                const code = String(item.codigo_sku ?? item.code ?? "").trim();
+                return item.id && code ? ([item.id, code] as const) : null;
+            })
+            .filter((entry): entry is readonly [string, string] => Boolean(entry))
     );
 
 export const useGetSupplyCosts = (variantId: string) => {
@@ -81,8 +90,8 @@ export const useGetSupplyCosts = (variantId: string) => {
                 http<any[]>(endpoints.costos.tiposInsumo()),
             ]);
             const catalogById = buildCatalogMap(catalog);
-            const colorById = buildColorMap(catalog);
-            return data.map((item) => mapSupply(item, catalogById, colorById));
+            const codigoById = buildCodigoMap(catalog);
+            return data.map((item) => mapSupply(item, catalogById, codigoById));
         },
         enabled: !!variantId,
     });

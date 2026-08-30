@@ -51,10 +51,6 @@ export function FactoryVariantBreakdown({
                 Variante:{" "}
                 <span className="font-medium text-foreground">{v.variante}</span>
               </p>
-              <p className="text-[10px] text-muted-foreground">
-                Color:{" "}
-                <span className="font-medium text-foreground">{v.color}</span>
-              </p>
             </div>
             <div className="shrink-0 text-right">
               <p className={cn("tabular-nums text-primary", compact ? "text-xs" : "text-sm")}>

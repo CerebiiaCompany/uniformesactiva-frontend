@@ -126,7 +126,8 @@ const ROLE_CARD_META: Record<string, string> = {
   Inventario: "Administra materiales, proveedores y movimientos de stock.",
   Despachos: "Gestiona entregas a clientes y domicilios a satélites.",
   Diseño: "Crea y mantiene las líneas de producto y sus fichas técnicas.",
-  Satélite: "Opera tarjetas Kanban asignadas como satélite en sus capas configuradas.",
+  Satélite:
+    "Opera tarjetas Kanban asignadas. Puede solicitar materiales adicionales en todas las capas donde esté asignado.",
 };
 
 const USER_AREAS = [
@@ -1408,7 +1409,9 @@ export default function AdministrationSubmodule() {
                           Permisos por capa Kanban — {selectedRoleObj.name}
                         </h4>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          Personaliza qué tableros y acciones de producción puede ver y operar cada usuario con este rol.
+                          Personaliza qué tableros y acciones puede ver y operar cada usuario con este rol.
+                          En <span className="font-medium text-foreground">Satélite</span>, solicitar
+                          inventario está siempre permitido en las capas asignadas al usuario.
                         </p>
                       </div>
 

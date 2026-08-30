@@ -57,6 +57,14 @@ export const endpoints = {
         tnsCompras: (params?: string) => `${base()}/api/v1/inventory/tns/compras/${params ? `?${params}` : ''}`,
         tnsComprasMaterial: (codigoArticulo: string, params?: string) =>
             `${base()}/api/v1/inventory/tns/compras/${encodeURIComponent(codigoArticulo)}/${params ? `?${params}` : ''}`,
+        tnsOrderConsumption: (codigoArticulo: string, params?: string) =>
+            `${base()}/api/v1/inventory/tns/consumo-ordenes/${encodeURIComponent(codigoArticulo)}/${params ? `?${params}` : ''}`,
+        tnsOrderConsumptionAlertsMatch: () =>
+            `${base()}/api/v1/inventory/tns/consumo-ordenes-alertas/match/`,
+        tnsMovementHistory: (params?: string) =>
+            `${base()}/api/v1/inventory/tns/historial-movimientos/${params ? `?${params}` : ''}`,
+        tnsOrderRealMaterialCost: (ordenId: string) =>
+            `${base()}/api/v1/inventory/tns/costo-real-orden/${encodeURIComponent(ordenId)}/`,
         tnsVentas: (params?: string) => `${base()}/api/v1/inventory/tns/ventas/${params ? `?${params}` : ''}`,
         tnsVentasMaterial: (codigoArticulo: string, params?: string) =>
             `${base()}/api/v1/inventory/tns/ventas/${encodeURIComponent(codigoArticulo)}/${params ? `?${params}` : ''}`,

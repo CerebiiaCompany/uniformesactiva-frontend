@@ -781,7 +781,7 @@ export function AddOrderProductDialog({
             producto_label: `${selectedProduct.code} — ${selectedProduct.name}`,
             variant_id: selectedVariant.id,
             variant_label: selectedVariant.name,
-            color: selectedColor,
+            color: "",
             estampado: selectedEstampado,
             comentario: comentario.trim(),
             unit_cost: weightedUnitCost || fallbackUnit,
@@ -806,7 +806,7 @@ export function AddOrderProductDialog({
                             </h2>
                             <p className="text-xs text-muted-foreground mt-0.5">
                                 {isEdit
-                                    ? "Modifica tallas, color, estampado o ingreso proyectado."
+                                    ? "Modifica tallas, estampado o ingreso proyectado."
                                     : "Selecciona desde el catálogo de Líneas."}
                             </p>
                         </div>

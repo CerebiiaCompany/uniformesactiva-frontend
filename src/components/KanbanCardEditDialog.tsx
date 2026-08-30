@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Boxes,
+  ChevronsUpDown,
   DollarSign,
   Factory,
   FileText,
@@ -9,7 +10,10 @@ import {
   Paperclip,
   Plus,
   Scissors,
+  Pencil,
   X,
+  Check,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -17,6 +21,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import {
   Select,
   SelectContent,
@@ -26,7 +39,16 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useGetSatellites } from "@/hooks/useSatellites";
-import { useGetMaterials } from "@/hooks/useGetMaterials";
+import { useGetMaterials, type Material } from "@/hooks/useGetMaterials";
+import { extractMaterialCodeFromText, getLiveMaterialRequestsForEdit } from "@/lib/order-real-cost";
+
+function resolveMaterialTnsCode(mat: Material): string {
+  for (const offer of mat.supplier_offers || []) {
+    const code = (offer.code || "").trim();
+    if (code) return code.toUpperCase();
+  }
+  return extractMaterialCodeFromText(mat.name || "");
+}
 import type { ProductionOrder } from "@/data/mockData";
 
 export type MoldStatus = "pendiente" | "en_proceso" | "listo" | "aprobado";
@@ -72,6 +94,7 @@ export type KanbanCardFormValues = {
   requestedMaterials: {
     materialId: string;
     materialName: string;
+    materialCode?: string;
     quantity: number;
     unitCost?: number;
   }[];
@@ -120,6 +143,8 @@ type KanbanCardEditDialogProps = {
   canEditCoreFields?: boolean;
   /** Admin: asignar satélite externo. */
   canAssignSatellite?: boolean;
+  /** Al abrir, enfocar la sección de materiales (p. ej. desde «Solicitaste» en la tarjeta). */
+  focusSection?: "materials" | null;
 };
 
 const isDesignOrCuttingStage = (k?: string) => {
@@ -212,6 +237,7 @@ export function KanbanCardEditDialog({
   readOnly = false,
   canEditCoreFields = false,
   canAssignSatellite = false,
+  focusSection = null,
 }: KanbanCardEditDialogProps) {
   const { satellites, isLoading: loadingSatellites } = useGetSatellites({
     estado: "active",
@@ -239,10 +265,19 @@ export function KanbanCardEditDialog({
   const [novedadImages, setNovedadImages] = useState<CardAttachment[]>([]);
   const [novedadFiles, setNovedadFiles] = useState<CardAttachment[]>([]);
   const [requestedMaterials, setRequestedMaterials] = useState<
-    { materialId: string; materialName: string; quantity: number; unitCost?: number }[]
+    {
+      materialId: string;
+      materialName: string;
+      materialCode?: string;
+      quantity: number;
+      unitCost?: number;
+    }[]
   >([]);
   const [pickMaterialId, setPickMaterialId] = useState("");
   const [pickQty, setPickQty] = useState("1");
+  const [materialPickerOpen, setMaterialPickerOpen] = useState(false);
+  const [replacingMaterialId, setReplacingMaterialId] = useState<string | null>(null);
+  const materialsSectionRef = useRef<HTMLDivElement>(null);
   const imagesInputRef = useRef<HTMLInputElement>(null);
   const filesInputRef = useRef<HTMLInputElement>(null);
   const novedadImagesInputRef = useRef<HTMLInputElement>(null);
@@ -273,7 +308,28 @@ export function KanbanCardEditDialog({
     setRequestedMaterials(initial?.requestedMaterials || []);
     setPickMaterialId("");
     setPickQty("1");
+    setMaterialPickerOpen(false);
+    setReplacingMaterialId(null);
   }, [open, initial]);
+
+  useEffect(() => {
+    if (!open || focusSection !== "materials") return;
+    const timer = window.setTimeout(() => {
+      materialsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [open, focusSection]);
+
+  const sortedMaterials = useMemo(
+    () =>
+      [...materials].sort((a, b) =>
+        (a.name || "").localeCompare(b.name || "", "es", { sensitivity: "base" })
+      ),
+    [materials]
+  );
+
+  const pickedMaterialLabel =
+    sortedMaterials.find((m) => m.id === pickMaterialId)?.name || "";
 
   const activeSatellites = useMemo(
     () => satellites.filter((s) => s.status === "active"),
@@ -293,12 +349,18 @@ export function KanbanCardEditDialog({
     if (!mat) return;
     const qty = Math.max(0.01, Number(pickQty) || 1);
     const unitCost = Number(mat.unit_cost) || 0;
+    const materialCode = resolveMaterialTnsCode(mat);
     setRequestedMaterials((prev) => {
       const existing = prev.find((p) => p.materialId === mat.id);
       if (existing) {
         return prev.map((p) =>
           p.materialId === mat.id
-            ? { ...p, quantity: p.quantity + qty, unitCost: unitCost || p.unitCost }
+            ? {
+                ...p,
+                quantity: p.quantity + qty,
+                unitCost: unitCost || p.unitCost,
+                materialCode: materialCode || p.materialCode,
+              }
             : p
         );
       }
@@ -307,6 +369,7 @@ export function KanbanCardEditDialog({
         {
           materialId: mat.id,
           materialName: mat.name,
+          materialCode: materialCode || undefined,
           quantity: qty,
           unitCost,
         },
@@ -318,6 +381,77 @@ export function KanbanCardEditDialog({
 
   const removeMaterialRequest = (materialId: string) => {
     setRequestedMaterials((prev) => prev.filter((p) => p.materialId !== materialId));
+    if (replacingMaterialId === materialId) {
+      setReplacingMaterialId(null);
+      setPickMaterialId("");
+    }
+  };
+
+  const updateMaterialQuantity = (materialId: string, rawQty: string) => {
+    const qty = Math.max(0.01, Number(rawQty) || 0.01);
+    setRequestedMaterials((prev) =>
+      prev.map((p) => (p.materialId === materialId ? { ...p, quantity: qty } : p))
+    );
+  };
+
+  const startReplaceMaterial = (materialId: string) => {
+    setReplacingMaterialId(materialId);
+    setPickMaterialId("");
+    setPickQty("1");
+    setMaterialPickerOpen(true);
+    materialsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  };
+
+  const cancelReplaceMaterial = () => {
+    setReplacingMaterialId(null);
+    setPickMaterialId("");
+  };
+
+  const applyReplaceMaterial = () => {
+    if (!replacingMaterialId || !pickMaterialId) return;
+    const mat = materials.find((m) => m.id === pickMaterialId);
+    if (!mat) return;
+    const prev = requestedMaterials.find((p) => p.materialId === replacingMaterialId);
+    const qty = Math.max(0.01, Number(pickQty) || prev?.quantity || 1);
+    const unitCost = Number(mat.unit_cost) || 0;
+    const materialCode = resolveMaterialTnsCode(mat);
+    setRequestedMaterials((prev) => {
+      if (pickMaterialId === replacingMaterialId) {
+        return prev.map((p) =>
+          p.materialId === pickMaterialId
+            ? { ...p, quantity: qty, unitCost: unitCost || p.unitCost }
+            : p
+        );
+      }
+      const without = prev.filter((p) => p.materialId !== replacingMaterialId);
+      const existing = without.find((p) => p.materialId === mat.id);
+      if (existing) {
+        return without.map((p) =>
+          p.materialId === mat.id
+            ? {
+                ...p,
+                quantity: p.quantity + qty,
+                unitCost: unitCost || p.unitCost,
+                materialCode: materialCode || p.materialCode,
+              }
+            : p
+        );
+      }
+      return [
+        ...without,
+        {
+          materialId: mat.id,
+          materialName: mat.name,
+          materialCode: materialCode || undefined,
+          quantity: qty,
+          unitCost,
+        },
+      ];
+    });
+    setReplacingMaterialId(null);
+    setPickMaterialId("");
+    setPickQty("1");
+    setMaterialPickerOpen(false);
   };
 
   const handleImagesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -400,11 +534,18 @@ export function KanbanCardEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{mode === "add" ? "Nueva tarjeta" : "Editar tarjeta"}</DialogTitle>
+      <DialogContent className="max-w-xl max-h-[90vh] flex flex-col overflow-hidden p-0 gap-0">
+        <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
+          <DialogTitle>
+            {focusSection === "materials"
+              ? "Actualizar solicitud de material"
+              : mode === "add"
+                ? "Nueva tarjeta"
+                : "Editar tarjeta"}
+          </DialogTitle>
         </DialogHeader>
 
+        <div className="flex-1 overflow-y-auto px-6 min-h-0">
         <div className="space-y-4 py-1">
           <div className="space-y-1.5">
             <Label className="text-xs font-medium">Descripción</Label>
@@ -473,26 +614,84 @@ export function KanbanCardEditDialog({
             ) : null}
           </div>
 
-          {/* Solicitar materiales del inventario: Solo en Diseño y Corte */}
-          {isDesignOrCuttingStage(stageKey) && canRequestInventory ? (
+          {/* Solicitar materiales: cualquier capa si el rol/sesión lo permite */}
+          {canRequestInventory ? (
             <SectionCard icon={Boxes} title="Solicitar materiales del inventario">
+              <div ref={materialsSectionRef} className="space-y-3">
+              {replacingMaterialId ? (
+                <p className="text-[11px] text-amber-700 bg-amber-50 dark:bg-amber-950/30 rounded-md px-2 py-1.5">
+                  Elige el material que reemplazará a{" "}
+                  <span className="font-semibold">
+                    {requestedMaterials.find((m) => m.materialId === replacingMaterialId)?.materialName}
+                  </span>
+                  .
+                </p>
+              ) : null}
               <div className="flex flex-wrap items-end gap-2">
                 <div className="flex-1 min-w-[160px] space-y-1">
                   <Label className="text-[10px] text-muted-foreground">Material</Label>
-                  <Select value={pickMaterialId} onValueChange={setPickMaterialId}>
-                    <SelectTrigger className="h-9">
-                      <SelectValue
-                        placeholder={loadingMaterials ? "Cargando..." : "Selecciona material"}
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {materials.map((m) => (
-                        <SelectItem key={m.id} value={m.id}>
-                          {m.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Popover open={materialPickerOpen} onOpenChange={setMaterialPickerOpen}>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        role="combobox"
+                        aria-expanded={materialPickerOpen}
+                        disabled={loadingMaterials}
+                        className={cn(
+                          "flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm",
+                          "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+                          "disabled:cursor-not-allowed disabled:opacity-50",
+                          !pickedMaterialLabel && "text-muted-foreground"
+                        )}
+                      >
+                        <span className="truncate text-left">
+                          {loadingMaterials
+                            ? "Cargando..."
+                            : pickedMaterialLabel || "Selecciona material"}
+                        </span>
+                        {loadingMaterials ? (
+                          <Loader2 className="ml-2 h-4 w-4 shrink-0 animate-spin opacity-70" />
+                        ) : (
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        )}
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      className="z-[200] w-[var(--radix-popover-trigger-width)] p-0"
+                      align="start"
+                      side="bottom"
+                      sideOffset={4}
+                      collisionPadding={12}
+                      avoidCollisions
+                    >
+                      <Command>
+                        <CommandInput placeholder="Buscar material..." />
+                        <CommandList className="max-h-[min(16rem,var(--radix-popover-content-available-height))]">
+                          <CommandEmpty>Sin coincidencias.</CommandEmpty>
+                          <CommandGroup>
+                            {sortedMaterials.map((m) => (
+                              <CommandItem
+                                key={m.id}
+                                value={m.name}
+                                onSelect={() => {
+                                  setPickMaterialId(m.id === pickMaterialId ? "" : m.id);
+                                  setMaterialPickerOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4 shrink-0",
+                                    pickMaterialId === m.id ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                <span className="truncate">{m.name}</span>
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div className="w-20 space-y-1">
                   <Label className="text-[10px] text-muted-foreground">Cant.</Label>
@@ -507,28 +706,58 @@ export function KanbanCardEditDialog({
                   type="button"
                   size="icon"
                   className="h-9 w-9 bg-red-600 hover:bg-red-700 text-white shrink-0"
-                  onClick={addMaterialRequest}
+                  onClick={replacingMaterialId ? applyReplaceMaterial : addMaterialRequest}
                   disabled={!pickMaterialId}
                 >
                   <Plus className="h-4 w-4" />
                 </Button>
+                {replacingMaterialId ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-9 shrink-0"
+                    onClick={cancelReplaceMaterial}
+                  >
+                    Cancelar cambio
+                  </Button>
+                ) : null}
               </div>
               {requestedMaterials.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
-                  Sin materiales solicitados. Al guardar la tarjeta se descuenta del inventario solo
-                  la cantidad nueva (o el incremento si ya habías solicitado antes).
+                  Solicitudes de capas anteriores no se muestran aquí (sí quedan en el costo real).
+                  Agrega solo lo que necesitas en esta capa.
                 </p>
               ) : (
                 <ul className="space-y-1.5">
                   {requestedMaterials.map((m) => (
                     <li
                       key={m.materialId}
-                      className="flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs"
+                      className="flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs"
                     >
-                      <span className="truncate font-medium">
-                        {m.materialName}{" "}
-                        <span className="text-muted-foreground font-normal">× {m.quantity}</span>
+                      <span className="truncate font-medium min-w-0 flex-1 basis-[8rem]">
+                        {m.materialName}
+                        {m.materialCode ? (
+                          <span className="text-muted-foreground font-normal"> · {m.materialCode}</span>
+                        ) : null}
                       </span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Label className="sr-only">Cantidad</Label>
+                        <Input
+                          value={String(m.quantity)}
+                          onChange={(e) => updateMaterialQuantity(m.materialId, e.target.value)}
+                          className="h-7 w-16 text-xs tabular-nums"
+                          inputMode="decimal"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        className="text-primary hover:underline shrink-0 inline-flex items-center gap-0.5"
+                        onClick={() => startReplaceMaterial(m.materialId)}
+                      >
+                        <Pencil className="h-3 w-3" />
+                        Cambiar
+                      </button>
                       <button
                         type="button"
                         className="text-red-600 hover:underline shrink-0"
@@ -540,6 +769,7 @@ export function KanbanCardEditDialog({
                   ))}
                 </ul>
               )}
+              </div>
             </SectionCard>
           ) : null}
 
@@ -567,7 +797,14 @@ export function KanbanCardEditDialog({
                         <SelectTrigger className="h-10">
                           <SelectValue />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent
+                          position="popper"
+                          side="bottom"
+                          align="start"
+                          sideOffset={4}
+                          collisionPadding={12}
+                          className="z-[200]"
+                        >
                           {MOLD_STATUS_OPTIONS.map((opt) => (
                             <SelectItem key={opt.value} value={opt.value}>
                               {opt.label}
@@ -802,8 +1039,9 @@ export function KanbanCardEditDialog({
             )}
           </SectionCard>
         </div>
+        </div>
 
-        <DialogFooter className="gap-2 sm:gap-2">
+        <DialogFooter className="gap-2 sm:gap-2 px-6 pb-6 pt-2 shrink-0">
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
             Cancelar
           </Button>
@@ -813,7 +1051,11 @@ export function KanbanCardEditDialog({
             className="bg-red-600 hover:bg-red-700 text-white"
             disabled={(readOnly && !canRequestInventory) || !items.trim() || saving}
           >
-            {saving ? "Guardando..." : "Guardar"}
+            {saving
+              ? "Guardando..."
+              : focusSection === "materials"
+                ? "Guardar solicitud"
+                : "Guardar"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -881,6 +1123,7 @@ export function cardFormFromProductionOrder(
     cardImages: card.cardImages || [],
     cardFiles: card.cardFiles || [],
     novedades: card.novedades || [],
-    requestedMaterials: card.requestedMaterials || [],
+    // Solo vivos de esta capa — nunca el histórico de capas anteriores
+    requestedMaterials: getLiveMaterialRequestsForEdit(card),
   };
 }

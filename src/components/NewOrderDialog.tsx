@@ -1073,11 +1073,6 @@ export function NewOrderDialog({
                                                                     </p>
                                                                 </div>
                                                                 <div className="flex flex-wrap gap-1.5">
-                                                                    {entry.color?.trim() && (
-                                                                        <Badge variant="secondary" className="text-[10px] font-normal">
-                                                                            {entry.color}
-                                                                        </Badge>
-                                                                    )}
                                                                     {entry.estampado?.trim() && (
                                                                         <Badge variant="outline" className="text-[10px] font-normal">
                                                                             {entry.estampado}

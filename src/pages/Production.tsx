@@ -3,7 +3,6 @@ import { AppLayout } from "@/components/AppLayout";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useOrders } from "@/hooks/useOrders";
 import { useKanbanEtapas } from "@/hooks/useKanbanEtapas";
-import { useRemoveMaterialStock } from "@/hooks/useRemoveMaterialStock";
 import { type ProductionOrder } from "@/data/mockData";
 import { User, Calendar, Package, ArrowLeft, ChevronRight, History, Clock, X, Plus, Pencil, Trash2, GripVertical, Check, Loader2, Boxes, Scissors, DollarSign, Factory, ImagePlus, Paperclip, FileText, UserPlus, MessageSquare, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -17,22 +16,28 @@ import { KanbanNovedadesDialog } from "@/components/KanbanNovedadesDialog";
 import { StageLaborCostDialog } from "@/components/StageLaborCostDialog";
 import { KanbanStageSummaryDialog } from "@/components/KanbanStageSummaryDialog";
 import { useToast } from "@/hooks/use-toast";
-import { http, HttpError } from "@/lib/http";
+import { http } from "@/lib/http";
 import {
   prepareCardsWithLedger,
   computeRealCostFromCards,
+  computeFullRealCostFromOrder,
   freezeStageCostsOnMove,
   freezeWorkingCostsForNextAssignee,
+  normalizeRealCostBreakdown,
   notifyOrderRealCostUpdated,
+  cardHasKanbanMaterialRequests,
+  reconcileOrphanLiveMaterials,
 } from "@/lib/order-real-cost";
 import {
   notifyKanbanEtapasUpdated,
   readProductionSession,
+  mergeProductionUserFromApi,
   getSessionCapaActionsMap,
   capaHasAction,
   canMoveCardToStage,
   canProductionUserActOnStage,
   canProductionUserOperateCard,
+  cardAssignedToOperatorOnAllowedStage,
   getNextStageKey,
   parseStageKeys,
 } from "@/lib/production-capa-permissions";
@@ -222,14 +227,6 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function deductedMap(list?: { materialId: string; quantity: number }[]) {
-  const map = new Map<string, number>();
-  (list || []).forEach((item) => {
-    map.set(item.materialId, Number(item.quantity) || 0);
-  });
-  return map;
-}
-
 function getCardLaborInfoForStage(card: ProductionOrder, stageKey: string) {
   const isCurrentStage = card.stage === stageKey;
   const stageConfig = card.stageLaborConfig?.[stageKey];
@@ -295,7 +292,6 @@ function getCardLaborInfoForStage(card: ProductionOrder, stageKey: string) {
 export default function Production() {
   const { toast } = useToast();
   const { orders: rawOrders, fetchOrders, updateOrderStage, fetchEtapaLogs, updateKanbanAssignment, updateKanbanTarjetas } = useOrders();
-  const { removeStock } = useRemoveMaterialStock();
   const {
     etapas,
     loading: loadingEtapas,
@@ -331,7 +327,8 @@ export default function Production() {
     mode: "add" | "edit";
     stageKey?: string;
     cardId?: string;
-  }>({ open: false, mode: "add" });
+    focusSection?: "materials" | null;
+  }>({ open: false, mode: "add", focusSection: null });
   const [cardFormInitial, setCardFormInitial] = useState<Partial<KanbanCardFormValues> | null>(null);
   const [prodSession, setProdSession] = useState(() => readProductionSession());
   const [capaActionsMap, setCapaActionsMap] = useState(() =>
@@ -416,7 +413,7 @@ export default function Production() {
 
       // Persistir stageAssignees completo en el backend
       try {
-        await http(endpoints.orders.detail(card.orderId), {
+        await http(endpoints.orders.kanbanAsignacion(card.orderId), {
           method: "PATCH",
           body: JSON.stringify({
             kanban_asignaciones: {
@@ -478,6 +475,15 @@ export default function Production() {
   };
 
   const openLaborCostModal = (card: ProductionOrder, stageKey: string) => {
+    if (!canManageBoard && !canProductionUserOperateCard(prodSession, card)) {
+      toast({
+        variant: "destructive",
+        title: "Sin asignación",
+        description:
+          "Solo puedes registrar mano de obra cuando el administrador te asignó esta tarjeta en esta capa.",
+      });
+      return;
+    }
     const label = stages.find((s) => s.key === stageKey)?.label || stageKey;
     setLaborDialog({
       open: true,
@@ -490,6 +496,15 @@ export default function Production() {
   const saveLaborCostForStage = (data: { enabled: boolean; perUnit: number | null }) => {
     if (!laborDialog.card || !laborDialog.stageKey) return;
     const { card, stageKey } = laborDialog;
+
+    if (!canManageBoard && !canProductionUserOperateCard(prodSession, card)) {
+      toast({
+        variant: "destructive",
+        title: "Sin asignación",
+        description: "No puedes modificar mano de obra sin estar asignado a esta capa.",
+      });
+      return;
+    }
 
     let stageAssignees = { ...(card.stageAssignees || {}) };
     const hasExistingAssign =
@@ -735,17 +750,29 @@ export default function Production() {
   };
 
   useEffect(() => {
-    const sync = () => {
+    const sync = async () => {
+      try {
+        const me = await http<Record<string, unknown>>(endpoints.users.me());
+        if (me && typeof me === "object") {
+          const session = mergeProductionUserFromApi(me);
+          setProdSession(session);
+          setCapaActionsMap(getSessionCapaActionsMap(session));
+          return;
+        }
+      } catch {
+        /* keep local session */
+      }
       const session = readProductionSession();
       setProdSession(session);
       setCapaActionsMap(getSessionCapaActionsMap(session));
     };
-    sync();
-    window.addEventListener("storage", sync);
-    window.addEventListener("focus", sync);
+    void sync();
+    const onFocus = () => void sync();
+    window.addEventListener("storage", onFocus);
+    window.addEventListener("focus", onFocus);
     return () => {
-      window.removeEventListener("storage", sync);
-      window.removeEventListener("focus", sync);
+      window.removeEventListener("storage", onFocus);
+      window.removeEventListener("focus", onFocus);
     };
   }, []);
 
@@ -810,21 +837,26 @@ export default function Production() {
 
   const userStageKeys = prodSession.stageKeys;
   const canManageBoard = prodSession.unrestricted;
+  const capaAllowed = (stageKey: string, action: Parameters<typeof capaHasAction>[2]) =>
+    capaHasAction(capaActionsMap, stageKey, action, userStageKeys);
   const canViewBoardOnStage = (stageKey: string) =>
     canManageBoard ||
-    (userStageKeys.includes(stageKey) &&
-      capaHasAction(capaActionsMap, stageKey, "ver_tablero"));
+    (userStageKeys.length > 0 &&
+      userStageKeys.includes(stageKey) &&
+      capaAllowed(stageKey, "ver_tablero"));
   const canEditOnStage = (stageKey: string) =>
     canManageBoard ||
     (userStageKeys.includes(stageKey) &&
-      capaHasAction(capaActionsMap, stageKey, "editar_tarjeta"));
+      capaAllowed(stageKey, "editar_tarjeta"));
+  // Satélites: siempre pueden solicitar materiales en las capas que el admin les asignó.
+  // Producción: respeta «Solicitar inventario» por capa en Administración → Roles.
   const canRequestInventoryOnStage = (stageKey: string) =>
     canManageBoard ||
     (userStageKeys.includes(stageKey) &&
-      capaHasAction(capaActionsMap, stageKey, "solicitar_inventario"));
+      (prodSession.isSatellite || capaAllowed(stageKey, "solicitar_inventario")));
   const userCanViewHistory =
     canManageBoard ||
-    userStageKeys.some((k) => capaHasAction(capaActionsMap, k, "ver_historial"));
+    userStageKeys.some((k) => capaAllowed(k, "ver_historial"));
   const canViewStageSummary =
     prodSession.isAdmin ||
     prodSession.isProduction ||
@@ -860,7 +892,14 @@ export default function Production() {
           const localCards = store[order.id];
           if (!Array.isArray(localCards) || !localCards.length) continue;
           const withLedger = prepareCardsWithLedger(localCards);
-          const breakdown = computeRealCostFromCards(order.id, withLedger);
+          const previousBreakdown = normalizeRealCostBreakdown(
+            order.id,
+            order.costo_real_desglose
+          );
+          const breakdown = await computeFullRealCostFromOrder(order.id, withLedger, {
+            estado: "in_production",
+            previousBreakdown,
+          });
           const result = await updateKanbanTarjetas(order.id, withLedger, breakdown);
           if (!result.errorMessage) {
             delete store[order.id];
@@ -1113,7 +1152,13 @@ export default function Production() {
         }
         return [baseCard];
       });
-      setProdOrders(transformed);
+      const labels: Record<string, string> = {};
+      stages.forEach((s) => {
+        labels[s.key] = s.label;
+      });
+      setProdOrders(
+        transformed.map((c) => reconcileOrphanLiveMaterials(c, labels))
+      );
     }
   }, [rawOrders]);
 
@@ -1130,17 +1175,25 @@ export default function Production() {
         labels[s.key] = s.label;
       });
       const withLedger = prepareCardsWithLedger(nextForOrder, labels);
-      const breakdown = computeRealCostFromCards(orderId, withLedger);
-      void updateKanbanTarjetas(orderId, withLedger, breakdown).then((result) => {
-        if (result.errorMessage) {
-          toast({
-            variant: "destructive",
-            title: "No se pudo guardar en el servidor",
-            description: result.errorMessage,
-          });
-          return;
-        }
-        notifyOrderRealCostUpdated(orderId);
+      const previousBreakdown = normalizeRealCostBreakdown(
+        orderId,
+        rawOrders.find((o) => o.id === orderId)?.costo_real_desglose
+      );
+      void computeFullRealCostFromOrder(orderId, withLedger, {
+        estado: "in_production",
+        previousBreakdown,
+      }).then((breakdown) => {
+        void updateKanbanTarjetas(orderId, withLedger, breakdown).then((result) => {
+          if (result.errorMessage) {
+            toast({
+              variant: "destructive",
+              title: "No se pudo guardar en el servidor",
+              description: result.errorMessage,
+            });
+            return;
+          }
+          notifyOrderRealCostUpdated(orderId);
+        });
       });
       return [...others, ...withLedger];
     });
@@ -1149,42 +1202,24 @@ export default function Production() {
   const activeOrders = rawOrders.filter((o) => {
     if (o.estado === "delivered") return false;
     if (canManageBoard) return true;
-    // Producción / Satélite: solo órdenes donde el usuario es el responsable de la capa actual
-    const myId = prodSession.userId;
-    if (!myId) return false;
+    if (prodSession.isKanbanOperator && prodSession.stageKeys.length === 0) return false;
 
     return prodOrders.some((c) => {
       if (c.orderId !== o.id) return false;
-      const isSat = c.satelliteAssigneeId === myId;
-      const isProd = c.assigneeId === myId;
-      const curAssign =
-        c.stageAssignees?.[c.stage] ||
-        c.stageAssignees?.[`${c.stage}__satellite`] ||
-        c.stageAssignees?.[`${c.stage}__production`];
-      const isStageAssign = curAssign?.userId === myId;
-
-      return isSat || isProd || isStageAssign;
+      return cardAssignedToOperatorOnAllowedStage(prodSession, c);
     });
   });
   const filteredProdOrders = prodOrders.filter((po) => {
     if (po.orderId !== selectedOrderId) return false;
     if (canManageBoard) return true;
-    if (!prodSession.userId) return false;
-    if (prodSession.isSatellite) {
-      const curAssign =
-        po.stageAssignees?.[po.stage] ||
-        po.stageAssignees?.[`${po.stage}__satellite`];
-      return po.satelliteAssigneeId === prodSession.userId || curAssign?.userId === prodSession.userId;
-    }
-    if (prodSession.isProduction) {
-      const curAssign =
-        po.stageAssignees?.[po.stage] ||
-        po.stageAssignees?.[`${po.stage}__production`];
-      return po.assigneeId === prodSession.userId || curAssign?.userId === prodSession.userId;
-    }
-    return false;
+    return cardAssignedToOperatorOnAllowedStage(prodSession, po);
   });
   const selectedOrder = activeOrders.find((o) => o.id === selectedOrderId);
+
+  useEffect(() => {
+    if (!selectedOrderId) return;
+    if (!selectedOrder) setSelectedOrderId(null);
+  }, [selectedOrderId, selectedOrder]);
 
   const stageLabels: Record<string, string> = {};
   stages.forEach((s) => { stageLabels[s.key] = s.label; });
@@ -1636,10 +1671,13 @@ export default function Production() {
       novedades: [],
       requestedMaterials: [],
     });
-    setCardDialog({ open: true, mode: "add", stageKey });
+    setCardDialog({ open: true, mode: "add", stageKey, focusSection: null });
   };
 
-  const openEditCard = (card: ProductionOrder) => {
+  const openEditCard = (
+    card: ProductionOrder,
+    options?: { focusSection?: "materials" | null }
+  ) => {
     if (!canProductionUserOperateCard(prodSession, card) && !canManageBoard) {
       toast({
         variant: "destructive",
@@ -1661,7 +1699,17 @@ export default function Production() {
       return;
     }
     setCardFormInitial(cardFormFromProductionOrder(card, card.stage));
-    setCardDialog({ open: true, mode: "edit", cardId: card.id, stageKey: card.stage });
+    setCardDialog({
+      open: true,
+      mode: "edit",
+      cardId: card.id,
+      stageKey: card.stage,
+      focusSection: options?.focusSection ?? null,
+    });
+  };
+
+  const openEditCardMaterials = (card: ProductionOrder) => {
+    openEditCard(card, { focusSection: "materials" });
   };
 
   const saveCard = async (incoming: KanbanCardFormValues & { satelliteName: string | null }) => {
@@ -1711,81 +1759,16 @@ export default function Production() {
       return;
     }
 
-    const alreadyDeducted = deductedMap(existingCard?.materialsDeducted);
-    const orderRef = selectedOrderId
-      ? `ORD-${selectedOrderId.slice(0, 8)} · Solicitud Kanban`
-      : "Solicitud Kanban";
-
-    const deltas: { materialId: string; materialName: string; quantity: number }[] = [];
-    if (!targetStage || canRequestInventoryOnStage(targetStage)) {
-      for (const mat of values.requestedMaterials) {
-        const prevQty = alreadyDeducted.get(mat.materialId) || 0;
-        const nextQty = Number(mat.quantity) || 0;
-        const delta = nextQty - prevQty;
-        if (delta > 0.0001) {
-          deltas.push({
-            materialId: mat.materialId,
-            materialName: mat.materialName,
-            quantity: delta,
-          });
-        }
-      }
-    }
+    // Histórico de otras capas intacto; esta capa solo actualiza requestedMaterials vivos.
+    // Al avanzar de capa, freezeWorkingCostsForNextAssignee congela lo vivo en materialsDeducted.
+    const materialsDeducted = (existingCard?.materialsDeducted || []).filter((m) => {
+      if (!m?.materialId || (Number(m.quantity) || 0) <= 0) return false;
+      // No guardar vivos de la capa actual dentro del histórico (aún no congelados)
+      if (targetStage && m.stage === targetStage) return false;
+      return true;
+    });
 
     setSavingCard(true);
-    const succeededDeltas: typeof deltas = [];
-    try {
-      for (const delta of deltas) {
-        await removeStock({
-          materialId: delta.materialId,
-          quantity: delta.quantity,
-          reference: orderRef,
-          note: `Material solicitado en tarjeta: ${delta.materialName}`,
-        });
-        succeededDeltas.push(delta);
-      }
-    } catch (err) {
-      if (succeededDeltas.length > 0) {
-        const partial = new Map(alreadyDeducted);
-        for (const d of succeededDeltas) {
-          partial.set(d.materialId, (partial.get(d.materialId) || 0) + d.quantity);
-        }
-        const materialsDeductedPartial = Array.from(partial.entries()).map(
-          ([materialId, quantity]) => ({ materialId, quantity })
-        );
-        if (existingCard) {
-          setProdOrders((prev) =>
-            prev.map((o) =>
-              o.id === existingCard.id ? { ...o, materialsDeducted: materialsDeductedPartial } : o
-            )
-          );
-        }
-      }
-      const message =
-        err instanceof HttpError
-          ? err.message
-          : err instanceof Error
-            ? err.message
-            : "No se pudo descontar el inventario.";
-      toast({
-        title: "Stock insuficiente o error al descontar",
-        description: message,
-        variant: "destructive",
-      });
-      setSavingCard(false);
-      return;
-    }
-
-    const nextDeducted = new Map(alreadyDeducted);
-    for (const mat of values.requestedMaterials) {
-      const prevQty = nextDeducted.get(mat.materialId) || 0;
-      const nextQty = Number(mat.quantity) || 0;
-      nextDeducted.set(mat.materialId, Math.max(prevQty, nextQty));
-    }
-    const materialsDeducted = Array.from(nextDeducted.entries()).map(([materialId, quantity]) => ({
-      materialId,
-      quantity,
-    }));
 
     const satelliteId = values.satelliteId || null;
     const satelliteCostRaw = values.satelliteCost.trim();
@@ -1896,15 +1879,20 @@ export default function Production() {
       }
     }
 
-    if (deltas.length > 0) {
+    const savedOrderId =
+      (mode === "edit" ? existingCard?.orderId : selectedOrderId) || selectedOrderId || "";
+
+    if (values.requestedMaterials.length > 0 || materialsDeducted.length > 0) {
       toast({
-        title: "Inventario actualizado",
-        description: `Se descontaron ${deltas.length} material(es) del stock.`,
+        title: "Solicitud registrada",
+        description:
+          "Los materiales adicionales quedaron en el desglose de costo real para el administrador. No se descontó stock real.",
       });
+      if (savedOrderId) notifyOrderRealCostUpdated(savedOrderId);
     }
 
     setSavingCard(false);
-    setCardDialog((d) => ({ ...d, open: false }));
+    setCardDialog((d) => ({ ...d, open: false, focusSection: null }));
   };
   const deleteCard = (id: string) => {
     const card = prodOrders.find((o) => o.id === id);
@@ -2064,12 +2052,16 @@ export default function Production() {
               <Package className="h-6 w-6 text-muted-foreground" />
             </div>
             <p className="text-sm font-semibold text-foreground">
-              En el momento no tiene pedidos asignados
+              {prodSession.isKanbanOperator && prodSession.stageKeys.length === 0
+                ? "No tienes capas asignadas"
+                : "En el momento no tiene pedidos asignados"}
             </p>
             <p className="text-xs text-muted-foreground mt-1.5 max-w-sm">
-              {prodSession.isKanbanOperator
-                ? "Cuando un administrador te asigne una tarjeta en Fábrica, el pedido aparecerá aquí."
-                : "No hay órdenes activas en planta por ahora."}
+              {prodSession.isKanbanOperator && prodSession.stageKeys.length === 0
+                ? "Un administrador debe configurar tus capas en Administración → Usuarios antes de que puedas ver pedidos en Fábrica."
+                : prodSession.isKanbanOperator
+                  ? "Cuando un administrador te asigne una tarjeta en una capa autorizada, el pedido aparecerá aquí."
+                  : "No hay órdenes activas en planta por ahora."}
             </p>
           </div>
         ) : (
@@ -2175,6 +2167,32 @@ export default function Production() {
             isStageRequiredForCard(stage.key, primaryCard) &&
             canViewBoardOnStage(stage.key)
           );
+
+          if (visibleStages.length === 0) {
+            return (
+              <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/20 px-6 py-16 text-center min-h-[320px]">
+                <Factory className="h-10 w-10 text-muted-foreground mb-3" />
+                <p className="text-sm font-semibold text-foreground">
+                  {!canManageBoard && prodSession.stageKeys.length === 0
+                    ? "Sin capas autorizadas"
+                    : "No hay tableros visibles para este pedido"}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1.5 max-w-md">
+                  {!canManageBoard && prodSession.stageKeys.length === 0
+                    ? "Contacta al administrador para que te asigne las capas Kanban que puedes operar."
+                    : !canManageBoard
+                      ? `Solo puedes ver las capas que el administrador te asignó${
+                          prodSession.stageKeys.length
+                            ? `: ${prodSession.stageKeys
+                                .map((k) => stageLabels[k] || k)
+                                .join(", ")}`
+                            : ""
+                        }. Si te asignaron este pedido en otra capa, pide al administrador que actualice tus capas o reasigne el trabajo.`
+                      : "Este pedido no tiene etapas Kanban configuradas todavía."}
+                </p>
+              </div>
+            );
+          }
 
           return visibleStages.map((stage, stageIndex) => {
             const rawStageOrders = getOrdersForStage(stage.key);
@@ -2320,12 +2338,18 @@ export default function Production() {
                     const canEditCard = canOperate && canEditOnStage(order.stage);
                     const canInventoryCard =
                       canOperate && canRequestInventoryOnStage(order.stage);
+                    const canSetLabor = canOperate || canManageBoard;
                     const stageUsers = usersForStage(order.stage);
                     const stageSatUsers = satelliteUsersForStage(order.stage);
                     const needsAssign = !order.assigneeId && !order.satelliteAssigneeId;
                     const hasProductionAssignee = Boolean(order.assigneeId);
                     const hasSatelliteAssignee = Boolean(order.satelliteAssigneeId);
                     const stageLabor = getCardLaborInfoForStage(order, stage.key);
+                    const hasMaterialRequests = cardHasKanbanMaterialRequests(order);
+                    // Visible en cualquier capa del tablero cuando hay solicitud viva de esta capa
+                    const showSolicitasteBtn =
+                      hasMaterialRequests &&
+                      (canManageBoard || canInventoryCard || canOperate);
                     return (
                     <div
                       key={order.id}
@@ -2407,29 +2431,35 @@ export default function Production() {
                         </span>
                         <div className="text-right leading-tight">
                           {stageLabor.hasLabor ? (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openLaborCostModal(order, stage.key);
-                              }}
-                              className="group/labor text-right hover:opacity-85 transition-opacity"
-                              title="Haz clic para editar el costo de mano de obra en esta capa"
-                            >
-                              <span className="font-semibold text-emerald-700 dark:text-emerald-400 tabular-nums group-hover/labor:underline">
+                            canSetLabor ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openLaborCostModal(order, stage.key);
+                                }}
+                                className="group/labor text-right hover:opacity-85 transition-opacity"
+                                title="Haz clic para editar el costo de mano de obra en esta capa"
+                              >
+                                <span className="font-semibold text-emerald-700 dark:text-emerald-400 tabular-nums group-hover/labor:underline">
+                                  {formatMoneyCop(stageLabor.totalLabor)}
+                                </span>
+                                {stageLabor.unitLabor > 0 && (
+                                  <span className="block text-[9px] text-muted-foreground tabular-nums">
+                                    {formatMoneyCop(stageLabor.unitLabor)}/ud
+                                  </span>
+                                )}
+                              </button>
+                            ) : (
+                              <span className="font-semibold text-emerald-700 dark:text-emerald-400 tabular-nums">
                                 {formatMoneyCop(stageLabor.totalLabor)}
                               </span>
-                              {stageLabor.unitLabor > 0 && (
-                                <span className="block text-[9px] text-muted-foreground tabular-nums">
-                                  {formatMoneyCop(stageLabor.unitLabor)}/ud
-                                </span>
-                              )}
-                            </button>
+                            )
                           ) : stageLabor.hasSatellite ? (
                             <span className="font-semibold text-emerald-700 dark:text-emerald-400 tabular-nums">
                               {formatMoneyCop(stageLabor.satelliteTotal)}
                             </span>
-                          ) : (
+                          ) : canSetLabor ? (
                             <Button
                               type="button"
                               size="sm"
@@ -2444,6 +2474,8 @@ export default function Production() {
                               <DollarSign className="h-2.5 w-2.5" />
                               Valor
                             </Button>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground">—</span>
                           )}
                         </div>
                       </div>
@@ -2494,10 +2526,6 @@ export default function Production() {
                           ? "Reasignar"
                           : "Asignar a"}
                       </Button>
-                    ) : canSeeCapa && !canOperate ? (
-                      <p className="text-[10px] text-amber-700 mb-1">
-                        Pendiente de asignación por admin
-                      </p>
                     ) : null}
                     <div className="mt-1.5 pt-1.5 border-t flex items-center justify-between gap-1">
                       <p
@@ -2516,21 +2544,39 @@ export default function Production() {
                             ? `Producción: ${order.assignee}`
                             : "Sin asignar"}
                       </p>
-                      {(canManageBoard || canOperate) ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleMarkCardTerminado(order, stage.key);
-                          }}
-                          className="h-6 px-2 text-[10px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white gap-1 shrink-0 rounded shadow-xs"
-                          title="Marcar trabajo como terminado en esta capa para avanzar el pedido y sumar la mano de obra a por pagar"
-                        >
-                          <CheckCircle2 className="h-3 w-3" />
-                          Terminado
-                        </Button>
-                      ) : null}
+                      <div className="flex items-center gap-1 shrink-0">
+                        {showSolicitasteBtn ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEditCardMaterials(order);
+                            }}
+                            className="h-6 px-2 text-[10px] font-medium border-red-300/60 text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40 gap-1 rounded shadow-none"
+                            title="Actualizar materiales solicitados en esta capa"
+                          >
+                            Solicitaste
+                            <Pencil className="h-3 w-3" />
+                          </Button>
+                        ) : null}
+                        {(canManageBoard || canOperate) ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleMarkCardTerminado(order, stage.key);
+                            }}
+                            className="h-6 px-2 text-[10px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white gap-1 shrink-0 rounded shadow-xs"
+                            title="Marcar trabajo como terminado en esta capa para avanzar el pedido y sumar la mano de obra a por pagar"
+                          >
+                            <CheckCircle2 className="h-3 w-3" />
+                            Terminado
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                   );
@@ -2571,9 +2617,12 @@ export default function Production() {
         mode={cardDialog.mode}
         stageKey={cardDialog.stageKey || dialogStageKey}
         initial={cardFormInitial}
-        onOpenChange={(open) => setCardDialog((d) => ({ ...d, open }))}
+        onOpenChange={(open) =>
+          setCardDialog((d) => ({ ...d, open, focusSection: open ? d.focusSection : null }))
+        }
         onSave={saveCard}
         saving={savingCard}
+        focusSection={cardDialog.focusSection ?? null}
         canRequestInventory={
           !dialogStageKey || canRequestInventoryOnStage(dialogStageKey)
         }

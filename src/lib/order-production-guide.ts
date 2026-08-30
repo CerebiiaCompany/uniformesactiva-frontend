@@ -49,16 +49,13 @@ function resolveSaleUnitPrice(
   return 0;
 }
 
-function colorEstampadoLabel(order: Order, itemColor?: string | null): string {
-  const color =
-    (itemColor || "").trim() || (order.color || "").trim() || "—";
+function estampadoLabel(order: Order, _itemColor?: string | null): string {
   const estampado = (order.estampado || "").trim();
   const logos = getActiveLogoLabels(order);
   const printParts = [estampado, logos.length ? logos.join(", ") : ""]
     .filter(Boolean)
     .join(" · ");
-  if (!printParts) return color;
-  return `${color} / ${printParts}`;
+  return printParts || "—";
 }
 
 export async function fetchClientForOrderGuide(
@@ -150,7 +147,7 @@ function buildGuideHtml(
         <tr>
           <td>${escapeHtml(productLabel)}</td>
           <td>${escapeHtml((item.talla_nombre || "—").trim() || "—")}</td>
-          <td>${escapeHtml(colorEstampadoLabel(order, item.color))}</td>
+          <td>${escapeHtml(estampadoLabel(order, item.color))}</td>
           <td class="num">${qty}</td>
           <td class="num">${escapeHtml(fmtMoney(unit))}</td>
           <td class="num">${escapeHtml(fmtMoney(lineTotal))}</td>
@@ -283,7 +280,7 @@ function buildGuideHtml(
         <tr>
           <th>Producto</th>
           <th>Talla</th>
-          <th>Color / Estampado</th>
+          <th>Estampado</th>
           <th class="num">Cant.</th>
           <th class="num">P. unit.</th>
           <th class="num">Total</th>

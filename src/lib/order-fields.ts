@@ -212,7 +212,6 @@ export function summarizeOrderArticles(
             "Artículo";
 
         const parts: string[] = [];
-        if (g.color && g.color !== "—") parts.push(g.color);
         if (!omitSizes) {
             const sizes = g.tallas
                 .filter((t) => t.nombre && t.nombre !== "—")

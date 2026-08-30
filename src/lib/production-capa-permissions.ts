@@ -32,7 +32,8 @@ export const CAPA_KANBAN_ACTIONS = [
   {
     code: "solicitar_inventario",
     label: "Solicitar inventario",
-    description: "Pedir materiales del inventario desde la tarjeta.",
+    description:
+      "Pedir materiales del inventario desde la tarjeta. En rol Satélite aplica en todas las capas asignadas al usuario (aunque no se marque aquí).",
   },
   {
     code: "editar_tarjeta",
@@ -161,13 +162,18 @@ export function toggleCapaModule(
 
 export function getCapaActionsForStage(
   map: CapaActionsMap,
-  stageKey: string
+  stageKey: string,
+  adminAssignedStageKeys?: string[]
 ): CapaActionCode[] {
   if (!stageKey) return [];
   if (map && stageKey in map) {
-    return map[stageKey] || [];
+    const configured = map[stageKey] || [];
+    return configured.length > 0 ? configured : [...DEFAULT_CAPA_ACTIONS];
   }
   if (!map || Object.keys(map).length === 0) {
+    return [...DEFAULT_CAPA_ACTIONS];
+  }
+  if (adminAssignedStageKeys?.includes(stageKey)) {
     return [...DEFAULT_CAPA_ACTIONS];
   }
   return [];
@@ -176,9 +182,10 @@ export function getCapaActionsForStage(
 export function capaHasAction(
   map: CapaActionsMap,
   stageKey: string,
-  action: CapaActionCode
+  action: CapaActionCode,
+  adminAssignedStageKeys?: string[]
 ): boolean {
-  return getCapaActionsForStage(map, stageKey).includes(action);
+  return getCapaActionsForStage(map, stageKey, adminAssignedStageKeys).includes(action);
 }
 
 export function getNextStageKey(
@@ -240,6 +247,34 @@ function normalizeRoleName(raw: unknown): string {
   const m = s.match(/name=['"]([^'"]+)['"]/);
   if (m?.[1]) return m[1];
   return s;
+}
+
+export function mergeProductionUserFromApi(me: Record<string, unknown>): ProductionSession {
+  if (typeof window === "undefined") return readProductionSession();
+  try {
+    const raw = localStorage.getItem("user");
+    const prev = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const next = {
+      ...prev,
+      id: me.id || prev.id,
+      username: me.username || prev.username,
+      email: me.email || prev.email,
+      first_name: me.first_name || prev.first_name,
+      last_name: me.last_name || prev.last_name,
+      phone: me.phone || prev.phone || "",
+      area: me.area || prev.area || "",
+      cargo: me.cargo || prev.cargo || "",
+      roles: me.roles || prev.roles,
+      production_stage_key: me.production_stage_key || prev.production_stage_key || "",
+      production_stage_keys:
+        me.production_stage_keys || prev.production_stage_keys || [],
+      satellite_id: me.satellite_id ? String(me.satellite_id) : prev.satellite_id || "",
+    };
+    localStorage.setItem("user", JSON.stringify(next));
+  } catch {
+    // keep previous session
+  }
+  return readProductionSession();
 }
 
 export function readProductionSession(): ProductionSession {
@@ -309,27 +344,114 @@ export function canProductionUserActOnStage(
   cardStageKey: string
 ): boolean {
   if (session.unrestricted) return true;
-  if (session.stageKeys.length > 0) return session.stageKeys.includes(cardStageKey);
-  return true;
+  if (!session.isKanbanOperator) return true;
+  if (session.stageKeys.length === 0) return false;
+  return session.stageKeys.includes(cardStageKey);
+}
+
+/** Capas Kanban que el operador puede ver (asignadas por administrador). */
+export function getOperatorVisibleStageKeys(session: ProductionSession): string[] {
+  if (session.unrestricted) return [];
+  return session.stageKeys;
 }
 
 export type KanbanAssignableCard = {
   stage: string;
   assigneeId?: string | null;
   satelliteAssigneeId?: string | null;
+  stageAssignees?: Record<
+    string,
+    { userId?: string | null; name?: string; kind?: "production" | "satellite" }
+  >;
 };
 
-/** Opera la tarjeta si está asignada a él como Producción o como Satélite. */
+export type StageAssigneeRef = {
+  userId: string;
+  name?: string;
+  kind?: "production" | "satellite";
+};
+
+/** Responsable de una capa concreta (mapa por etapa + campos vivos si es la capa actual). */
+export function getStageAssignee(
+  card: KanbanAssignableCard,
+  stageKey?: string
+): StageAssigneeRef | null {
+  const sk = (stageKey || card.stage || "").trim();
+  if (!sk) return null;
+
+  const fromMap =
+    card.stageAssignees?.[sk] ||
+    card.stageAssignees?.[`${sk}__satellite`] ||
+    card.stageAssignees?.[`${sk}__production`];
+
+  if (fromMap?.userId) {
+    const uid = String(fromMap.userId).trim();
+    if (uid) {
+      return {
+        userId: uid,
+        name: fromMap.name,
+        kind: fromMap.kind,
+      };
+    }
+  }
+
+  if (sk !== card.stage) return null;
+
+  if (card.satelliteAssigneeId) {
+    const uid = String(card.satelliteAssigneeId).trim();
+    if (uid) {
+      return { userId: uid, kind: "satellite" };
+    }
+  }
+  if (card.assigneeId) {
+    const uid = String(card.assigneeId).trim();
+    if (uid) {
+      return { userId: uid, kind: "production" };
+    }
+  }
+  return null;
+}
+
+/** Operador asignado en la capa indicada (por defecto la capa actual de la tarjeta). */
+export function isOperatorAssignedToCardOnStage(
+  session: ProductionSession,
+  card: KanbanAssignableCard,
+  stageKey?: string
+): boolean {
+  if (session.unrestricted) return true;
+  if (!session.userId) return false;
+
+  const sk = (stageKey || card.stage || "").trim();
+  if (!sk || !session.stageKeys.includes(sk)) return false;
+
+  const assignee = getStageAssignee(card, sk);
+  if (!assignee?.userId || assignee.userId !== session.userId) return false;
+
+  if (assignee.kind === "satellite") return session.isSatellite;
+  if (assignee.kind === "production") return session.isProduction;
+
+  if (session.isSatellite && card.satelliteAssigneeId === session.userId) return true;
+  if (session.isProduction && card.assigneeId === session.userId) return true;
+  return assignee.userId === session.userId;
+}
+
+export function cardAssignedToOperatorOnAllowedStage(
+  session: ProductionSession,
+  card: KanbanAssignableCard
+): boolean {
+  if (session.unrestricted) return true;
+  if (!session.userId || session.stageKeys.length === 0) return false;
+  return isOperatorAssignedToCardOnStage(session, card, card.stage);
+}
+
+/** Opera la tarjeta solo si está asignado en la capa actual. */
 export function canProductionUserOperateCard(
   session: ProductionSession,
   card: KanbanAssignableCard
 ): boolean {
   if (session.unrestricted) return true;
   if (!canProductionUserActOnStage(session, card.stage)) return false;
-  if (!session.userId) return false;
-  if (session.isProduction && card.assigneeId === session.userId) return true;
-  if (session.isSatellite && card.satelliteAssigneeId === session.userId) return true;
-  return false;
+  return isOperatorAssignedToCardOnStage(session, card, card.stage);
 }
 
 /** Mapa de acciones según el rol Kanban del usuario en sesión. */

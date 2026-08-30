@@ -9,6 +9,16 @@ import type { FabricRecord, Proveedor } from "@/types/variant";
 import { normalizeDecimalInput, parseDecimalInput } from "@/lib/decimal-input";
 import { formatCurrency, formatDecimal, formatForInput } from "@/lib/format-number";
 import { cn } from "@/lib/utils";
+import {
+    fabricBodegaLabel,
+    fabricBodegaShortLabel,
+    type FabricBodegaFilter,
+    type FabricBodegaKind,
+} from "@/lib/tns-fabric-bodega";
+import {
+    formatFabricSelectionValue,
+    parseFabricSelectionInput,
+} from "@/services/tnsService";
 
 type InventoryFabricRef = {
     reference: string;
@@ -19,6 +29,9 @@ type InventoryFabricRef = {
     proveedor?: string;
     proveedoresList?: string[];
     stock?: number;
+    bodega_cod?: string;
+    bodega_desc?: string;
+    bodega_kind?: FabricBodegaKind;
 };
 
 interface FabricTableProps {
@@ -35,6 +48,7 @@ interface FabricTableProps {
 }
 
 type FabricFormErrors = {
+    bodega_kind?: string;
     proveedor_id?: string;
     reference?: string;
     meters?: string;
@@ -43,16 +57,68 @@ type FabricFormErrors = {
 };
 
 const FABRIC_GRID =
-    "grid grid-cols-[auto_minmax(0,1.1fr)_minmax(0,1.1fr)_88px_64px_80px_48px_minmax(0,1fr)] gap-2";
+    "grid grid-cols-[auto_minmax(0,0.95fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,0.9fr)_64px_80px_48px_minmax(0,1fr)] gap-2";
 
 const emptyRow = {
+    bodega_kind: "" as FabricBodegaFilter | "",
     proveedor_id: "",
     reference: "",
-    color: "",
+    codigo: "",
     meters: "1",
     price_per_meter: "",
     tiene_iva: false,
     es_principal: false,
+};
+
+const matchesProveedorName = (ref: InventoryFabricRef, targetName: string): boolean => {
+    const target = targetName.trim().toLowerCase();
+    if (!target) return false;
+    if (ref.proveedoresList && ref.proveedoresList.length > 0) {
+        return ref.proveedoresList.some((p) => {
+            const pLower = p.toLowerCase();
+            return pLower === target || pLower.includes(target) || target.includes(pLower);
+        });
+    }
+    if (ref.proveedor) {
+        const pLower = ref.proveedor.toLowerCase();
+        return pLower === target || pLower.includes(target) || target.includes(pLower);
+    }
+    return false;
+};
+
+const filterRefsByBodega = (
+    refs: InventoryFabricRef[],
+    bodegaKind: FabricBodegaFilter | ""
+): InventoryFabricRef[] => {
+    if (!bodegaKind || bodegaKind === "todas") return refs;
+    return refs.filter((r) => r.bodega_kind === bodegaKind);
+};
+
+const scoreFabricMatch = (
+    ref: InventoryFabricRef,
+    codeHint: string,
+    referenceHint: string
+): number => {
+    const code = (ref.code || "").trim().toLowerCase();
+    const name = ref.reference.trim().toLowerCase();
+    const full = (ref.full_desc || "").trim().toLowerCase();
+
+    if (codeHint && code && code === codeHint) return 100;
+    if (referenceHint && name && name === referenceHint) return 90;
+    if (referenceHint && code && code === referenceHint) return 85;
+    if (referenceHint && full && full === referenceHint) return 80;
+    return 0;
+};
+
+const pickBestFabricMatch = (candidates: InventoryFabricRef[]): InventoryFabricRef | undefined => {
+    if (!candidates.length) return undefined;
+    if (candidates.length === 1) return candidates[0];
+
+    return [...candidates].sort((a, b) => {
+        const costDiff = (b.unit_cost || 0) - (a.unit_cost || 0);
+        if (costDiff !== 0) return costDiff;
+        return (b.stock || 0) - (a.stock || 0);
+    })[0];
 };
 
 export function FabricCostsTable({
@@ -88,25 +154,50 @@ export function FabricCostsTable({
         );
     }, [newRow.proveedor_id, proveedores]);
 
-    // Lista de telas filtradas según el proveedor seleccionado
-    const filteredInventoryRefs = useMemo(() => {
-        if (!selectedProveedor) return inventoryFabricRefs;
-        const targetName = selectedProveedor.name.trim().toLowerCase();
+    const refsInAllowedBodegas = useMemo(
+        () => inventoryFabricRefs.filter((r) => r.bodega_kind),
+        [inventoryFabricRefs]
+    );
 
-        return inventoryFabricRefs.filter((r) => {
-            if (r.proveedoresList && r.proveedoresList.length > 0) {
-                return r.proveedoresList.some((p) => {
-                    const pLower = p.toLowerCase();
-                    return pLower === targetName || pLower.includes(targetName) || targetName.includes(pLower);
-                });
-            }
-            if (r.proveedor) {
-                const pLower = r.proveedor.toLowerCase();
-                return pLower === targetName || pLower.includes(targetName) || targetName.includes(pLower);
-            }
-            return false;
+    const refsForBodegaFilter = useMemo(
+        () => filterRefsByBodega(refsInAllowedBodegas, newRow.bodega_kind),
+        [refsInAllowedBodegas, newRow.bodega_kind]
+    );
+
+    const proveedoresForBodega = useMemo(() => {
+        const names = new Map<string, Proveedor>();
+        refsForBodegaFilter.forEach((ref) => {
+            const candidates = ref.proveedoresList?.length
+                ? ref.proveedoresList
+                : ref.proveedor
+                  ? [ref.proveedor]
+                  : [];
+            candidates.forEach((rawName) => {
+                const match = proveedores.find((p) => p.name.trim().toLowerCase() === rawName.trim().toLowerCase());
+                if (match) names.set(match.id, match);
+            });
         });
-    }, [inventoryFabricRefs, selectedProveedor]);
+        return Array.from(names.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
+    }, [refsForBodegaFilter, proveedores]);
+
+    const proveedorBodegaHint = (provName: string): string => {
+        const pool = filterRefsByBodega(
+            refsInAllowedBodegas.filter((r) => matchesProveedorName(r, provName)),
+            newRow.bodega_kind
+        );
+        const kinds = new Set(pool.map((r) => r.bodega_kind).filter(Boolean));
+        if (kinds.size > 1) return "M.P. + Prod.";
+        if (kinds.has("materia_prima")) return "M.P.";
+        if (kinds.has("produccion")) return "Prod.";
+        return "";
+    };
+
+    // Lista de telas filtradas según bodega y proveedor seleccionados
+    const filteredInventoryRefs = useMemo(() => {
+        let pool = refsForBodegaFilter;
+        if (!selectedProveedor) return pool;
+        return pool.filter((r) => matchesProveedorName(r, selectedProveedor.name));
+    }, [refsForBodegaFilter, selectedProveedor]);
 
     const uniqueRefs = useMemo(
         () => [...new Set(filteredInventoryRefs.map((r) => r.reference).filter(Boolean))],
@@ -115,61 +206,77 @@ export function FabricCostsTable({
 
     const findMaterialByReference = (
         reference: string,
-        proveedorId?: string
+        proveedorId?: string,
+        bodegaKind?: FabricBodegaFilter | "",
+        explicitCodigo?: string
     ): InventoryFabricRef | undefined => {
-        const ref = reference.trim().toLowerCase();
-        if (!ref) return undefined;
+        const parsed = parseFabricSelectionInput(reference);
+        const codeHint = (explicitCodigo || parsed.code || "").trim().toLowerCase();
+        const referenceHint = (parsed.reference || reference).trim().toLowerCase();
+        if (!codeHint && !referenceHint) return undefined;
 
         const prov = proveedorId
             ? proveedores.find((p) => p.id === proveedorId || p.name.toLowerCase() === proveedorId.toLowerCase())
             : selectedProveedor;
 
-        const pool = prov
-            ? inventoryFabricRefs.filter((r) => {
-                  const target = prov.name.trim().toLowerCase();
-                  if (r.proveedoresList && r.proveedoresList.length > 0) {
-                      return r.proveedoresList.some((p) => {
-                          const pLower = p.toLowerCase();
-                          return pLower === target || pLower.includes(target) || target.includes(pLower);
-                      });
-                  }
-                  if (r.proveedor) {
-                      const pLower = r.proveedor.toLowerCase();
-                      return pLower === target || pLower.includes(target) || target.includes(pLower);
-                  }
-                  return false;
-              })
-            : inventoryFabricRefs;
+        let pool = filterRefsByBodega(refsInAllowedBodegas, bodegaKind ?? newRow.bodega_kind);
 
-        const matchInPool = pool.find(
-            (r) =>
-                r.reference.trim().toLowerCase() === ref ||
-                (r.code && r.code.trim().toLowerCase() === ref) ||
-                (r.full_desc && r.full_desc.trim().toLowerCase() === ref)
-        );
+        if (prov) {
+            pool = pool.filter((r) => matchesProveedorName(r, prov.name));
+        }
 
-        if (matchInPool) return matchInPool;
+        const exactMatches = pool.filter((r) => scoreFabricMatch(r, codeHint, referenceHint) > 0);
+        if (exactMatches.length) {
+            if (codeHint) {
+                const byCode = exactMatches.filter(
+                    (r) => (r.code || "").trim().toLowerCase() === codeHint
+                );
+                if (byCode.length) return pickBestFabricMatch(byCode);
+            }
+            return pickBestFabricMatch(exactMatches);
+        }
 
-        return inventoryFabricRefs.find(
-            (r) =>
-                r.reference.trim().toLowerCase() === ref ||
-                (r.code && r.code.trim().toLowerCase() === ref) ||
-                (r.full_desc && r.full_desc.trim().toLowerCase() === ref)
-        );
+        if (referenceHint.length >= 3) {
+            const partialMatches = pool.filter((r) => {
+                const code = (r.code || "").trim().toLowerCase();
+                const name = r.reference.trim().toLowerCase();
+                const full = (r.full_desc || "").trim().toLowerCase();
+                return (
+                    name.includes(referenceHint) ||
+                    code.includes(referenceHint) ||
+                    full.includes(referenceHint)
+                );
+            });
+            if (partialMatches.length === 1) return partialMatches[0];
+            if (codeHint) {
+                const byCodePartial = partialMatches.filter((r) =>
+                    (r.code || "").trim().toLowerCase().startsWith(codeHint)
+                );
+                if (byCodePartial.length === 1) return byCodePartial[0];
+            }
+        }
+
+        return undefined;
     };
 
     const applyInventoryDefaults = (
         reference: string,
         proveedorId: string,
-        current: typeof emptyRow
+        current: typeof emptyRow,
+        bodegaKind?: FabricBodegaFilter | ""
     ) => {
-        const match = findMaterialByReference(reference, proveedorId);
+        const match = findMaterialByReference(
+            reference,
+            proveedorId,
+            bodegaKind ?? current.bodega_kind,
+            current.codigo
+        );
         if (!match) {
             return {
                 ...current,
                 reference,
                 proveedor_id: proveedorId,
-                color: "",
+                codigo: "",
                 meters: current.meters || "1",
                 price_per_meter: "",
             };
@@ -184,20 +291,24 @@ export function FabricCostsTable({
             if (foundP) matchedProvId = foundP.id;
         }
 
+        const selectionLabel = formatFabricSelectionValue(match.code || "", match.reference);
+
         return {
             ...current,
-            reference: match.reference,
+            bodega_kind: match.bodega_kind || current.bodega_kind,
+            reference: selectionLabel,
             proveedor_id: matchedProvId,
-            color: (match.color || "").trim(),
+            codigo: (match.code || "").trim(),
             meters: current.meters || "1",
-            // Costo unitario configurado directamente desde TNS
-            price_per_meter: formatForInput(match.unit_cost),
+            price_per_meter:
+                match.unit_cost > 0 ? formatForInput(match.unit_cost) : "",
         };
     };
 
-    const resolveRowColor = (item: FabricRecord) => {
-        const match = findMaterialByReference(item.reference, item.proveedor_id);
-        return (match?.color || "").trim() || "—";
+    const resolveRowCodigo = (item: FabricRecord) => {
+        if (item.codigo?.trim()) return item.codigo.trim();
+        const match = findMaterialByReference(item.reference, item.proveedor_id, "", item.codigo);
+        return (match?.code || "").trim() || "—";
     };
 
     const clearFieldError = (field: keyof FabricFormErrors) => {
@@ -231,10 +342,34 @@ export function FabricCostsTable({
                 nextErrors.general = "Debe llenar todos los campos";
             }
             // Comprobamos que la referencia exista en el inventario TNS
-            const match = findMaterialByReference(newRow.reference, newRow.proveedor_id);
+            const match = findMaterialByReference(
+                newRow.reference,
+                newRow.proveedor_id,
+                newRow.bodega_kind,
+                newRow.codigo
+            );
             if (!match) {
                 nextErrors.reference = "La referencia no existe en el catálogo de telas TNS";
                 nextErrors.general = "Debe coincidir con una tela del inventario";
+            } else {
+                const codeNorm = (newRow.codigo || match.code || "").trim().toLowerCase();
+                const ambiguous = refsInAllowedBodegas.filter((r) => {
+                    if (!selectedProveedor || matchesProveedorName(r, selectedProveedor.name)) {
+                        if (codeNorm) {
+                            return (r.code || "").trim().toLowerCase() === codeNorm;
+                        }
+                        return r.reference.trim().toLowerCase() === match.reference.trim().toLowerCase();
+                    }
+                    return false;
+                });
+                const bodegas = new Set(ambiguous.map((r) => r.bodega_kind).filter(Boolean));
+                if (bodegas.size > 1 && !newRow.bodega_kind) {
+                    nextErrors.bodega_kind = "Esta tela existe en M.P. y Producción";
+                    nextErrors.general = "Seleccione la bodega de origen";
+                } else if (!(match.code || newRow.codigo || "").trim()) {
+                    nextErrors.reference = "La tela seleccionada no tiene código TNS";
+                    nextErrors.general = "Seleccione una tela con código de inventario";
+                }
             }
         }
 
@@ -247,7 +382,12 @@ export function FabricCostsTable({
 
         setIsSaving(true);
         try {
-            const match = findMaterialByReference(newRow.reference, newRow.proveedor_id);
+            const match = findMaterialByReference(
+                newRow.reference,
+                newRow.proveedor_id,
+                newRow.bodega_kind,
+                newRow.codigo
+            );
             let finalProveedorId = newRow.proveedor_id;
 
             // Si no se eligió proveedor a mano, autocompletarlo desde el material o usar fallback
@@ -263,7 +403,8 @@ export function FabricCostsTable({
 
             const success = await onAdd({
                 proveedor_id: finalProveedorId,
-                reference: newRow.reference,
+                reference: match?.reference || parseFabricSelectionInput(newRow.reference).reference,
+                codigo: (match?.code || newRow.codigo || "").trim(),
                 variant_id: variantId,
                 meters: normalizeDecimalInput(newRow.meters),
                 price_per_meter: normalizeDecimalInput(newRow.price_per_meter),
@@ -310,10 +451,10 @@ export function FabricCostsTable({
                 <div>
                     <CardTitle className="text-lg font-bold tracking-tight">Costos de tela</CardTitle>
                     <p className="text-xs text-muted-foreground mt-1">
-                        Elige <strong>proveedor</strong> (trazabilidad del pedido) y la{" "}
-                        <strong>referencia</strong> de inventario. El <strong>$/metro</strong> es el
-                        costo unitario con el que se creó/configuró la tela; <strong>metro</strong>{" "}
-                        inicia en 1.
+                        Elige <strong>bodega</strong> (materia prima o producción),{" "}
+                        <strong>proveedor</strong> y la <strong>referencia</strong> de inventario TNS. El{" "}
+                        <strong>$/metro</strong> es el costo unitario con el que se creó/configuró la tela;{" "}
+                        <strong>metro</strong> inicia en 1.
                     </p>
                 </div>
                 <div className="flex gap-2 shrink-0">
@@ -335,9 +476,10 @@ export function FabricCostsTable({
                     <div className="w-8 text-center" title="Usar para costeo">
                         ★
                     </div>
+                    <div>Bodega</div>
                     <div>Proveedor</div>
                     <div>Referencia (inventario)</div>
-                    <div>Color</div>
+                    <div>Código</div>
                     <div>metro</div>
                     <div>$/metro</div>
                     <div>IVA</div>
@@ -372,6 +514,14 @@ export function FabricCostsTable({
                                 )}
                             </button>
                         </div>
+                        <div className="truncate min-w-0 text-xs text-muted-foreground">
+                            {(() => {
+                                const match = findMaterialByReference(item.reference, item.proveedor_id);
+                                return match?.bodega_kind
+                                    ? fabricBodegaShortLabel(match.bodega_kind)
+                                    : "—";
+                            })()}
+                        </div>
                         <div className="truncate min-w-0">
                             {item.proveedor_nombre ||
                                 proveedorNameById.get(item.proveedor_id) ||
@@ -381,7 +531,7 @@ export function FabricCostsTable({
                             )}
                         </div>
                         <div className="truncate min-w-0">{item.reference}</div>
-                        <div className="truncate min-w-0 text-muted-foreground">{resolveRowColor(item)}</div>
+                        <div className="truncate min-w-0 font-mono text-xs">{resolveRowCodigo(item)}</div>
                         <div>{formatDecimal(item.meters)}</div>
                         <div>${formatCurrency(item.price_per_meter)}</div>
                         <div>{item.tiene_iva ? "Sí" : "No"}</div>
@@ -415,6 +565,57 @@ export function FabricCostsTable({
                                 <select
                                     className={cn(
                                         "h-9 w-full rounded-md border bg-background px-2 text-xs font-medium",
+                                        errors.bodega_kind
+                                            ? "border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+                                            : "border-input"
+                                    )}
+                                    value={newRow.bodega_kind}
+                                    onChange={(e) => {
+                                        const bodegaKind = e.target.value as FabricBodegaFilter | "";
+                                        setNewRow((prev) => {
+                                            const matchInNewBodega = findMaterialByReference(
+                                                prev.reference,
+                                                prev.proveedor_id,
+                                                bodegaKind
+                                            );
+                                            if (!matchInNewBodega) {
+                                                return {
+                                                    ...prev,
+                                                    bodega_kind: bodegaKind,
+                                                    reference: "",
+                                                    codigo: "",
+                                                    price_per_meter: "",
+                                                    proveedor_id: "",
+                                                };
+                                            }
+                                            return applyInventoryDefaults(
+                                                prev.reference,
+                                                prev.proveedor_id,
+                                                { ...prev, bodega_kind: bodegaKind },
+                                                bodegaKind
+                                            );
+                                        });
+                                        clearFieldError("bodega_kind");
+                                        clearFieldError("reference");
+                                        clearFieldError("proveedor_id");
+                                    }}
+                                >
+                                    <option value="">Todas (M.P. + Prod.)</option>
+                                    <option value="materia_prima">Materia prima</option>
+                                    <option value="produccion">Producción</option>
+                                </select>
+                                {errors.bodega_kind ? (
+                                    <p className="text-[11px] text-red-600 leading-tight">{errors.bodega_kind}</p>
+                                ) : (
+                                    <p className="text-[10px] text-muted-foreground leading-tight">
+                                        Solo telas de bodega M.P. o Producción
+                                    </p>
+                                )}
+                            </div>
+                            <div className="space-y-1">
+                                <select
+                                    className={cn(
+                                        "h-9 w-full rounded-md border bg-background px-2 text-xs font-medium",
                                         errors.proveedor_id
                                             ? "border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
                                             : "border-input"
@@ -423,14 +624,17 @@ export function FabricCostsTable({
                                     onChange={(e) => {
                                         const proveedorId = e.target.value;
                                         setNewRow((prev) => {
-                                            // Si la tela actual no pertenece al nuevo proveedor, la limpiamos para que el usuario elija una de ese proveedor
-                                            const matchInNewProv = findMaterialByReference(prev.reference, proveedorId);
+                                            const matchInNewProv = findMaterialByReference(
+                                                prev.reference,
+                                                proveedorId,
+                                                prev.bodega_kind
+                                            );
                                             if (!matchInNewProv) {
                                                 return {
                                                     ...prev,
                                                     proveedor_id: proveedorId,
                                                     reference: "",
-                                                    color: "",
+                                                    codigo: "",
                                                     price_per_meter: "",
                                                 };
                                             }
@@ -444,12 +648,18 @@ export function FabricCostsTable({
                                         clearFieldError("price_per_meter");
                                     }}
                                 >
-                                    <option value="">Todos los proveedores ({proveedores.length})</option>
-                                    {proveedores.map((p) => (
-                                        <option key={p.id} value={p.id}>
-                                            {p.name}
-                                        </option>
-                                    ))}
+                                    <option value="">
+                                        Todos los proveedores ({proveedoresForBodega.length})
+                                    </option>
+                                    {proveedoresForBodega.map((p) => {
+                                        const hint = proveedorBodegaHint(p.name);
+                                        return (
+                                            <option key={p.id} value={p.id}>
+                                                {p.name}
+                                                {hint ? ` · ${hint}` : ""}
+                                            </option>
+                                        );
+                                    })}
                                 </select>
                                 {errors.proveedor_id && (
                                     <p className="text-[11px] text-red-600 leading-tight">
@@ -475,43 +685,68 @@ export function FabricCostsTable({
                                     }}
                                     placeholder={
                                         selectedProveedor
-                                            ? `Seleccionar tela de ${selectedProveedor.name}...`
-                                            : "Referencia de tela..."
+                                            ? `Telas de ${selectedProveedor.name}...`
+                                            : newRow.bodega_kind && newRow.bodega_kind !== "todas"
+                                              ? `Telas en ${fabricBodegaLabel(newRow.bodega_kind)}...`
+                                              : "Referencia de tela..."
                                     }
                                     className={cn(
                                         errors.reference && "border-red-500 focus-visible:ring-red-500"
                                     )}
                                 />
                                 <datalist id="fabric-inventory-refs">
-                                    {filteredInventoryRefs.map((r, i) => (
-                                        <option
-                                            key={`${r.code || r.reference}-${i}`}
-                                            value={r.reference}
-                                        >
-                                            {r.code ? `[${r.code}] ` : ""}{r.reference}{r.color ? ` - ${r.color}` : ""} (${formatCurrency(r.unit_cost)}/m)
-                                        </option>
-                                    ))}
+                                    {filteredInventoryRefs.map((r, i) => {
+                                        const optionValue = formatFabricSelectionValue(
+                                            r.code || "",
+                                            r.reference
+                                        );
+                                        return (
+                                            <option
+                                                key={`${r.bodega_cod || r.bodega_kind}-${r.code || r.reference}-${i}`}
+                                                value={optionValue}
+                                            >
+                                                {r.bodega_kind ? `[${fabricBodegaShortLabel(r.bodega_kind)}] ` : ""}
+                                                {r.code ? `[${r.code}] ` : ""}
+                                                {r.reference}
+                                                {r.bodega_desc ? ` · ${r.bodega_desc}` : ""}
+                                                {r.unit_cost > 0
+                                                    ? ` (${formatCurrency(r.unit_cost)}/m)`
+                                                    : " (sin costo TNS)"}
+                                            </option>
+                                        );
+                                    })}
                                 </datalist>
                                 {errors.reference ? (
                                     <p className="text-[11px] text-red-600 leading-tight">{errors.reference}</p>
                                 ) : selectedProveedor ? (
                                     <p className="text-[10px] text-muted-foreground leading-tight">
                                         {filteredInventoryRefs.length > 0
-                                            ? `${filteredInventoryRefs.length} telas de ${selectedProveedor.name}`
-                                            : `Sin telas registradas para este proveedor en TNS`}
+                                            ? `${filteredInventoryRefs.length} telas de ${selectedProveedor.name}${
+                                                  newRow.bodega_kind && newRow.bodega_kind !== "todas"
+                                                      ? ` en ${fabricBodegaLabel(newRow.bodega_kind)}`
+                                                      : ""
+                                              }`
+                                            : `Sin telas de este proveedor en la bodega seleccionada`}
+                                    </p>
+                                ) : newRow.bodega_kind && newRow.bodega_kind !== "todas" ? (
+                                    <p className="text-[10px] text-muted-foreground leading-tight">
+                                        {filteredInventoryRefs.length > 0
+                                            ? `${filteredInventoryRefs.length} telas en ${fabricBodegaLabel(newRow.bodega_kind)}`
+                                            : `Sin telas en ${fabricBodegaLabel(newRow.bodega_kind)}`}
                                     </p>
                                 ) : (
                                     <p className="text-[10px] text-muted-foreground leading-tight">
-                                        Elige un proveedor para filtrar sus telas de TNS.
+                                        Elige bodega y proveedor para filtrar telas de M.P. o Producción.
                                     </p>
                                 )}
                             </div>
                             <div className="space-y-1">
                                 <Input
-                                    value={newRow.color}
+                                    value={newRow.codigo}
                                     readOnly
-                                    placeholder="—"
-                                    className="bg-muted/60 cursor-default"
+                                    placeholder="Código TNS"
+                                    className="bg-muted/60 cursor-default font-mono text-xs"
+                                    title="Código exacto del producto en inventario TNS"
                                 />
                             </div>
                             <div className="space-y-1">

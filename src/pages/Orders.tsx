@@ -26,10 +26,17 @@ import {
 } from "@/lib/order-fields";
 import { printOrderProductionGuide } from "@/lib/order-production-guide";
 import {
+  computeRealAccumulatedCost,
+  emptyRealCost,
   getOrderRealCostFromOrder,
+  mergeKanbanAdditionalMaterialsFromCards,
+  mergeTnsMaterialsIntoRealCost,
+  orderIncludesDeliveredMaterials,
   ORDER_REAL_COST_EVENT,
   type OrderRealCostBreakdown,
 } from "@/lib/order-real-cost";
+import { getTNSOrderRealMaterialCost } from "@/services/tnsService";
+import type { TNSOrderRealMaterialCostResponse } from "@/types/tns";
 
 const formatMoney = (value: string | number) => formatCurrency(value);
 
@@ -86,6 +93,9 @@ export default function Orders() {
   const [realCostOrder, setRealCostOrder] = useState<Order | null>(null);
   const [realCostOpen, setRealCostOpen] = useState(false);
   const [realCostTick, setRealCostTick] = useState(0);
+  const [tnsMaterialCosts, setTnsMaterialCosts] = useState<
+    Record<string, TNSOrderRealMaterialCostResponse>
+  >({});
 
   const [searchTerm, setSearchTerm] = useState("");
   const [salePriceDrafts, setSalePriceDrafts] = useState<Record<string, string>>({});
@@ -117,14 +127,55 @@ export default function Orders() {
     };
   }, [fetchOrders, filters]);
 
+  useEffect(() => {
+    if (!orders.length) {
+      setTnsMaterialCosts({});
+      return;
+    }
+    const activeForMaterials = orders.filter((order) =>
+      order.estado === "in_production" || order.estado === "delivered"
+    );
+    if (!activeForMaterials.length) {
+      setTnsMaterialCosts({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const entries = await Promise.all(
+        activeForMaterials.map(async (order) => {
+          try {
+            const data = await getTNSOrderRealMaterialCost(order.id);
+            return [order.id, data] as const;
+          } catch {
+            return [order.id, null] as const;
+          }
+        })
+      );
+      if (cancelled) return;
+      const next: Record<string, TNSOrderRealMaterialCostResponse> = {};
+      for (const [orderId, data] of entries) {
+        if (data) next[orderId] = data;
+      }
+      setTnsMaterialCosts(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [orders, realCostTick]);
+
   const realCostByOrder = useMemo(() => {
     void realCostTick;
     const map: Record<string, OrderRealCostBreakdown | null> = {};
     for (const order of orders) {
-      map[order.id] = getOrderRealCostFromOrder(order);
+      const cards = Array.isArray(order.kanban_tarjetas) ? order.kanban_tarjetas : [];
+      const base = getOrderRealCostFromOrder(order) || emptyRealCost(order.id);
+      const withTns = orderIncludesDeliveredMaterials(order.estado)
+        ? mergeTnsMaterialsIntoRealCost(base, tnsMaterialCosts[order.id])
+        : base;
+      map[order.id] = mergeKanbanAdditionalMaterialsFromCards(withTns, cards);
     }
     return map;
-  }, [orders, realCostTick]);
+  }, [orders, realCostTick, tnsMaterialCosts]);
 
   useEffect(() => {
     if (error) {
@@ -465,7 +516,11 @@ export default function Orders() {
                             >
                               <Calculator className="h-3.5 w-3.5 shrink-0 opacity-80" />
                               $
-                              {formatMoney(realCostByOrder[order.id]?.total ?? 0)}
+                              {formatMoney(
+                                computeRealAccumulatedCost(
+                                  realCostByOrder[order.id] ?? emptyRealCost(order.id)
+                                )
+                              )}
                             </button>
                           </TableCell>
                           <TableCell className="text-right py-2.5">
@@ -736,6 +791,7 @@ export default function Orders() {
           realCostOrder ? `ORD-${realCostOrder.id.slice(0, 3).toUpperCase()}` : undefined
         }
         estimatedCost={Number(realCostOrder?.costo_total) || 0}
+        orderItems={realCostOrder?.items ?? []}
         breakdown={realCostOrder ? realCostByOrder[realCostOrder.id] : null}
       />
 

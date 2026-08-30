@@ -192,6 +192,83 @@ export interface TNSMaterialComprasHistorialResponse {
   total_compras: number;
 }
 
+export interface TNSOrderConsumptionMovement {
+  id: string;
+  fecha: string;
+  tipo: "SALIDA";
+  tipo_label: string;
+  cantidad: number;
+  referencia: string;
+  tercero: string;
+  costo_unitario: number;
+  costo_total: number;
+  nota: string;
+  orden_id?: string;
+  variant_id?: string;
+  material_kind?: "tela" | "insumo";
+}
+
+export interface TNSOrderConsumptionResponse {
+  status?: boolean;
+  codigo_articulo: string;
+  descripcion?: string;
+  unidad?: string;
+  movimientos: TNSOrderConsumptionMovement[];
+  total_salidas: number;
+  count_salidas: number;
+}
+
+export interface TNSOrderConsumptionAlertsMatchResponse {
+  status?: boolean;
+  fecha_desde?: string;
+  fecha_hasta?: string;
+  matched_ids: string[];
+  alertas_count?: number;
+}
+
+export interface TNSInventoryMovementHistoryRow {
+  codigo: string;
+  nombre: string;
+  cantidad_consumida: number;
+  unidad: string;
+  stock_antes: number;
+  stock_despues: number;
+}
+
+export interface TNSInventoryMovementHistoryResponse {
+  status?: boolean;
+  fecha_desde: string;
+  fecha_hasta: string;
+  telas_consumidas: TNSInventoryMovementHistoryRow[];
+  insumos_usados: TNSInventoryMovementHistoryRow[];
+  consumido_satellite: TNSInventoryMovementHistoryRow[];
+  nota?: string;
+}
+
+export interface TNSOrderRealMaterialCostLine {
+  codigo: string;
+  nombre: string;
+  quantity: number;
+  unit: string;
+  material_kind?: "tela" | "insumo";
+  price_source?: "tns" | "costeo_variante";
+  unit_cost_tns: number;
+  amount: number;
+  source: "costeo_variante" | "kanban";
+  stage?: string | null;
+  stage_label?: string | null;
+  user_id?: string | null;
+  user_name?: string | null;
+}
+
+export interface TNSOrderRealMaterialCostResponse {
+  status?: boolean;
+  orden_id: string;
+  materials_total: number;
+  materials_lines: TNSOrderRealMaterialCostLine[];
+  nota?: string;
+}
+
 export interface BodegaDistribucion {
   bodega_cod: string;
   bodega_desc: string;

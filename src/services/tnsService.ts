@@ -10,6 +10,10 @@ import type {
   TNSProveedorOferta,
   TNSCompraItem,
   TNSMaterialComprasHistorialResponse,
+  TNSOrderConsumptionResponse,
+  TNSOrderConsumptionAlertsMatchResponse,
+  TNSInventoryMovementHistoryResponse,
+  TNSOrderRealMaterialCostResponse,
   TNSVentaItem,
   TNSVentasSummary,
   TNSVentasResponse,
@@ -36,6 +40,10 @@ export type {
   TNSProveedorOferta,
   TNSCompraItem,
   TNSMaterialComprasHistorialResponse,
+  TNSOrderConsumptionResponse,
+  TNSOrderConsumptionAlertsMatchResponse,
+  TNSInventoryMovementHistoryResponse,
+  TNSOrderRealMaterialCostResponse,
   TNSVentaItem,
   TNSVentasSummary,
   TNSVentasResponse,
@@ -490,6 +498,89 @@ export function parseTNSNumber(val: string | number | undefined | null): number 
 }
 
 /**
+ * Resuelve costo unitario de un material TNS (compras, stock o proveedores).
+ */
+export function resolveTNSMaterialUnitCost(
+  item: TNSInventarioItem,
+  preferredSupplier?: string | null
+): number {
+  let unitCost = parseTNSNumber(
+    item.ultimo_costo_compra ??
+      (item as Record<string, unknown>).inventario_CostoUnitario ??
+      (item as Record<string, unknown>).costo_unitario ??
+      (item as Record<string, unknown>).valunit ??
+      (item as Record<string, unknown>).costo_promedio ??
+      (item as Record<string, unknown>).costo ??
+      (item as Record<string, unknown>).precio
+  );
+
+  if (unitCost <= 0) {
+    const cantStock = parseTNSNumber(item.cant_Stock);
+    const costoStock = parseTNSNumber(item.costo_Stock);
+    if (cantStock > 0 && costoStock > 0) {
+      unitCost = costoStock / cantStock;
+    }
+  }
+
+  if (unitCost <= 0) {
+    const cantDisp = parseTNSNumber(item.cant_Disponible);
+    const costoDisp = parseTNSNumber(item.costo_Disponible);
+    if (cantDisp > 0 && costoDisp > 0) {
+      unitCost = costoDisp / cantDisp;
+    }
+  }
+
+  if (unitCost <= 0 && item.proveedores?.length) {
+    const supplierNorm = preferredSupplier?.trim().toLowerCase() || "";
+    const sorted = [...item.proveedores];
+    if (supplierNorm) {
+      sorted.sort((a, b) => {
+        const aName = (a.nombre || "").toLowerCase();
+        const bName = (b.nombre || "").toLowerCase();
+        const aMatch = aName.includes(supplierNorm) || supplierNorm.includes(aName) ? 0 : 1;
+        const bMatch = bName.includes(supplierNorm) || supplierNorm.includes(bName) ? 0 : 1;
+        return aMatch - bMatch;
+      });
+    }
+    for (const p of sorted) {
+      const pCost = parseTNSNumber(p.ultimo_costo_unitario);
+      if (pCost > 0) {
+        unitCost = pCost;
+        break;
+      }
+    }
+  }
+
+  return unitCost;
+}
+
+/** Formato canónico de selección tela: código · referencia */
+export function formatFabricSelectionValue(code: string, reference: string): string {
+  const c = code.trim();
+  const r = reference.trim();
+  if (c && r && c.toUpperCase() !== r.toUpperCase()) {
+    return `${c} · ${r}`;
+  }
+  return r || c;
+}
+
+/** Parsea valor del input/datalist de telas */
+export function parseFabricSelectionInput(input: string): { code: string; reference: string } {
+  const trimmed = (input || "").trim();
+  if (!trimmed) return { code: "", reference: "" };
+
+  const sep = trimmed.indexOf(" · ");
+  if (sep > 0) {
+    return {
+      code: trimmed.slice(0, sep).trim(),
+      reference: trimmed.slice(sep + 3).trim(),
+    };
+  }
+
+  return { code: trimmed, reference: trimmed };
+}
+
+/**
  * Consulta la lista paginada y filtrable de ítems de inventario de TNS.
  */
 export async function getTNSInventario(
@@ -529,14 +620,14 @@ export async function getTNSInventario(
   if (Array.isArray(res)) {
     return {
       status: true,
-      data: res,
+      data: enrichTNSInventarioItems(res),
       total_count: res.length,
       page: params.page || 1,
       page_size: params.page_size || res.length,
     };
   }
 
-  const items = res.data || res.items || res.results || [];
+  const items = enrichTNSInventarioItems(res.data || res.items || res.results || []);
   const totalCount = res.total_count ?? res.count ?? res.total ?? items.length;
 
   return {
@@ -725,6 +816,130 @@ export async function getTNSMaterialVentasHistorial(
     return res.data as TNSMaterialVentasHistorialResponse;
   }
   return res as TNSMaterialVentasHistorialResponse;
+}
+
+/**
+ * Salidas informativas desde órdenes del sistema según costeo de variante (tela + insumos).
+ */
+export async function getTNSOrderConsumption(
+  codigoArticulo: string,
+  options?: {
+    descripcion?: string;
+    color?: string;
+    fecha_desde?: string;
+    fecha_hasta?: string;
+  }
+): Promise<TNSOrderConsumptionResponse> {
+  const query = new URLSearchParams();
+  if (options?.descripcion?.trim()) query.append("descripcion", options.descripcion.trim());
+  if (options?.color?.trim()) query.append("color", options.color.trim());
+  if (options?.fecha_desde?.trim()) query.append("fecha_desde", options.fecha_desde.trim());
+  if (options?.fecha_hasta?.trim()) query.append("fecha_hasta", options.fecha_hasta.trim());
+
+  const url = endpoints.inventory.tnsOrderConsumption(
+    codigoArticulo,
+    query.toString() || undefined
+  );
+  const res = await http<any>(url, { skipAuthRedirect: true });
+
+  if (res?.movimientos) {
+    return res as TNSOrderConsumptionResponse;
+  }
+  if (res?.data?.movimientos) {
+    return res.data as TNSOrderConsumptionResponse;
+  }
+  return {
+    status: true,
+    codigo_articulo: codigoArticulo,
+    movimientos: [],
+    total_salidas: 0,
+    count_salidas: 0,
+  };
+}
+
+/**
+ * Indica qué materiales TNS visibles tienen salidas por consumo de órdenes (hoy / rango).
+ */
+export async function matchTNSOrderConsumptionAlerts(
+  materials: Array<{
+    id: string;
+    codigo_articulo: string;
+    descripcion?: string;
+    color?: string;
+  }>,
+  options?: { fecha_desde?: string; fecha_hasta?: string }
+): Promise<TNSOrderConsumptionAlertsMatchResponse> {
+  const url = endpoints.inventory.tnsOrderConsumptionAlertsMatch();
+  const res = await http<any>(url, {
+    method: "POST",
+    body: JSON.stringify({
+      materials,
+      fecha_desde: options?.fecha_desde || undefined,
+      fecha_hasta: options?.fecha_hasta || undefined,
+    }),
+    skipAuthRedirect: true,
+  });
+
+  if (Array.isArray(res?.matched_ids)) {
+    return res as TNSOrderConsumptionAlertsMatchResponse;
+  }
+  if (Array.isArray(res?.data?.matched_ids)) {
+    return res.data as TNSOrderConsumptionAlertsMatchResponse;
+  }
+  return { matched_ids: [], alertas_count: 0 };
+}
+
+/**
+ * Informe informativo de movimientos de inventario por consumo de órdenes.
+ */
+export async function getTNSInventoryMovementHistory(
+  fechaDesde: string,
+  fechaHasta: string
+): Promise<TNSInventoryMovementHistoryResponse> {
+  const query = new URLSearchParams();
+  query.append("fecha_desde", fechaDesde.trim());
+  query.append("fecha_hasta", fechaHasta.trim());
+
+  const url = endpoints.inventory.tnsMovementHistory(query.toString());
+  const res = await http<any>(url, { skipAuthRedirect: true });
+
+  if (res?.telas_consumidas) {
+    return res as TNSInventoryMovementHistoryResponse;
+  }
+  if (res?.data?.telas_consumidas) {
+    return res.data as TNSInventoryMovementHistoryResponse;
+  }
+  return {
+    status: true,
+    fecha_desde: fechaDesde,
+    fecha_hasta: fechaHasta,
+    telas_consumidas: [],
+    insumos_usados: [],
+    consumido_satellite: [],
+  };
+}
+
+/**
+ * Costo de materiales de una orden valorizado con precios unitarios TNS.
+ */
+export async function getTNSOrderRealMaterialCost(
+  ordenId: string
+): Promise<TNSOrderRealMaterialCostResponse> {
+  const url = endpoints.inventory.tnsOrderRealMaterialCost(ordenId);
+  const res = await http<any>(url, { skipAuthRedirect: true });
+
+  if (Array.isArray(res?.materials_lines)) {
+    return res as TNSOrderRealMaterialCostResponse;
+  }
+  if (Array.isArray(res?.data?.materials_lines)) {
+    return res.data as TNSOrderRealMaterialCostResponse;
+  }
+  return {
+    status: true,
+    orden_id: ordenId,
+    materials_total: 0,
+    materials_lines: [],
+  };
 }
 
 /**
@@ -1261,6 +1476,11 @@ export function cleanTNSProveedorName(rawName?: string | null): string {
     return "TEXTILES LAFAYETTE SAS";
   }
 
+  // Caso específico: telas DINAMICA / MARGARETEX sin compras registradas en TNS
+  if (name.toUpperCase().includes("MARGARETEX")) {
+    return "TEXTILES MARGARETEX S.A.S";
+  }
+
   // Si contiene "PUDIENDO GIRAR BAJO..." u otras cláusulas notariales
   if (/pudiendo girar/i.test(name)) {
     name = name.split(/pudiendo girar/i)[0].trim();
@@ -1270,6 +1490,60 @@ export function cleanTNSProveedorName(rawName?: string | null): string {
   name = name.replace(/["“”]/g, "").replace(/\s+/g, " ").trim();
 
   return name;
+}
+
+export const MARGARETEX_SUPPLIER_NAME = "TEXTILES MARGARETEX S.A.S";
+
+const SIN_PROVEEDOR_REGISTRADO = "Sin proveedor registrado";
+
+/**
+ * Infiere proveedor desde la descripción del material cuando TNS no trae compras.
+ */
+export function inferTNSProveedorFromDescription(desc?: string | null): string | null {
+  if (!desc?.trim()) return null;
+  if (desc.toUpperCase().includes("MARGARETEX")) {
+    return MARGARETEX_SUPPLIER_NAME;
+  }
+  return null;
+}
+
+/**
+ * Resuelve proveedor principal: datos de compras primero, inferencia por nombre después.
+ */
+export function resolveTNSProveedorPrincipal(item: {
+  prod_Dist_Desc?: string | null;
+  proveedor_principal?: string | null;
+}): string {
+  const current = cleanTNSProveedorName(item.proveedor_principal);
+  if (current && current.toLowerCase() !== SIN_PROVEEDOR_REGISTRADO.toLowerCase()) {
+    return current;
+  }
+  return inferTNSProveedorFromDescription(item.prod_Dist_Desc) || SIN_PROVEEDOR_REGISTRADO;
+}
+
+function enrichTNSInventarioItem(item: TNSInventarioItem): TNSInventarioItem {
+  const principal = resolveTNSProveedorPrincipal(item);
+  if (principal === item.proveedor_principal) {
+    return item;
+  }
+
+  const proveedores = [...(item.proveedores || [])];
+  if (
+    principal !== SIN_PROVEEDOR_REGISTRADO &&
+    !proveedores.some((p) => p.nombre.trim().toLowerCase() === principal.toLowerCase())
+  ) {
+    proveedores.push({ nit: "", nombre: principal });
+  }
+
+  return {
+    ...item,
+    proveedor_principal: principal,
+    proveedores,
+  };
+}
+
+function enrichTNSInventarioItems(items: TNSInventarioItem[]): TNSInventarioItem[] {
+  return items.map(enrichTNSInventarioItem);
 }
 
 export const tnsService = {
@@ -1302,6 +1576,10 @@ export const tnsService = {
   getTNSInventarioSummary,
   getTNSComprasReporte,
   getTNSMaterialComprasHistorial,
+  getTNSOrderConsumption,
+  matchTNSOrderConsumptionAlerts,
+  getTNSInventoryMovementHistory,
+  getTNSOrderRealMaterialCost,
   // Ventas y Facturas TNS
   getTNSVentasDetalladas,
   getTNSMaterialVentasHistorial,
@@ -1309,11 +1587,17 @@ export const tnsService = {
   getTNSFacturaDetalle,
   getTNSTransaccionalVentas,
   parseTNSNumber,
+  resolveTNSMaterialUnitCost,
+  formatFabricSelectionValue,
+  parseFabricSelectionInput,
   parseTNSDescription,
   clasificarArticuloTNS,
   getTNSItemUnit,
   detectTNSCategory,
   cleanTNSProveedorName,
+  resolveTNSProveedorPrincipal,
+  inferTNSProveedorFromDescription,
+  MARGARETEX_SUPPLIER_NAME,
   TNS_CATEGORY_KEYWORDS,
 };
 
