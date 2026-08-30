@@ -44,6 +44,8 @@ export interface FabricRecord {
     proveedor_id: string;
     proveedor_nombre?: string;
     reference: string;
+    /** Código exacto TNS (prod_Dist_Cod) para descuentos de inventario */
+    codigo?: string;
     meters: string;
     price_per_meter: string;
     tiene_iva: boolean;
@@ -57,6 +59,9 @@ export interface SupplyRecord {
     tipo: string;
     tipo_id?: string;
     tipo_label?: string;
+    /** Código exacto del insumo (codigo_sku / TNS) */
+    codigo?: string;
+    codigo_sku?: string;
     color?: string;
     talla_id?: string | null;
     talla_nombre?: string | null;
@@ -87,6 +92,7 @@ export interface VariantSizeCostSummary {
     supplies_total: string | number;
     labor_total: string | number;
     extras_total?: string | number;
+    cif_total?: string | number;
     overall_total: string | number;
     precio_venta?: string | number | null;
     ganancia?: string | number | null;
@@ -100,6 +106,7 @@ export interface VariantCostSummary {
     supplies_total: string | number;
     labor_total: string | number;
     extras_total?: string | number;
+    cif_total?: string | number;
     overall_total: string | number;
     /** Referencia de la tela principal del costeo */
     fabric_reference?: string;
@@ -112,6 +119,7 @@ export interface CreateFabricPayload {
     variant_id: string;
     proveedor_id?: string;
     reference: string;
+    codigo?: string;
     meters: string | number;
     price_per_meter: string | number;
     tiene_iva?: boolean;
@@ -121,6 +129,7 @@ export interface CreateFabricPayload {
 export interface UpdateFabricPayload {
     proveedor_id?: string;
     reference?: string;
+    codigo?: string;
     meters?: string | number;
     price_per_meter?: string | number;
     tiene_iva?: boolean;
@@ -177,6 +186,32 @@ export interface CreateExtraCostPayload {
 }
 
 export interface UpdateExtraCostPayload {
+    concepto?: string;
+    talla_id?: string | null;
+    cantidad?: string | number;
+    unit_price?: string | number;
+}
+
+export interface CIFCost {
+    id: string;
+    variant_id: string;
+    concepto: string;
+    talla_id?: string | null;
+    talla_nombre?: string | null;
+    cantidad: string;
+    unit_price: string;
+    total: string;
+}
+
+export interface CreateCIFCostPayload {
+    variant_id: string;
+    concepto?: string;
+    talla_id?: string | null;
+    cantidad?: string | number;
+    unit_price: string | number;
+}
+
+export interface UpdateCIFCostPayload {
     concepto?: string;
     talla_id?: string | null;
     cantidad?: string | number;

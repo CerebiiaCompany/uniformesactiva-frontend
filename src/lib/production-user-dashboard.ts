@@ -1,7 +1,7 @@
 import type { Order } from "@/hooks/useOrders";
 import type { ProductionOrder } from "@/data/mockData";
 import { formatMoneyCop } from "@/lib/satellite-dashboard";
-import { parseStageKeys } from "@/lib/production-capa-permissions";
+import { parseStageKeys, cardAssignedToOperatorOnAllowedStage, type ProductionSession } from "@/lib/production-capa-permissions";
 
 export type StoredProductionUser = {
   id: string;
@@ -181,6 +181,29 @@ function orderDescription(order: Order, cards: ProductionOrder[]): string {
   return labels.slice(0, 3).join(" · ");
 }
 
+function productionSessionForUser(user: StoredProductionUser): ProductionSession {
+  return {
+    roles: user.roles,
+    isAdmin: false,
+    isProduction: user.isProduction,
+    isSatellite: false,
+    isKanbanOperator: user.isProduction,
+    stageKey: user.stageKeys[0] || null,
+    stageKeys: user.stageKeys,
+    userId: user.id,
+    unrestricted: false,
+  };
+}
+
+function cardVisibleToProductionUser(
+  card: ProductionOrder,
+  user: StoredProductionUser
+): boolean {
+  if (!cardAssignedToProductionUser(card, user.id)) return false;
+  if (user.stageKeys.length === 0) return false;
+  return cardAssignedToOperatorOnAllowedStage(productionSessionForUser(user), card);
+}
+
 function cardAssignedToProductionUser(card: ProductionOrder, userId: string): boolean {
   if (!userId) return false;
   if (card.assigneeId && String(card.assigneeId) === userId) return true;
@@ -247,17 +270,87 @@ function userParticipatedInStage(
 function collectUserStagesForCard(
   card: ProductionOrder,
   userId: string,
-  stageLabels: Record<string, string>
+  stageLabels: Record<string, string>,
+  order?: Order | null
 ): Map<string, ProductionStageActivity> {
   const byStage = new Map<string, ProductionStageActivity>();
 
+  const totalQty =
+    Number(card.quantity) ||
+    order?.items?.reduce((s, it) => s + (Number(it.cantidad) || 0), 0) ||
+    0;
+
+  // Extraer desglose de tallas
+  const tallasMap = new Map<string, number>();
+  if (card.variants && card.variants.length > 0) {
+    for (const v of card.variants) {
+      if (v.tallas && v.tallas.length > 0) {
+        for (const t of v.tallas) {
+          if (t.nombre && t.nombre !== "—") {
+            tallasMap.set(t.nombre, (tallasMap.get(t.nombre) || 0) + (Number(t.cantidad) || 0));
+          }
+        }
+      } else if (v.size && v.size !== "—") {
+        tallasMap.set(v.size, (tallasMap.get(v.size) || 0) + (Number(v.quantity) || 0));
+      }
+    }
+  } else if (order?.items && order.items.length > 0) {
+    for (const it of order.items) {
+      const tName = (it.talla_nombre || (it as any).talla || "").trim();
+      if (tName && tName !== "—") {
+        tallasMap.set(tName, (tallasMap.get(tName) || 0) + (Number(it.cantidad) || 0));
+      }
+    }
+  }
+
+  const tallasSummary = Array.from(tallasMap.entries())
+    .map(([talla, cant]) => `${talla}: ${cant} uds`)
+    .join(" · ");
+
+  const prendaName =
+    card.items ||
+    order?.items?.map((i) => i.subproducto_nombre || i.producto_nombre).filter(Boolean).join(", ") ||
+    order?.descripcion_resumida ||
+    null;
+
+  const isStageReq = (sKey: string) => {
+    const k = sKey.toLowerCase();
+    if (card.hasBordado === false && (k.includes("bordad") || k === "embroidery")) return false;
+    if ((card as any)?.hasEstampado === false && (k.includes("estampad") || k === "printing")) return false;
+    return true;
+  };
+
   const ensure = (stageKey: string): ProductionStageActivity => {
-    const existing = byStage.get(stageKey);
+    const cleanKey = stageKey.replace(/__satellite$/, "").replace(/__production$/, "");
+    const existing = byStage.get(cleanKey);
     if (existing) return existing;
+
+    const stageCfg = card.stageLaborConfig?.[cleanKey] || card.stageLaborConfig?.[stageKey];
+    let unitVal: number | null = null;
+    if (stageCfg?.enabled && stageCfg.perUnit != null && Number(stageCfg.perUnit) > 0) {
+      unitVal = Number(stageCfg.perUnit);
+    } else if (card.stage === cleanKey && card.laborCostEnabled && card.laborCostPerUnit != null) {
+      unitVal = Number(card.laborCostPerUnit);
+    }
+
+    const actions: string[] = [];
+    if (prendaName) {
+      actions.push(`Prenda: ${prendaName}`);
+    }
+    if (totalQty > 0) {
+      actions.push(`Cantidad total: ${totalQty} prendas`);
+    }
+    if (unitVal != null && unitVal > 0) {
+      actions.push(`Valor unitario por prenda: $${unitVal.toLocaleString("es-CO")}`);
+    }
+    if (tallasSummary) {
+      actions.push(`Tallas y cantidades: ${tallasSummary}`);
+    }
+
     const created: ProductionStageActivity = {
-      stageKey,
-      stageLabel: stageLabels[stageKey] || stageKey || "Sin etapa",
-      actions: [],
+      stageKey: cleanKey,
+      stageLabel: stageLabels[cleanKey] || cleanKey || "Sin etapa",
+      actions,
       laborAmount: 0,
       materials: [],
       novedadesCount: 0,
@@ -266,7 +359,7 @@ function collectUserStagesForCard(
       // Sin liquidación de producción aún: MO queda por pagar.
       paymentStatus: "pending",
     };
-    byStage.set(stageKey, created);
+    byStage.set(cleanKey, created);
     return created;
   };
 
@@ -274,41 +367,29 @@ function collectUserStagesForCard(
     if (!entry?.userId || entry.userId !== userId) continue;
     if (key.endsWith("__satellite") || entry.kind === "satellite") continue;
     const stageKey = key.replace(/__satellite$/, "");
+    if (!isStageReq(stageKey)) continue;
     const activity = ensure(stageKey);
-    if (!activity.actions.includes("Asignado a la capa")) {
-      activity.actions.push("Asignado a la capa");
+    const stageCfg = card.stageLaborConfig?.[stageKey] || card.stageLaborConfig?.[key];
+    if (stageCfg?.enabled && stageCfg.perUnit != null) {
+      const live = totalQty * Number(stageCfg.perUnit);
+      if (live > 0 && activity.laborAmount === 0) {
+        activity.laborAmount = live;
+      }
     }
   }
 
-  if (card.assigneeId === userId && card.stage) {
+  if (card.assigneeId === userId && card.stage && isStageReq(card.stage)) {
     const activity = ensure(card.stage);
     activity.isCurrent = true;
-    if (!activity.actions.includes("Responsable actual")) {
-      activity.actions.push("Responsable actual");
-    }
   }
 
   for (const entry of card.costLedger || []) {
     if (!entry.userId || entry.userId !== userId) continue;
     const stageKey = entry.stage || card.stage || "";
-    if (!stageKey) continue;
+    if (!stageKey || !isStageReq(stageKey)) continue;
     const activity = ensure(stageKey);
     if (entry.category === "labor") {
       activity.laborAmount += Number(entry.amount) || 0;
-      if (!activity.actions.includes("Registró mano de obra")) {
-        activity.actions.push("Registró mano de obra");
-      }
-    } else if (entry.category === "materials") {
-      if (!activity.actions.includes("Solicitó / usó materiales")) {
-        activity.actions.push("Solicitó / usó materiales");
-      }
-    } else if (entry.category === "mold") {
-      if (!activity.actions.includes("Registró moldería")) {
-        activity.actions.push("Registró moldería");
-      }
-    } else if (entry.label) {
-      const label = `Registró: ${entry.label}`;
-      if (!activity.actions.includes(label)) activity.actions.push(label);
     }
     if (entry.updatedAt) {
       if (!activity.updatedAt || entry.updatedAt > activity.updatedAt) {
@@ -317,7 +398,7 @@ function collectUserStagesForCard(
     }
   }
 
-  if (card.assigneeId === userId && card.laborCostEnabled && card.stage) {
+  if (card.assigneeId === userId && card.laborCostEnabled && card.stage && isStageReq(card.stage)) {
     const activity = ensure(card.stage);
     const live =
       (Number(card.quantity) || 0) * (Number(card.laborCostPerUnit) || 0);
@@ -327,13 +408,10 @@ function collectUserStagesForCard(
     );
     if (!hasLedgerLabor && live > 0) {
       activity.laborAmount += live;
-      if (!activity.actions.includes("Registró mano de obra")) {
-        activity.actions.push("Registró mano de obra");
-      }
     }
   }
 
-  if (card.assigneeId === userId && card.stage) {
+  if (card.assigneeId === userId && card.stage && isStageReq(card.stage)) {
     const mats = card.requestedMaterials || [];
     if (mats.length) {
       const activity = ensure(card.stage);
@@ -342,9 +420,6 @@ function collectUserStagesForCard(
           name: m.materialName,
           quantity: Number(m.quantity) || 0,
         });
-      }
-      if (!activity.actions.includes("Solicitó / usó materiales")) {
-        activity.actions.push("Solicitó / usó materiales");
       }
     }
   }
@@ -358,9 +433,6 @@ function collectUserStagesForCard(
     if (userParticipatedInStage(card, userId, targetStage) || byStage.size === 0) {
       const activity = ensure(targetStage);
       activity.novedadesCount += userNotes.length;
-      if (!activity.actions.includes("Dejó novedad / evidencia")) {
-        activity.actions.push("Dejó novedad / evidencia");
-      }
       for (const n of userNotes) {
         if (n.createdAt && (!activity.updatedAt || n.createdAt > activity.updatedAt)) {
           activity.updatedAt = n.createdAt;
@@ -369,26 +441,16 @@ function collectUserStagesForCard(
     }
   }
 
-  if (card.assigneeId === userId && card.stage) {
-    const imgs = (card.cardImages || []).length;
-    const files = (card.cardFiles || []).length;
-    if (imgs + files > 0) {
-      const activity = ensure(card.stage);
-      if (!activity.actions.includes("Adjuntó imágenes / archivos")) {
-        activity.actions.push("Adjuntó imágenes / archivos");
-      }
-    }
-  }
-
   return byStage;
 }
 
 export function buildProductionOrderDetails(params: {
-  userId: string;
+  user: StoredProductionUser;
   orders: Order[];
   stageLabels: Record<string, string>;
 }): ProductionOrderDetail[] {
-  const { userId, orders, stageLabels } = params;
+  const { user, orders, stageLabels } = params;
+  const userId = user.id;
   if (!userId) return [];
 
   const byOrder = new Map<
@@ -402,7 +464,7 @@ export function buildProductionOrderDetails(params: {
   >();
 
   for (const { card, order } of collectCardsFromOrders(orders)) {
-    if (!cardAssignedToProductionUser(card, userId)) continue;
+    if (!cardVisibleToProductionUser(card, user)) continue;
     const existing = byOrder.get(order.id);
     const labor = laborAmountForProductionUser(card, userId);
     const inWork =
@@ -543,7 +605,7 @@ export function buildProductionOrderHistory(params: {
 
     const stageMap = new Map<string, ProductionStageActivity>();
     for (const card of cards) {
-      const partial = collectUserStagesForCard(card, userId, stageLabels);
+      const partial = collectUserStagesForCard(card, userId, stageLabels, order);
       for (const [key, activity] of partial) {
         const existing = stageMap.get(key);
         if (!existing) {
@@ -629,7 +691,7 @@ export function buildProductionUserPanel(params: {
   const { user, orders, stageLabels } = params;
 
   const orderDetails = buildProductionOrderDetails({
-    userId: user.id,
+    user,
     orders,
     stageLabels,
   });
@@ -638,7 +700,7 @@ export function buildProductionUserPanel(params: {
     return (
       sum +
       d.stagePayments
-        .filter((s) => s.paymentStatus === "pending")
+        .filter((s) => s.paymentStatus === "pending" && !s.inWork)
         .reduce((s, st) => s + (Number(st.cost) || 0), 0)
     );
   }, 0);

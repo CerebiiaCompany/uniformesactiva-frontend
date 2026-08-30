@@ -394,25 +394,32 @@ export function useQuotes() {
     }, [fetchQuotes]);
 
     const updateQuoteStatus = useCallback(async (id: string, status: string) => {
-        setLoading(true);
-        setError(null);
         try {
-            const result = await http<{ id: string; estado: string }>(
-                endpoints.quotes.status(id),
-                {
+            let result: ApiQuote | { id: string; estado: string };
+            try {
+                result = await http<ApiQuote>(endpoints.quotes.detail(id), {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ status }),
-                }
+                    body: JSON.stringify({ estado: status }),
+                });
+            } catch {
+                result = await http<{ id: string; estado: string }>(
+                    endpoints.quotes.status(id),
+                    {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ status, estado: status }),
+                    }
+                );
+            }
+            setQuotes((prev) =>
+                prev.map((q) => (q.id === id ? { ...q, status: status as any } : q))
             );
             await fetchQuotes();
             return { success: true, data: result, errorMessage: null };
         } catch (err) {
             const message = resolveHttpErrorMessage(err, "Error al actualizar el estado");
-            setError(message);
             return { success: false, data: null, errorMessage: message };
-        } finally {
-            setLoading(false);
         }
     }, [fetchQuotes]);
 
@@ -559,6 +566,7 @@ export function useQuotes() {
 
     return {
         quotes,
+        setQuotes,
         loading,
         error,
         fetchQuotes,

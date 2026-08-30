@@ -3,10 +3,27 @@ import type { Order } from "@/hooks/useOrders";
 import type { SatelliteSettlement, SatelliteWorkStatus } from "@/hooks/useSatellites";
 import { parseStageKeys } from "@/lib/production-capa-permissions";
 import { computeRealCostFromCards } from "@/lib/order-real-cost";
+import type { PedidoCompra, DetallePedidoCompra } from "@/types/tns";
+import {
+  getPedidoNumDoc,
+  getPedidoTotal,
+  getPedidoDetalles,
+  getDetalleCodigo,
+  getDetalleDescripcion,
+  getDetalleUnidad,
+  getDetalleCantidad,
+  getDetalleValorUnitario,
+  getDetalleTotal,
+  getPedidoFecha,
+  getPedidoFechaEntrega,
+} from "@/services/tnsService";
 
 export type SatelliteWorkshop = {
   id: string;
   name: string;
+  nit?: string;
+  nit_tercero?: string;
+  cod_tercero?: string;
   contact_name: string;
   phone: string;
   address: string;
@@ -28,6 +45,7 @@ export type SatelliteUserRef = {
 export type SatelliteDashboardCard = {
   id: string;
   name: string;
+  nit?: string;
   contactName: string;
   phone: string;
   address: string;
@@ -40,12 +58,16 @@ export type SatelliteDashboardCard = {
   /** Usuarios satélite vinculados a este taller */
   userIds: string[];
   userNames: string[];
-  /** Órdenes con al menos una tarjeta asignada a sus usuarios satélite */
+  /** Total de órdenes realizadas (cerradas + activas) */
   ordenes: number;
-  /** Órdenes aún no entregadas */
+  /** Órdenes pendientes (activas / no entregadas) */
   pendientes: number;
-  /** Deuda / por pagar = mano de obra pendiente de liquidar */
+  /** Valor pagado (TNS + liquidaciones pagadas) */
+  pagado: number;
+  /** Valor total por pagar de órdenes locales asignadas al satélite */
   porPagar: number;
+  /** True si tiene pedidos sincronizados desde TNS */
+  isTnsSynced?: boolean;
 };
 
 export type SatelliteOrderStageWork = {
@@ -58,6 +80,7 @@ export type SatelliteOrderStageWork = {
   actions: string[];
   isCurrent: boolean;
   novedadesCount: number;
+  updatedAt?: string | null;
 };
 
 export type SatelliteOrderDetail = {
@@ -75,7 +98,7 @@ export type SatelliteOrderDetail = {
   paymentStatus: "pending" | "paid";
   paidAt: string | null;
   cardIds: string[];
-  /** true si la orden ya salió de pendiente (enviada a planta / en producción) */
+  /** true si la orden ya salió de pendiente */
   enviado: boolean;
   workStatus: SatelliteWorkStatus;
   observations: string;
@@ -83,6 +106,8 @@ export type SatelliteOrderDetail = {
   confirmedAt: string | null;
   /** Capas del Kanban donde este satélite/taller intervino */
   stagesWorked: SatelliteOrderStageWork[];
+  /** Origen: local o tns */
+  source?: "local" | "tns";
 };
 
 export const SATELLITE_WORK_STATUS_OPTIONS: {
@@ -90,449 +115,492 @@ export const SATELLITE_WORK_STATUS_OPTIONS: {
   label: string;
 }[] = [
   { value: "enviado", label: "Enviado (en trabajo)" },
-  { value: "recibido_completo", label: "Recibido — completo" },
+  { value: "recibido_completo", label: "Listo (Recibido completo)" },
   { value: "recibido_faltantes", label: "Recibido — con faltantes" },
 ];
 
 export function workStatusLabel(status: SatelliteWorkStatus): string {
   return (
-    SATELLITE_WORK_STATUS_OPTIONS.find((o) => o.value === status)?.label || status
+    SATELLITE_WORK_STATUS_OPTIONS.find((o) => o.value === status)?.label || status || "Enviado"
   );
 }
 
-export type SatelliteDetailSummary = {
-  totalFacturado: number;
-  pagado: number;
-  porPagar: number;
-  ordenesActivas: number;
-};
-
-function normalizeRole(raw: unknown): string {
-  if (typeof raw !== "string") return "";
-  const s = raw.trim();
-  if (!s) return "";
-  const m = s.match(/name=['"]([^'"]+)['"]/);
-  return (m?.[1] || s).trim();
-}
-
-export function isSatelliteRole(roles: unknown): boolean {
-  const list = Array.isArray(roles) ? roles : [];
-  return list.some((r) => normalizeRole(r) === "Satélite");
-}
-
-export function mapApiUserToSatelliteRef(u: Record<string, unknown>): SatelliteUserRef | null {
-  const roles = Array.isArray(u.roles) ? (u.roles as unknown[]) : [];
-  if (!isSatelliteRole(roles)) return null;
-  const first = String(u.first_name || "");
-  const last = String(u.last_name || "");
-  const name = `${first} ${last}`.trim() || String(u.username || "Usuario");
-  return {
-    id: String(u.id),
-    name,
-    satelliteId: u.satellite_id ? String(u.satellite_id) : null,
-    stageKeys: parseStageKeys(
-      Array.isArray(u.production_stage_keys)
-        ? u.production_stage_keys
-        : u.production_stage_key
-    ),
-    roles: roles.map(normalizeRole).filter(Boolean),
-  };
-}
-
-function cardAssignedToUsers(
-  card: ProductionOrder,
-  userIds: Set<string>,
-  workshopId?: string | null
-): boolean {
-  if (card.satelliteAssigneeId && userIds.has(String(card.satelliteAssigneeId))) {
-    return true;
-  }
-  const stageAssignees = card.stageAssignees || {};
-  for (const [key, entry] of Object.entries(stageAssignees)) {
-    if (!entry?.userId) continue;
-    if (!userIds.has(String(entry.userId))) continue;
-    if (key.endsWith("__satellite") || entry.kind === "satellite") return true;
-  }
-  // Historial en ledger: trabajó MO / costo satélite aunque ya no sea responsable actual
-  for (const entry of card.costLedger || []) {
-    if (!entry.userId || !userIds.has(String(entry.userId))) continue;
-    if (
-      entry.category === "labor" ||
-      entry.category === "satellite" ||
-      entry.category === "mold" ||
-      entry.actorKind === "satellite"
-    ) {
-      return true;
-    }
-  }
-  // Tarjeta ligada al taller (proveedor externo) con costo
-  if (
-    workshopId &&
-    card.satelliteId &&
-    String(card.satelliteId) === String(workshopId) &&
-    card.satelliteCost != null &&
-    Number(card.satelliteCost) > 0
-  ) {
-    return true;
-  }
-  return false;
+function normalizeText(str: string): string {
+  return (str || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**
- * Monto adeudado al taller/usuarios satélite por una tarjeta.
- * Alineado con el desglose de costo real: MO digitada (labor) + costo satélite/taller.
- * No incluye materiales de inventario (esos no se le «deben» al satélite).
+ * Cruza un taller satélite con un pedido de compra de TNS por NIT/Documento o Nombre.
  */
-export function laborAmountForUsers(
+export function matchesSatelliteTns(
+  ws: { name?: string; nit?: string; nit_tercero?: string; cod_tercero?: string; contact_name?: string } | null | undefined,
+  pedido: PedidoCompra | null | undefined
+): boolean {
+  if (!ws || !pedido) return false;
+  const wsNit = (ws.nit || ws.nit_tercero || ws.cod_tercero || "").trim();
+  const pedNit = (
+    pedido.nitTercero ||
+    pedido.codTercero ||
+    pedido.tercero_nit ||
+    pedido.NIT ||
+    pedido.tercero_id ||
+    ""
+  ).trim();
+
+  // 1. Coincidencia directa por NIT o Documento (la más exacta)
+  if (wsNit && pedNit && wsNit === pedNit) {
+    return true;
+  }
+
+  // 2. Coincidencia por Nombre / Razón Social
+  const wsNameNorm = normalizeText(ws.name || "");
+  const pedNameNorm = normalizeText(
+    pedido.nomTercero ||
+    pedido.tercero_nombre ||
+    pedido.RAZONSOCIAL ||
+    pedido.proveedor ||
+    ""
+  );
+
+  if (!wsNameNorm || !pedNameNorm) return false;
+
+  if (
+    wsNameNorm === pedNameNorm ||
+    pedNameNorm.includes(wsNameNorm) ||
+    wsNameNorm.includes(pedNameNorm)
+  ) {
+    return true;
+  }
+
+  // Comprobar coincidencia por palabras clave del nombre
+  const stopWords = new Set(["satelite", "taller", "cortador", "confeccion", "bordado", "y", "de", "la", "el", "los", "las"]);
+  const wsTokens = wsNameNorm
+    .split(" ")
+    .filter((t) => t.length > 2 && !stopWords.has(t));
+
+  if (wsTokens.length > 0) {
+    const matchedTokens = wsTokens.filter((token) => pedNameNorm.includes(token));
+    if (matchedTokens.length >= Math.min(2, wsTokens.length)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function mapApiUserToSatelliteRef(
+  raw: Record<string, unknown>
+): SatelliteUserRef | null {
+  if (!raw) return null;
+  const id = String(raw.id ?? raw.user_id ?? "");
+  if (!id) return null;
+
+  const roles = Array.isArray(raw.roles)
+    ? raw.roles.map(String)
+    : typeof raw.role === "string"
+      ? [raw.role]
+      : [];
+
+  const satelliteId = raw.satellite_id
+    ? String(raw.satellite_id)
+    : raw.satelliteId
+      ? String(raw.satelliteId)
+      : null;
+
+  const name =
+    (raw.full_name as string) ||
+    (raw.name as string) ||
+    [raw.first_name, raw.last_name].filter(Boolean).join(" ") ||
+    (raw.username as string) ||
+    "Usuario satélite";
+
+  const stageKeys = parseStageKeys(
+    (raw.production_stage_keys as string[] | string) ?? (raw.production_stage_key as string)
+  );
+
+  return {
+    id,
+    name,
+    satelliteId,
+    stageKeys,
+    roles,
+  };
+}
+
+export function cardAssignedToUsers(
   card: ProductionOrder,
   userIds: Set<string>,
-  workshopId?: string | null
-): number {
-  let total = 0;
-  const countedKeys = new Set<string>();
-
-  const mark = (key: string) => {
-    if (countedKeys.has(key)) return false;
-    countedKeys.add(key);
+  workshopId: string | null = null,
+  userNames?: string[]
+): boolean {
+  if (!card) return false;
+  if (card.satelliteWorkshopId && workshopId && String(card.satelliteWorkshopId) === String(workshopId)) {
     return true;
-  };
-
-  for (const entry of card.costLedger || []) {
-    const uid = entry.userId ? String(entry.userId) : "";
-    const amount = Number(entry.amount) || 0;
-    if (amount === 0) continue;
-
-    const isLaborLike =
-      entry.category === "labor" ||
-      entry.category === "mold" ||
-      entry.category === "satellite";
-
-    if (!isLaborLike && entry.actorKind !== "satellite") continue;
-
-    // MO / satélite atribuido a usuarios del taller
-    if (uid && userIds.has(uid)) {
-      const key =
-        entry.fingerprint ||
-        `${entry.category}:${uid}:${entry.stage || ""}:${entry.label}`;
-      if (mark(key)) total += amount;
-      continue;
+  }
+  if (card.satelliteAssigneeId && userIds.has(String(card.satelliteAssigneeId))) {
+    return true;
+  }
+  if (card.assigneeId && userIds.has(String(card.assigneeId))) {
+    return true;
+  }
+  if (Array.isArray(userNames) && userNames.length > 0) {
+    const cardSatName = (card.satelliteName || card.satelliteAssignee || "").toLowerCase().trim();
+    if (cardSatName && userNames.some((uName) => uName.toLowerCase().trim().includes(cardSatName) || cardSatName.includes(uName.toLowerCase().trim()))) {
+      return true;
     }
-
-    // Costo de taller (provider) ligado al workshop sin userId de operador
-    if (
-      workshopId &&
-      entry.category === "satellite" &&
-      (!uid || entry.actorKind === "provider")
-    ) {
-      // Si hay satelliteId en la tarjeta y coincide, o el label menciona el taller
-      const linkedToWorkshop =
-        card.satelliteId && String(card.satelliteId) === String(workshopId);
-      if (linkedToWorkshop) {
-        const key =
-          entry.fingerprint ||
-          `satellite:ws:${workshopId}:${entry.stage || ""}:${entry.label}`;
-        if (mark(key)) total += amount;
+  }
+  // 1. Revisar si alguna capa en stageAssignees fue asignada a este usuario o taller
+  if (card.stageAssignees) {
+    for (const [, assign] of Object.entries(card.stageAssignees)) {
+      if (assign && assign.userId && userIds.has(String(assign.userId))) {
+        return true;
+      }
+      if (assign && assign.name && userNames && userNames.some((uName) => uName.toLowerCase().trim().includes(assign.name.toLowerCase().trim()) || assign.name.toLowerCase().trim().includes(uName.toLowerCase().trim()))) {
+        return true;
       }
     }
   }
 
-  // MO viva digitada con responsable satélite actual
-  if (
-    card.laborCostEnabled &&
-    card.satelliteAssigneeId &&
-    userIds.has(String(card.satelliteAssigneeId))
-  ) {
-    const stage = card.stage || "";
-    const uid = String(card.satelliteAssigneeId);
-    const liveFp = `labor:${stage}:${uid}`;
-    const hasLedgerLabor = (card.costLedger || []).some(
-      (e) =>
-        e.category === "labor" &&
-        String(e.userId || "") === uid &&
-        (e.stage || "") === stage
-    );
-    if (!hasLedgerLabor && !countedKeys.has(liveFp) && mark(`live-labor:${uid}:${stage}`)) {
-      total += (Number(card.quantity) || 0) * (Number(card.laborCostPerUnit) || 0);
+  // 2. Revisar si en costLedger hay costos registrados a nombre de este usuario/taller
+  if (Array.isArray(card.costLedger)) {
+    for (const e of card.costLedger) {
+      if (e && e.userId && userIds.has(String(e.userId))) {
+        return true;
+      }
+      if (e && e.userName && userNames && userNames.some((uName) => uName.toLowerCase().trim().includes(e.userName.toLowerCase().trim()) || e.userName.toLowerCase().trim().includes(uName.toLowerCase().trim()))) {
+        return true;
+      }
     }
   }
 
-  // Costo satélite vivo (proveedor) ligado al taller
-  if (
-    workshopId &&
-    card.satelliteId &&
-    String(card.satelliteId) === String(workshopId) &&
-    card.satelliteCost != null &&
-    Number.isFinite(Number(card.satelliteCost))
-  ) {
-    const liveAmount = Number(card.satelliteCost) || 0;
-    if (liveAmount > 0) {
-      const liveKey = `live-satellite:${workshopId}:${card.stage}`;
-      const hasLedgerSat = [...countedKeys].some(
-        (k) =>
-          k.includes(`satellite:${card.stage}:`) ||
-          k.includes(`satellite:ws:${workshopId}`)
-      );
-      if (!hasLedgerSat && mark(liveKey)) total += liveAmount;
-    }
-  }
-
-  return Math.round(total * 100) / 100;
+  return false;
 }
 
-/**
- * Fallback: suma MO del desglose de costo real (misma fuente visual del modal).
- */
+export function laborAmountForUsers(
+  card: ProductionOrder,
+  userIds: Set<string>,
+  workshopId: string | null = null,
+  userNames?: string[]
+): number {
+  if (!card || !cardAssignedToUsers(card, userIds, workshopId, userNames)) return 0;
+  
+  let cost = 0;
+
+  // 1. Sumar entradas de costLedger atribuidas a este usuario o taller satélite
+  if (Array.isArray(card.costLedger) && card.costLedger.length > 0) {
+    for (const e of card.costLedger) {
+      if (e && (e.category === "labor" || e.category === "satellite")) {
+        const matchesUser =
+          (e.userId && userIds.has(String(e.userId))) ||
+          (e.userName && userNames && userNames.some((uName) => uName.toLowerCase().trim().includes(e.userName!.toLowerCase().trim()) || e.userName!.toLowerCase().trim().includes(uName.toLowerCase().trim())));
+
+        if (matchesUser) {
+          cost += Number(e.amount || 0);
+        }
+      }
+    }
+  }
+
+  // 2. Si no hay costLedger acumulado, revisar stageLaborConfig de las capas asignadas a este usuario
+  if (cost <= 0 && card.stageLaborConfig && card.stageAssignees) {
+    for (const [sKey, assign] of Object.entries(card.stageAssignees)) {
+      if (!assign) continue;
+      const isMyAssign =
+        (assign.userId && userIds.has(String(assign.userId))) ||
+        (assign.name && userNames && userNames.some((uName) => uName.toLowerCase().trim().includes(assign.name.toLowerCase().trim()) || assign.name.toLowerCase().trim().includes(uName.toLowerCase().trim())));
+
+      if (isMyAssign) {
+        const cleanStageKey = sKey.replace(/__satellite$/, "");
+        const cfg = card.stageLaborConfig[cleanStageKey] || card.stageLaborConfig[sKey];
+        if (cfg && cfg.enabled && cfg.perUnit != null && Number(cfg.perUnit) > 0) {
+          const qty = Number(card.quantity || 0);
+          cost += Number(cfg.perUnit) * (qty > 0 ? qty : 1);
+        }
+      }
+    }
+  }
+
+  // 3. Si la tarjeta actualmente está asignada a este usuario en card.stage
+  if (cost <= 0) {
+    const isCurrentAssignee =
+      (card.satelliteAssigneeId && userIds.has(String(card.satelliteAssigneeId))) ||
+      (card.assigneeId && userIds.has(String(card.assigneeId)));
+
+    if (isCurrentAssignee) {
+      const cfg = card.stageLaborConfig?.[card.stage];
+      if (cfg && cfg.enabled && cfg.perUnit != null && Number(cfg.perUnit) > 0) {
+        const qty = Number(card.quantity || 0);
+        cost = Number(cfg.perUnit) * (qty > 0 ? qty : 1);
+      } else if (card.laborCostPerUnit && Number(card.laborCostPerUnit) > 0) {
+        const qty = Number(card.quantity || 0);
+        cost = Number(card.laborCostPerUnit) * (qty > 0 ? qty : 1);
+      } else if (card.laborCost && Number(card.laborCost) > 0) {
+        cost = Number(card.laborCost);
+      } else if (card.satelliteCost && Number(card.satelliteCost) > 0) {
+        cost = Number(card.satelliteCost);
+      }
+    }
+  }
+
+  return Number.isFinite(cost) && cost > 0 ? cost : 0;
+}
+
 function laborFromOrderBreakdown(
   order: Order,
   userIds: Set<string>
 ): number {
+  if (!order) return 0;
   const cards = Array.isArray(order.kanban_tarjetas) ? order.kanban_tarjetas : [];
-  const breakdown =
-    cards.length > 0
-      ? computeRealCostFromCards(order.id, cards)
-      : null;
-
-  const byUser = breakdown?.byUser?.length
-    ? breakdown.byUser
-    : Array.isArray((order.costo_real_desglose as { byUser?: unknown } | undefined)?.byUser)
-      ? ((order.costo_real_desglose as {
-          byUser: {
-            userId?: string;
-            lines?: { category?: string; amount?: number; actorKind?: string }[];
-          }[];
-        }).byUser)
-      : [];
-
-  let total = 0;
-  for (const row of byUser) {
-    if (!row?.userId || !userIds.has(String(row.userId))) continue;
-    const lines = Array.isArray(row.lines) ? row.lines : [];
-    if (!lines.length) continue;
-    for (const line of lines) {
-      if (
-        line.category === "labor" ||
-        line.category === "mold" ||
-        line.category === "satellite" ||
-        line.actorKind === "satellite"
-      ) {
-        total += Number(line.amount) || 0;
-      }
+  const rc = computeRealCostFromCards(order.id || "", cards);
+  let sum = 0;
+  for (const row of rc?.laborBreakdown || []) {
+    if (row.userId && userIds.has(String(row.userId))) {
+      sum += Number(row.amount || 0);
     }
   }
-  return Math.round(total * 100) / 100;
-}
-
-function collectCardsFromOrders(orders: Order[]): {
-  card: ProductionOrder;
-  order: Order;
-}[] {
-  const rows: { card: ProductionOrder; order: Order }[] = [];
-  for (const order of orders) {
-    const cards = Array.isArray(order.kanban_tarjetas) ? order.kanban_tarjetas : [];
-    for (const card of cards) {
-      rows.push({ card, order });
-    }
-  }
-  return rows;
+  return sum;
 }
 
 function orderDescription(order: Order, cards: ProductionOrder[]): string {
-  const fromCards = cards
-    .map((c) => (c.items || "").trim())
-    .filter(Boolean);
-  if (fromCards.length) return [...new Set(fromCards)].join(" · ");
-  const items = order.items || [];
-  if (!items.length) return order.producto_nombre || "Pedido";
-  const labels = items.map((it) => {
-    const name = it.subproducto_nombre || it.producto_nombre || "Ítem";
-    return `${name} × ${it.cantidad}`;
-  });
-  return labels.slice(0, 3).join(" · ");
+  if (!order) return "Sin descripción";
+  if (order.descripcion_resumida) return order.descripcion_resumida;
+  const fromItems = (order.items || []).map((i) => i.descripcion).filter(Boolean);
+  if (fromItems.length > 0) return fromItems.join(", ");
+  const fromCards = (cards || []).map((c) => c.title).filter(Boolean);
+  if (fromCards.length > 0) return fromCards.join(", ");
+  return "Sin descripción";
 }
 
-function addAction(list: string[], action: string) {
-  if (!list.includes(action)) list.push(action);
+function collectCardsFromOrders(orders: Order[]): { card: ProductionOrder; order: Order }[] {
+  const list: { card: ProductionOrder; order: Order }[] = [];
+  if (!Array.isArray(orders)) return list;
+  for (const order of orders) {
+    if (!order) continue;
+    const cards = Array.isArray(order.kanban_tarjetas) ? order.kanban_tarjetas : [];
+    for (const card of cards) {
+      if (!card) continue;
+      list.push({ card, order });
+    }
+  }
+  return list;
 }
 
-/**
- * Capas donde los usuarios satélite del taller trabajaron en las tarjetas del pedido.
- */
 export function buildSatelliteStagesWorked(params: {
   cards: ProductionOrder[];
   userIds: Set<string>;
-  userNames?: Map<string, string>;
+  userNames: Map<string, string>;
   stageLabels: Record<string, string>;
-  workshopId?: string | null;
+  workshopId: string | null;
+  settlement?: SatelliteSettlement | null;
+  order?: Order | null;
 }): SatelliteOrderStageWork[] {
-  const { cards, userIds, userNames, stageLabels, workshopId } = params;
+  const {
+    cards = [],
+    userIds = new Set(),
+    userNames = new Map(),
+    stageLabels = {},
+    settlement = null,
+    order = null,
+  } = params || {};
   const byStage = new Map<string, SatelliteOrderStageWork>();
 
-  const ensure = (stageKey: string): SatelliteOrderStageWork => {
-    const existing = byStage.get(stageKey);
-    if (existing) return existing;
-    const created: SatelliteOrderStageWork = {
-      stageKey,
-      stageLabel: stageLabels[stageKey] || stageKey || "Sin etapa",
-      userName: null,
-      laborAmount: 0,
-      materialsAmount: 0,
-      materials: [],
-      actions: [],
-      isCurrent: false,
-      novedadesCount: 0,
-    };
-    byStage.set(stageKey, created);
-    return created;
+  const primaryCard = cards[0];
+  const totalQty =
+    cards.reduce((sum, c) => sum + (Number(c.quantity) || 0), 0) ||
+    order?.items?.reduce((s, it) => s + (Number(it.cantidad) || 0), 0) ||
+    0;
+
+  // Extraer desglose de tallas
+  const tallasMap = new Map<string, number>();
+  if (primaryCard?.variants && primaryCard.variants.length > 0) {
+    for (const v of primaryCard.variants) {
+      if (v.tallas && v.tallas.length > 0) {
+        for (const t of v.tallas) {
+          if (t.nombre && t.nombre !== "—") {
+            tallasMap.set(t.nombre, (tallasMap.get(t.nombre) || 0) + (Number(t.cantidad) || 0));
+          }
+        }
+      } else if (v.size && v.size !== "—") {
+        tallasMap.set(v.size, (tallasMap.get(v.size) || 0) + (Number(v.quantity) || 0));
+      }
+    }
+  } else if (order?.items && order.items.length > 0) {
+    for (const it of order.items) {
+      const tName = (it.talla_nombre || (it as any).talla || "").trim();
+      if (tName && tName !== "—") {
+        tallasMap.set(tName, (tallasMap.get(tName) || 0) + (Number(it.cantidad) || 0));
+      }
+    }
+  }
+
+  const tallasSummary = Array.from(tallasMap.entries())
+    .map(([talla, cant]) => `${talla}: ${cant} uds`)
+    .join(" · ");
+
+  // Extraer prenda / producto
+  const prendaName =
+    primaryCard?.items ||
+    order?.items?.map((i) => i.subproducto_nombre || i.producto_nombre).filter(Boolean).join(", ") ||
+    order?.descripcion_resumida ||
+    null;
+
+  const isStageReq = (sKey: string) => {
+    const k = sKey.toLowerCase();
+    if (primaryCard?.hasBordado === false && (k.includes("bordad") || k === "embroidery")) return false;
+    if ((primaryCard as any)?.hasEstampado === false && (k.includes("estampad") || k === "printing")) return false;
+    return true;
   };
 
+  const addStage = (
+    stageKey: string,
+    laborAmount = 0,
+    userName: string | null = null,
+    isCurrent = false,
+    perUnitOverride: number | null = null,
+    updatedAt: string | null = null
+  ) => {
+    if (!stageKey || !isStageReq(stageKey)) return;
+    const cleanKey = stageKey.replace(/__satellite$/, "");
+    const existing = byStage.get(cleanKey);
+
+    // Determinar valor unitario por prenda
+    const stageCfg = primaryCard?.stageLaborConfig?.[cleanKey] || primaryCard?.stageLaborConfig?.[stageKey];
+    let unitVal = perUnitOverride;
+    if (unitVal == null && stageCfg?.enabled && stageCfg.perUnit != null && Number(stageCfg.perUnit) > 0) {
+      unitVal = Number(stageCfg.perUnit);
+    }
+    if (unitVal == null && laborAmount > 0 && totalQty > 0) {
+      unitVal = Math.round(laborAmount / totalQty);
+    }
+
+    const actions: string[] = [];
+    if (prendaName) {
+      actions.push(`Prenda: ${prendaName}`);
+    }
+    if (totalQty > 0) {
+      actions.push(`Cantidad total: ${totalQty} prendas`);
+    }
+    if (unitVal != null && unitVal > 0) {
+      actions.push(`Valor unitario por prenda: $${unitVal.toLocaleString("es-CO")}`);
+    }
+    if (tallasSummary) {
+      actions.push(`Tallas y cantidades: ${tallasSummary}`);
+    }
+
+    if (existing) {
+      if (laborAmount > 0) existing.laborAmount += laborAmount;
+      if (!existing.userName && userName) existing.userName = userName;
+      if (isCurrent) existing.isCurrent = true;
+      if (updatedAt && (!existing.updatedAt || updatedAt > existing.updatedAt)) {
+        existing.updatedAt = updatedAt;
+      }
+      if (actions.length > 0 && existing.actions.length === 0) {
+        existing.actions = actions;
+      }
+    } else {
+      byStage.set(cleanKey, {
+        stageKey: cleanKey,
+        stageLabel: stageLabels[cleanKey] || cleanKey,
+        userName,
+        laborAmount,
+        materialsAmount: 0,
+        materials: [],
+        actions,
+        isCurrent,
+        novedadesCount: 0,
+        updatedAt: updatedAt || null,
+      });
+    }
+  };
+
+  // 1. Etapas registradas en settlement.stages_done
+  if (settlement && (settlement as any).stages_done) {
+    for (const [stg, amt] of Object.entries((settlement as any).stages_done)) {
+      addStage(stg, Number(amt) || 0, null, false, null, settlement.confirmed_at || null);
+    }
+  }
+
+  // 2. Entradas en costLedger
   for (const card of cards) {
-    for (const [key, entry] of Object.entries(card.stageAssignees || {})) {
-      if (!entry?.userId || !userIds.has(String(entry.userId))) continue;
-      const isSatelliteSlot =
-        key.endsWith("__satellite") || entry.kind === "satellite";
-      if (!isSatelliteSlot) continue;
-      const stageKey = key.replace(/__satellite$/, "");
-      const activity = ensure(stageKey);
-      addAction(activity.actions, "Asignado a la capa");
-      if (!activity.userName) {
-        activity.userName =
-          userNames?.get(String(entry.userId)) || entry.name || null;
-      }
-    }
-
-    if (
-      card.satelliteAssigneeId &&
-      userIds.has(String(card.satelliteAssigneeId)) &&
-      card.stage
-    ) {
-      const activity = ensure(card.stage);
-      activity.isCurrent = true;
-      addAction(activity.actions, "Responsable actual");
-      if (!activity.userName) {
-        activity.userName =
-          userNames?.get(String(card.satelliteAssigneeId)) ||
-          card.satelliteAssignee ||
-          null;
-      }
-    }
-
-    for (const entry of card.costLedger || []) {
-      const uid = entry.userId ? String(entry.userId) : "";
-      const isUser = uid && userIds.has(uid);
-      const isWorkshopSat =
-        workshopId &&
-        entry.category === "satellite" &&
-        card.satelliteId &&
-        String(card.satelliteId) === String(workshopId);
-      if (!isUser && !isWorkshopSat) continue;
-
-      const stageKey = entry.stage || card.stage || "";
-      if (!stageKey) continue;
-      const activity = ensure(stageKey);
-      const amount = Number(entry.amount) || 0;
-
-      if (isUser && !activity.userName) {
-        activity.userName =
-          userNames?.get(uid) || entry.userName || null;
-      }
-
-      if (entry.category === "labor" || entry.category === "mold") {
-        activity.laborAmount += amount;
-        addAction(
-          activity.actions,
-          entry.category === "mold" ? "Registró moldería" : "Registró mano de obra"
-        );
-      } else if (entry.category === "satellite") {
-        activity.laborAmount += amount;
-        addAction(activity.actions, "Costo de taller satélite");
-      } else if (entry.category === "materials") {
-        activity.materialsAmount += amount;
-        addAction(activity.actions, "Solicitó / usó materiales");
-        const matName = (entry.label || "").replace(/\s*×\s*\d+(\.\d+)?$/, "").trim();
-        const qtyMatch = (entry.label || "").match(/×\s*(\d+(?:\.\d+)?)/);
-        const qty = qtyMatch ? Number(qtyMatch[1]) : 0;
-        if (matName) {
-          const hit = activity.materials.find((m) => m.name === matName);
-          if (hit) hit.quantity += qty;
-          else activity.materials.push({ name: matName, quantity: qty });
+    if (!card) continue;
+    if (Array.isArray(card.costLedger)) {
+      for (const e of card.costLedger) {
+        if (e && (e.category === "labor" || e.category === "satellite")) {
+          const matches =
+            (e.userId && userIds.has(String(e.userId))) ||
+            (e.userName &&
+              Array.from(userNames.values()).some((n) =>
+                n.toLowerCase().includes(e.userName!.toLowerCase())
+              ));
+          if (matches && e.stage) {
+            addStage(e.stage, Number(e.amount) || 0, e.userName || null, false, null, e.updatedAt || null);
+          }
         }
       }
     }
 
-    if (
-      card.satelliteAssigneeId &&
-      userIds.has(String(card.satelliteAssigneeId)) &&
-      card.laborCostEnabled &&
-      card.stage
-    ) {
-      const activity = ensure(card.stage);
-      const live =
-        (Number(card.quantity) || 0) * (Number(card.laborCostPerUnit) || 0);
-      const hasLedgerLabor = (card.costLedger || []).some(
-        (e) =>
-          e.userId === card.satelliteAssigneeId &&
-          e.stage === card.stage &&
-          e.category === "labor"
-      );
-      if (!hasLedgerLabor && live > 0) {
-        activity.laborAmount += live;
-        addAction(activity.actions, "Registró mano de obra");
-      }
-    }
-
-    if (
-      card.satelliteAssigneeId &&
-      userIds.has(String(card.satelliteAssigneeId)) &&
-      card.stage
-    ) {
-      const mats = card.requestedMaterials || [];
-      if (mats.length) {
-        const activity = ensure(card.stage);
-        for (const m of mats) {
-          const qty = Number(m.quantity) || 0;
-          const unit = Number(m.unitCost) || 0;
-          activity.materialsAmount += qty * unit;
-          const hit = activity.materials.find((x) => x.name === m.materialName);
-          if (hit) hit.quantity += qty;
-          else activity.materials.push({ name: m.materialName, quantity: qty });
+    // 3. Capas en stageAssignees asignadas a este usuario o satélite
+    if (card.stageAssignees) {
+      for (const [sKey, assign] of Object.entries(card.stageAssignees)) {
+        if (!assign) continue;
+        const matches =
+          (assign.userId && userIds.has(String(assign.userId))) ||
+          (assign.name &&
+            Array.from(userNames.values()).some((n) =>
+              n.toLowerCase().includes(assign.name.toLowerCase())
+            ));
+        if (matches) {
+          const cleanKey = sKey.replace(/__satellite$/, "");
+          const cfg = card.stageLaborConfig?.[cleanKey] || card.stageLaborConfig?.[sKey];
+          const laborAmt =
+            cfg?.enabled && cfg.perUnit
+              ? Number(cfg.perUnit) * (Number(card.quantity) || totalQty || 1)
+              : 0;
+          const perUnit = cfg?.enabled && cfg.perUnit ? Number(cfg.perUnit) : null;
+          const histEntry = (card.stageHistory || []).find((h) => h.stage === cleanKey);
+          const stageDate = histEntry?.enteredAt || (card as any).updatedAt || null;
+          addStage(cleanKey, laborAmt, assign.name || null, false, perUnit, stageDate);
         }
-        addAction(activity.actions, "Solicitó / usó materiales");
       }
     }
 
-    for (const uid of userIds) {
-      const notes = (card.novedades || []).filter((n) => n.autorId === uid);
-      if (!notes.length) continue;
-      const targetStage =
-        card.satelliteAssigneeId === uid && card.stage
-          ? card.stage
-          : Object.keys(card.stageAssignees || {}).find((k) => {
-              const e = card.stageAssignees?.[k];
-              return e?.userId === uid && (k.endsWith("__satellite") || e.kind === "satellite");
-            })?.replace(/__satellite$/, "") ||
-            card.stage ||
-            "";
-      if (!targetStage) continue;
-      const activity = ensure(targetStage);
-      activity.novedadesCount += notes.length;
-      addAction(activity.actions, "Dejó novedad / evidencia");
+    // 4. Si la tarjeta está actualmente asignada en card.stage
+    const isCurrentAssignee =
+      (card.satelliteAssigneeId && userIds.has(String(card.satelliteAssigneeId))) ||
+      (card.assigneeId && userIds.has(String(card.assigneeId)));
+
+    if (isCurrentAssignee) {
+      const labor = laborAmountForUsers(card, userIds);
+      const uName =
+        (card.satelliteAssigneeId && userNames.get(String(card.satelliteAssigneeId))) ||
+        card.satelliteAssignee ||
+        card.assignee ||
+        null;
+      addStage(card.stage, labor, uName, true);
     }
   }
 
   return [...byStage.values()]
     .map((s) => ({
       ...s,
-      laborAmount: Math.round(s.laborAmount * 100) / 100,
-      materialsAmount: Math.round(s.materialsAmount * 100) / 100,
+      laborAmount: Math.round((s.laborAmount || 0) * 100) / 100,
+      materialsAmount: Math.round((s.materialsAmount || 0) * 100) / 100,
     }))
     .sort((a, b) => {
       if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
-      return a.stageLabel.localeCompare(b.stageLabel);
+      return String(a.stageLabel || "").localeCompare(String(b.stageLabel || ""));
     });
 }
 
 /**
  * Pedidos asignados a usuarios satélite de un taller, con costo MO y estado de pago.
+ * Soporta tanto órdenes internas como pedidos de compra desde TNS.
  */
 export function buildSatelliteOrderDetails(params: {
   userIds: string[];
@@ -541,13 +609,24 @@ export function buildSatelliteOrderDetails(params: {
   settlements?: Record<string, SatelliteSettlement>;
   workshopId?: string | null;
   userNamesById?: Record<string, string>;
+  workshop?: SatelliteWorkshop | null;
+  tnsPedidos?: PedidoCompra[];
 }): SatelliteOrderDetail[] {
-  const userIds = new Set(params.userIds);
-  const workshopId = params.workshopId || null;
+  const {
+    userIds: userIdsArray = [],
+    orders = [],
+    stageLabels = {},
+    settlements = {},
+    workshopId = null,
+    userNamesById = {},
+    workshop = null,
+    tnsPedidos = [],
+  } = params || {};
+
+  const userIds = new Set(userIdsArray);
   const userNames = new Map(
-    Object.entries(params.userNamesById || {}).map(([k, v]) => [String(k), v])
+    Object.entries(userNamesById || {}).map(([k, v]) => [String(k), v])
   );
-  if (userIds.size === 0 && !workshopId) return [];
 
   const byOrder = new Map<
     string,
@@ -558,10 +637,15 @@ export function buildSatelliteOrderDetails(params: {
     }
   >();
 
-  for (const { card, order } of collectCardsFromOrders(params.orders)) {
-    if (!cardAssignedToUsers(card, userIds, workshopId)) continue;
+  const userNamesList = Array.from(userNames.values());
+  if (workshop?.name) userNamesList.push(workshop.name);
+  if (workshop?.contact_name) userNamesList.push(workshop.contact_name);
+
+  // 1. Órdenes locales asignadas
+  for (const { card, order } of collectCardsFromOrders(orders)) {
+    if (!cardAssignedToUsers(card, userIds, workshopId, userNamesList)) continue;
     const existing = byOrder.get(order.id);
-    const labor = laborAmountForUsers(card, userIds, workshopId);
+    const labor = laborAmountForUsers(card, userIds, workshopId, userNamesList);
     if (existing) {
       existing.cards.push(card);
       existing.cost += labor;
@@ -570,16 +654,31 @@ export function buildSatelliteOrderDetails(params: {
     }
   }
 
-  // Si no hubo tarjetas detectadas pero el desglose tiene MO de estos usuarios, incluir
-  for (const order of params.orders) {
-    if (byOrder.has(order.id)) continue;
+  // 2. Órdenes con liquidación previa en settlements del taller
+  for (const order of orders) {
+    if (!order || byOrder.has(order.id)) continue;
+    const rawId = String(order.id).replace(/^PO-/, "");
+    const hasSettlement =
+      settlements[rawId] ||
+      settlements[order.id] ||
+      settlements[`PO-${rawId}`];
+
+    if (hasSettlement) {
+      const cards = Array.isArray(order.kanban_tarjetas) ? order.kanban_tarjetas : [];
+      const cost =
+        Number(hasSettlement.agreed_cost || hasSettlement.amount || 0) ||
+        laborFromOrderBreakdown(order, userIds);
+      byOrder.set(order.id, { order, cards, cost });
+      continue;
+    }
+
     const fromBreakdown = laborFromOrderBreakdown(order, userIds);
-    if (fromBreakdown <= 0) continue;
-    const cards = Array.isArray(order.kanban_tarjetas) ? order.kanban_tarjetas : [];
-    byOrder.set(order.id, { order, cards, cost: fromBreakdown });
+    if (fromBreakdown > 0) {
+      const cards = Array.isArray(order.kanban_tarjetas) ? order.kanban_tarjetas : [];
+      byOrder.set(order.id, { order, cards, cost: fromBreakdown });
+    }
   }
 
-  const settlements = params.settlements || {};
   const details: SatelliteOrderDetail[] = [];
 
   for (const [orderId, row] of byOrder) {
@@ -587,7 +686,13 @@ export function buildSatelliteOrderDetails(params: {
       row.cards.find((c) => c.satelliteAssigneeId && userIds.has(String(c.satelliteAssigneeId))) ||
       row.cards[0];
     const stageKey = primary?.stage || row.order.etapa_produccion || "";
-    const settlement = settlements[orderId];
+    const rawId = String(orderId).replace(/^PO-/, "");
+    const settlement =
+      settlements[rawId] ||
+      settlements[orderId] ||
+      settlements[`PO-${rawId}`] ||
+      (primary?.id ? settlements[primary.id] : undefined);
+
     const paymentStatus: "pending" | "paid" =
       settlement?.status === "paid" ? "paid" : "pending";
     const qty =
@@ -596,22 +701,24 @@ export function buildSatelliteOrderDetails(params: {
       0;
 
     const workStatus: SatelliteWorkStatus =
-      settlement?.work_status === "recibido_completo" ||
-      settlement?.work_status === "recibido_faltantes" ||
-      settlement?.work_status === "enviado"
-        ? settlement.work_status
-        : row.order.estado === "in_production" || row.order.estado === "delivered"
-          ? "enviado"
+      paymentStatus === "paid" ||
+      settlement?.work_status === "recibido_completo"
+        ? "recibido_completo"
+        : settlement?.work_status === "recibido_faltantes"
+          ? "recibido_faltantes"
           : "enviado";
 
     const agreedFromSettlement =
       settlement?.agreed_cost != null && Number.isFinite(Number(settlement.agreed_cost))
         ? Number(settlement.agreed_cost)
-        : null;
+        : settlement?.amount != null && Number.isFinite(Number(settlement.amount))
+          ? Number(settlement.amount)
+          : null;
 
-    // Preferir MO de tarjetas; si quedó en 0, alinear con desglose persistido
     let cost = row.cost;
-    if (cost <= 0) {
+    if (agreedFromSettlement != null && agreedFromSettlement > 0) {
+      cost = agreedFromSettlement;
+    } else if (cost <= 0) {
       const fromBreakdown = laborFromOrderBreakdown(row.order, userIds);
       if (fromBreakdown > 0) cost = fromBreakdown;
     }
@@ -620,43 +727,154 @@ export function buildSatelliteOrderDetails(params: {
       cards: row.cards,
       userIds,
       userNames,
-      stageLabels: params.stageLabels,
+      stageLabels,
       workshopId,
+      settlement,
+      order: row.order,
     });
+
+    const workedLabels = stagesWorked.map((s) => s.stageLabel).filter(Boolean);
+    const displayStageLabel =
+      workedLabels.length > 0
+        ? workedLabels.join(" · ")
+        : stageLabels[stageKey] || stageKey || "Sin etapa";
 
     details.push({
       orderId,
-      orderCode: `ORD-${orderId.slice(0, 3)}`,
+      orderCode: `ORD-${String(orderId).slice(0, 3)}`,
       customerName: row.order.cliente_nombre || "Cliente",
       description: orderDescription(row.order, row.cards),
       quantity: qty,
       dueDate: (row.order.fecha_estimada_entrega || primary?.dueDate || "").slice(0, 10),
-      stageKey,
-      stageLabel: params.stageLabels[stageKey] || stageKey || "Sin etapa",
+      stageKey: stagesWorked[0]?.stageKey || stageKey,
+      stageLabel: displayStageLabel,
       orderStatus: row.order.estado || "pending",
       cost,
       paymentStatus,
       paidAt: settlement?.paid_at || null,
       cardIds: row.cards.map((c) => c.id),
-      enviado:
-        workStatus === "enviado" ||
-        workStatus === "recibido_completo" ||
-        workStatus === "recibido_faltantes",
+      enviado: true,
       workStatus,
       observations: settlement?.observations || "",
       agreedCost: agreedFromSettlement,
       confirmedAt: settlement?.confirmed_at || null,
       stagesWorked,
+      source: "local",
     });
+  }
+
+  // 2. Pedidos de compra desde TNS si coincide con este taller
+  if (workshop && Array.isArray(tnsPedidos)) {
+    const ws = workshop;
+    const matchingTns = tnsPedidos.filter((p) => matchesSatelliteTns(ws, p));
+
+    for (const p of matchingTns) {
+      if (!p) continue;
+      const numDoc = getPedidoNumDoc(p);
+      const totalAmount = getPedidoTotal(p);
+      const estadoNorm = (p.estado || "").toUpperCase().trim();
+      const isCerrado = estadoNorm.includes("CERRAD") || estadoNorm === "C";
+      const isAnulado = estadoNorm.includes("ANULAD");
+      if (isAnulado) continue;
+
+      const detailsLines = getPedidoDetalles(p);
+      const qty = detailsLines.reduce((s, d) => s + (getDetalleCantidad(d) || 0), 0) || 0;
+
+      // Agrupar items por código para evitar duplicados y mostrar abreviaciones concisas (ej. CONFBMC)
+      const groupedItems = new Map<string, { code: string; name: string; qty: number; total: number; unit: string; valUnit: number }>();
+      for (const d of detailsLines) {
+        const matCode = (getDetalleCodigo(d) || "").trim();
+        const matName = (getDetalleDescripcion(d) || "").trim();
+        const codeKey = matCode && matCode !== "—" ? matCode : matName;
+        const cant = getDetalleCantidad(d) || 0;
+        const tot = getDetalleTotal(d) || 0;
+        const unit = getDetalleUnidad(d) || "uds";
+        const valUnit = getDetalleValorUnitario(d) || 0;
+
+        const prev = groupedItems.get(codeKey);
+        if (prev) {
+          prev.qty += cant;
+          prev.total += tot;
+        } else {
+          groupedItems.set(codeKey, {
+            code: codeKey,
+            name: matName,
+            qty: cant,
+            total: tot,
+            unit,
+            valUnit,
+          });
+        }
+      }
+
+      const stagesWorked: SatelliteOrderStageWork[] = Array.from(groupedItems.values()).map((it, i) => ({
+        stageKey: `tns-${i}`,
+        stageLabel: it.code,
+        userName: ws.contact_name || ws.name || "Satélite",
+        laborAmount: it.total,
+        materialsAmount: 0,
+        materials: [],
+        actions: [
+          `Código: ${it.code}`,
+          it.name && it.name !== it.code ? `Descripción: ${it.name}` : "",
+          `Cantidad: ${it.qty} ${it.unit}`,
+          it.valUnit > 0 ? `Valor Unitario: $${it.valUnit.toLocaleString("es-CO")}` : "",
+        ].filter(Boolean),
+        isCurrent: !isCerrado,
+        novedadesCount: 0,
+      }));
+
+      const orderDesc =
+        p.observacion && p.observacion.trim()
+          ? p.observacion.trim()
+          : detailsLines.length > 0
+            ? detailsLines.map((d) => `${getDetalleCantidad(d)} ${getDetalleDescripcion(d)}`).join(", ")
+            : "Pedido de compra TNS";
+
+      const orderId = `tns-${p.kardexId || numDoc || Math.random()}`;
+      const settlement = settlements[orderId];
+      const paymentStatus: "pending" | "paid" =
+        settlement?.status === "pending" ? "pending" : "paid";
+
+      details.push({
+        orderId,
+        orderCode: `PED-${numDoc}`,
+        customerName: p.nomTercero || ws.name || "Satélite",
+        description: orderDesc,
+        quantity: qty,
+        dueDate: getPedidoFechaEntrega(p) || getPedidoFecha(p) || "",
+        stageKey: ws.specialties?.[0] || "corte",
+        stageLabel: ws.specialties?.[0] || "Mano de Obra TNS",
+        orderStatus: isCerrado ? "delivered" : "in_production",
+        cost: totalAmount,
+        paymentStatus,
+        paidAt: settlement?.paid_at || (isCerrado ? getPedidoFechaEntrega(p) || getPedidoFecha(p) : null),
+        cardIds: [],
+        enviado: true,
+        workStatus: "recibido_completo",
+        observations: p.observacion || "",
+        agreedCost: totalAmount,
+        confirmedAt: getPedidoFecha(p) || null,
+        stagesWorked,
+        source: "tns",
+      });
+    }
   }
 
   return details.sort((a, b) => {
     if (a.paymentStatus !== b.paymentStatus) {
       return a.paymentStatus === "pending" ? -1 : 1;
     }
-    return a.orderCode.localeCompare(b.orderCode);
+    return String(a.orderCode || "").localeCompare(String(b.orderCode || ""));
   });
 }
+
+export type SatelliteDetailSummary = {
+  totalFacturado: number;
+  pagado: number;
+  porPagar: number;
+  ordenesActivas: number;
+};
 
 export function summarizeSatelliteOrders(
   details: SatelliteOrderDetail[]
@@ -666,47 +884,90 @@ export function summarizeSatelliteOrders(
   let porPagar = 0;
   let ordenesActivas = 0;
 
+  if (!Array.isArray(details)) {
+    return { totalFacturado: 0, pagado: 0, porPagar: 0, ordenesActivas: 0 };
+  }
+
   for (const d of details) {
+    if (!d) continue;
     const amount =
-      d.agreedCost != null && Number.isFinite(d.agreedCost) ? d.agreedCost : d.cost;
+      d.agreedCost != null && Number.isFinite(d.agreedCost) ? d.agreedCost : Number(d.cost || 0);
     totalFacturado += amount;
     if (d.paymentStatus === "paid") {
       pagado += amount;
-    } else {
+    } else if (d.workStatus === "recibido_completo" || d.source === "tns") {
+      // Solo se suma a la deuda pendiente si se le dio terminar a la capa donde se estipuló la labor
       porPagar += amount;
     }
-    if (d.orderStatus !== "delivered") ordenesActivas += 1;
+
+    // Órdenes pendientes: Solo si no están pagadas, no están entregadas y no han sido recibidas completas
+    const isPaid = d.paymentStatus === "paid";
+    const isDelivered = d.orderStatus === "delivered";
+    const isRecibidoCompleto = d.workStatus === "recibido_completo";
+    if (!isPaid && !isDelivered && !isRecibidoCompleto) {
+      ordenesActivas += 1;
+    }
   }
 
   return { totalFacturado, pagado, porPagar, ordenesActivas };
 }
 
 /**
- * Construye las tarjetas del dashboard de Satélites.
+ * Construye las tarjetas del dashboard de Satélites cruzando datos locales y pedidos de compra de TNS.
  */
 export function buildSatelliteDashboard(params: {
-  workshops: SatelliteWorkshop[];
-  satelliteUsers: SatelliteUserRef[];
-  orders: Order[];
-  stageLabels: Record<string, string>;
+  workshops?: SatelliteWorkshop[];
+  satelliteUsers?: SatelliteUserRef[];
+  orders?: Order[];
+  stageLabels?: Record<string, string>;
+  tnsPedidos?: PedidoCompra[];
 }): SatelliteDashboardCard[] {
-  const { workshops, satelliteUsers, orders, stageLabels } = params;
+  const {
+    workshops = [],
+    satelliteUsers = [],
+    orders = [],
+    stageLabels = {},
+    tnsPedidos = [],
+  } = params || {};
+
+  if (!Array.isArray(workshops)) return [];
 
   const usersByWorkshop = new Map<string, SatelliteUserRef[]>();
-  for (const user of satelliteUsers) {
-    if (!user.satelliteId) continue;
+  for (const user of satelliteUsers || []) {
+    if (!user || !user.satelliteId) continue;
     const list = usersByWorkshop.get(user.satelliteId) || [];
     list.push(user);
     usersByWorkshop.set(user.satelliteId, list);
   }
 
   return workshops.map((ws) => {
+    if (!ws) {
+      return {
+        id: "",
+        name: "",
+        contactName: "",
+        phone: "",
+        address: "",
+        notes: "",
+        status: "active",
+        paymentStatus: "al_dia",
+        settlements: {},
+        capas: [],
+        userIds: [],
+        userNames: [],
+        ordenes: 0,
+        pendientes: 0,
+        pagado: 0,
+        porPagar: 0,
+      };
+    }
+
     const linked = usersByWorkshop.get(ws.id) || [];
-    const userIds = linked.map((u) => u.id);
-    const userNames = linked.map((u) => u.name);
+    const userIds = linked.map((u) => u.id).filter(Boolean);
+    const userNames = linked.map((u) => u.name).filter(Boolean);
 
     const capaKeys = [
-      ...new Set(linked.flatMap((u) => u.stageKeys).filter(Boolean)),
+      ...new Set(linked.flatMap((u) => u.stageKeys || []).filter(Boolean)),
     ];
     const capas =
       capaKeys.length > 0
@@ -717,6 +978,7 @@ export function buildSatelliteDashboard(params: {
         : (ws.specialties || []).map((sp) => ({ key: sp, label: sp }));
 
     const settlements = ws.settlements || {};
+
     const orderDetails = buildSatelliteOrderDetails({
       userIds,
       orders,
@@ -724,30 +986,39 @@ export function buildSatelliteDashboard(params: {
       settlements,
       workshopId: ws.id,
       userNamesById: Object.fromEntries(linked.map((u) => [u.id, u.name])),
+      workshop: ws,
+      tnsPedidos,
     });
+
     const summary = summarizeSatelliteOrders(orderDetails);
+
+    const hasTnsMatches = (tnsPedidos || []).some((p) => matchesSatelliteTns(ws, p));
 
     const contactName =
       userNames[0] ||
       ws.contact_name ||
-      "Sin usuario satélite";
+      ws.name ||
+      "Sin contacto";
 
     return {
       id: ws.id,
-      name: ws.name,
+      name: ws.name || "Sin nombre",
+      nit: ws.nit || ws.nit_tercero || ws.cod_tercero || "",
       contactName,
       phone: ws.phone || "",
       address: ws.address || "",
       notes: ws.notes || "",
-      status: ws.status,
-      paymentStatus: ws.payment_status,
+      status: ws.status || "active",
+      paymentStatus: ws.payment_status || "al_dia",
       settlements,
       capas,
       userIds,
       userNames,
       ordenes: orderDetails.length,
-      pendientes: orderDetails.filter((d) => d.orderStatus !== "delivered").length,
+      pendientes: summary.ordenesActivas,
+      pagado: summary.pagado,
       porPagar: summary.porPagar,
+      isTnsSynced: hasTnsMatches,
     };
   });
 }
@@ -768,16 +1039,16 @@ export function exportSettlementCsv(
     ["Orden", "Cliente", "Descripción", "Cantidad", "Etapa", "Costo", "Estado pago", "Entrega"].join(
       ","
     ),
-    ...details.map((d) =>
+    ...(details || []).map((d) =>
       [
-        d.orderCode,
-        `"${d.customerName.replace(/"/g, '""')}"`,
-        `"${d.description.replace(/"/g, '""')}"`,
-        d.quantity,
-        d.stageLabel,
-        d.cost,
+        `"${d.orderCode || ""}"`,
+        `"${(d.customerName || "").replace(/"/g, '""')}"`,
+        `"${(d.description || "").replace(/"/g, '""')}"`,
+        d.quantity || 0,
+        `"${d.stageLabel || ""}"`,
+        d.cost || 0,
         d.paymentStatus === "paid" ? "Pagado" : "Por pagar",
-        d.dueDate || "",
+        `"${d.dueDate || ""}"`,
       ].join(",")
     ),
   ];
@@ -785,7 +1056,7 @@ export function exportSettlementCsv(
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `liquidacion-${satelliteName.replace(/\s+/g, "-").toLowerCase()}.csv`;
+  a.download = `liquidacion-${(satelliteName || "satelite").toLowerCase().replace(/\s+/g, "-")}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }

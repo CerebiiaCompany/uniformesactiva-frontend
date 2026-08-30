@@ -33,6 +33,9 @@ export function useFabricCosts() {
                 price_per_meter: String(payload.price_per_meter),
             };
             if (payload.proveedor_id) body.proveedor_id = payload.proveedor_id;
+            if (payload.codigo != null && String(payload.codigo).trim()) {
+                body.codigo = String(payload.codigo).trim();
+            }
             if (payload.tiene_iva != null) body.tiene_iva = payload.tiene_iva;
             if (payload.es_principal != null) body.es_principal = payload.es_principal;
 
@@ -57,6 +60,7 @@ export function useFabricCosts() {
             const body: Record<string, string | boolean> = {};
             if (payload.proveedor_id != null) body.proveedor_id = payload.proveedor_id;
             if (payload.reference != null) body.reference = payload.reference;
+            if (payload.codigo != null) body.codigo = String(payload.codigo).trim();
             if (payload.meters != null) body.meters = String(payload.meters);
             if (payload.price_per_meter != null) body.price_per_meter = String(payload.price_per_meter);
             if (payload.tiene_iva != null) body.tiene_iva = payload.tiene_iva;

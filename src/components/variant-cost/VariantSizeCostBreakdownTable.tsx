@@ -66,6 +66,7 @@ export function VariantSizeCostBreakdownTable({
                             <th className="text-right font-semibold px-3 py-2">Insumos</th>
                             <th className="text-right font-semibold px-3 py-2">M. obra</th>
                             <th className="text-right font-semibold px-3 py-2">Extras</th>
+                            <th className="text-right font-semibold px-3 py-2">CIF</th>
                             <th className="text-right font-semibold px-4 py-2">Total</th>
                         </tr>
                     </thead>
@@ -91,7 +92,10 @@ export function VariantSizeCostBreakdownTable({
                                     <td className="px-3 py-2.5 text-right">
                                         ${formatMoney(size.extras_total ?? 0)}
                                     </td>
-                                    <td className="px-4 py-2.5 text-right">
+                                    <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">
+                                        ${formatMoney(size.cif_total ?? 0)}
+                                    </td>
+                                    <td className="px-4 py-2.5 text-right font-semibold">
                                         ${formatMoney(size.overall_total)}
                                     </td>
                                 </tr>
@@ -106,6 +110,7 @@ export function VariantSizeCostBreakdownTable({
                             <td className="px-3 py-3 text-right text-foreground">
                                 ≈ {formatDecimal(computedAverage, 1)} m
                             </td>
+                            <td className="px-3 py-3" />
                             <td className="px-3 py-3" />
                             <td className="px-3 py-3" />
                             <td className="px-3 py-3" />

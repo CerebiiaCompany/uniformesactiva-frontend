@@ -48,11 +48,17 @@ function parseErrorMessage(errorData: Record<string, unknown>, status: number, s
     return fallback || `Error ${status}: ${statusText}`;
 }
 
-export async function http<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
+export interface HttpOptions extends RequestInit {
+    skipAuthRedirect?: boolean;
+}
+
+export async function http<T>(input: RequestInfo, init?: HttpOptions): Promise<T> {
     const token = getStoredAccessToken();
 
     if (token && isAccessTokenExpired(token)) {
-        clearSessionAndRedirectToLogin();
+        if (!init?.skipAuthRedirect) {
+            clearSessionAndRedirectToLogin();
+        }
         throw new UnauthorizedError("Sesión expirada");
     }
 
@@ -68,8 +74,10 @@ export async function http<T>(input: RequestInfo, init?: RequestInit): Promise<T
     const response = await fetch(input, { ...init, headers });
 
     if (response.status === 401) {
-        clearSessionAndRedirectToLogin();
-        throw new UnauthorizedError();
+        if (!init?.skipAuthRedirect) {
+            clearSessionAndRedirectToLogin();
+        }
+        throw new HttpError("No autorizado para este recurso (401)", 401);
     }
 
     if (!response.ok) {

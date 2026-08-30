@@ -19,3 +19,19 @@ export function parseDecimalInput(value: string): number {
     const num = parseFloat(normalized);
     return Number.isNaN(num) ? 0 : num;
 }
+
+/** Sanitiza la escritura de números decimales permitiendo un solo separador (. o ,) */
+export function sanitizeDecimalTyping(value: string): string {
+    let cleaned = value.replace(/[^\d.,]/g, "");
+    const sepIndex = Math.max(cleaned.lastIndexOf(","), cleaned.lastIndexOf("."));
+    if (sepIndex >= 0) {
+        const intPart = cleaned.slice(0, sepIndex).replace(/[.,]/g, "");
+        const decPart = cleaned.slice(sepIndex + 1).replace(/[.,]/g, "");
+        const sep = cleaned[sepIndex];
+        cleaned = decPart.length > 0 || cleaned.endsWith(",") || cleaned.endsWith(".")
+            ? `${intPart}${sep}${decPart}`
+            : intPart + sep;
+    }
+    return cleaned;
+}
+

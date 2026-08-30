@@ -90,6 +90,17 @@ const MEDIO_PAGO_OPTIONS = [
 
 const formatMoney = (value: number) => formatCurrency(value);
 
+function formatNumberWithDots(val: string | number): string {
+    if (val === "" || val == null) return "";
+    const digitsOnly = String(val).replace(/\D/g, "");
+    if (!digitsOnly) return "";
+    return new Intl.NumberFormat("es-CO").format(Number(digitsOnly));
+}
+
+function parseRawNumber(val: string): string {
+    return val.replace(/\D/g, "");
+}
+
 function SectionHeader({
     icon: Icon,
     title,
@@ -183,6 +194,9 @@ export function NewOrderDialog({
     const [medioPago, setMedioPago] = useState("");
     const [conceptoAbono, setConceptoAbono] = useState("");
     const [fechaLimiteSaldo, setFechaLimiteSaldo] = useState("");
+    const [registradoPorId, setRegistradoPorId] = useState("");
+    const [registradoPorNombre, setRegistradoPorNombre] = useState("");
+    const [fechaRegistroAbono, setFechaRegistroAbono] = useState("");
     const [deliveryDate, setDeliveryDate] = useState("");
     const [paymentStatus, setPaymentStatus] = useState("no_pagado");
     const [orderComments, setOrderComments] = useState("");
@@ -210,6 +224,9 @@ export function NewOrderDialog({
         setMedioPago("");
         setConceptoAbono("");
         setFechaLimiteSaldo("");
+        setRegistradoPorId("");
+        setRegistradoPorNombre("");
+        setFechaRegistroAbono("");
         setOrderComments("");
         setLogoPositions([]);
         setLogoPath(null);
@@ -231,6 +248,9 @@ export function NewOrderDialog({
         setMedioPago(seed.medioPago);
         setConceptoAbono(seed.conceptoAbono);
         setFechaLimiteSaldo(seed.fechaLimiteSaldo);
+        setRegistradoPorId(seed.registradoPorId || "");
+        setRegistradoPorNombre(seed.registradoPorNombre || "");
+        setFechaRegistroAbono(seed.fechaRegistro || "");
         setOrderComments(seed.orderComments);
         setLogoPositions(seed.logoPositions);
         setLogoPath(seed.logoPath);
@@ -328,6 +348,19 @@ export function NewOrderDialog({
             totalCost: cost,
             income: Math.round(projectedIncome * 100) / 100,
         };
+    }, [productEntries]);
+
+    const hasPersonalizacion = useMemo(() => {
+        return productEntries.some((p) => {
+            const est = (p.estampado || "").trim().toLowerCase();
+            return (
+                est &&
+                est !== "sin estampado" &&
+                est !== "sin_estampado" &&
+                est !== "ninguno" &&
+                est !== "none"
+            );
+        });
     }, [productEntries]);
 
     const abonoAmount = Number(abonoAmountRaw) || 0;
@@ -463,51 +496,91 @@ export function NewOrderDialog({
                   medio_pago: string;
                   concepto: string;
                   fecha_limite_saldo: string;
+                  registrado_por_id?: string;
+                  registrado_por_nombre?: string;
+                  fecha_registro?: string;
               }
-            | { medio_pago: string }
+            | {
+                  medio_pago: string;
+                  registrado_por_id?: string;
+                  registrado_por_nombre?: string;
+                  fecha_registro?: string;
+              }
             | undefined;
 
-        if (paymentStatus === "pagado") {
-            if (!medioPago) {
-                toast.error("Selecciona el medio de pago.");
-                return;
+        // En modo cotización NO se gestionan pagos ni abonos (se gestionan al pasar a orden)
+        if (!isQuoteMode) {
+            // Resolver quién tomó / registró el abono y fecha/hora exacta
+            const takenByUser = users.find((u) => u.id === takenBy);
+            let loggedUser: any = null;
+            try {
+                const raw = localStorage.getItem("user");
+                if (raw) loggedUser = JSON.parse(raw);
+            } catch {
+                // ignore
             }
-            detalleAbono = { medio_pago: medioPago };
-        }
 
-        if (paymentStatus === "parcial") {
-            if (!income || income <= 0) {
-                toast.error("Define el ingreso / monto total antes del abono.");
-                return;
+            const finalRegId =
+                registradoPorId ||
+                String(takenByUser?.id || loggedUser?.id || "");
+            const finalRegNombre =
+                registradoPorNombre ||
+                takenByUser?.label ||
+                `${loggedUser?.first_name || ""} ${loggedUser?.last_name || ""}`.trim() ||
+                loggedUser?.username ||
+                "";
+            const finalFechaRegistro = fechaRegistroAbono || new Date().toISOString();
+
+            if (paymentStatus === "pagado") {
+                if (!medioPago) {
+                    toast.error("Selecciona el medio de pago.");
+                    return;
+                }
+                detalleAbono = {
+                    medio_pago: medioPago,
+                    registrado_por_id: finalRegId,
+                    registrado_por_nombre: finalRegNombre,
+                    fecha_registro: finalFechaRegistro,
+                };
             }
-            if (!abonoAmount || abonoAmount <= 0) {
-                toast.error("Ingresa el monto del pago parcial (abono).");
-                return;
+
+            if (paymentStatus === "parcial") {
+                if (!income || income <= 0) {
+                    toast.error("Define el ingreso / monto total antes del abono.");
+                    return;
+                }
+                if (!abonoAmount || abonoAmount <= 0) {
+                    toast.error("Ingresa el monto del pago parcial (abono).");
+                    return;
+                }
+                if (abonoAmount >= income) {
+                    toast.error("El abono debe ser menor al monto total. Si pagó todo, usa “Pagado”.");
+                    return;
+                }
+                if (!medioPago) {
+                    toast.error("Selecciona el medio de pago.");
+                    return;
+                }
+                if (!conceptoAbono.trim()) {
+                    toast.error("Ingresa el concepto del abono.");
+                    return;
+                }
+                if (!fechaLimiteSaldo) {
+                    toast.error("Indica la fecha límite para el saldo restante.");
+                    return;
+                }
+                detalleAbono = {
+                    monto_total: income,
+                    monto_abono: abonoAmount,
+                    saldo_pendiente: saldoPendiente,
+                    medio_pago: medioPago,
+                    concepto: conceptoAbono.trim(),
+                    fecha_limite_saldo: fechaLimiteSaldo,
+                    registrado_por_id: finalRegId,
+                    registrado_por_nombre: finalRegNombre,
+                    fecha_registro: finalFechaRegistro,
+                };
             }
-            if (abonoAmount >= income) {
-                toast.error("El abono debe ser menor al monto total. Si pagó todo, usa “Pagado”.");
-                return;
-            }
-            if (!medioPago) {
-                toast.error("Selecciona el medio de pago.");
-                return;
-            }
-            if (!conceptoAbono.trim()) {
-                toast.error("Ingresa el concepto del abono.");
-                return;
-            }
-            if (!fechaLimiteSaldo) {
-                toast.error("Indica la fecha límite para el saldo restante.");
-                return;
-            }
-            detalleAbono = {
-                monto_total: income,
-                monto_abono: abonoAmount,
-                saldo_pendiente: saldoPendiente,
-                medio_pago: medioPago,
-                concepto: conceptoAbono.trim(),
-                fecha_limite_saldo: fechaLimiteSaldo,
-            };
         }
 
         const productoId = productEntries[0].producto_id;
@@ -1000,11 +1073,6 @@ export function NewOrderDialog({
                                                                     </p>
                                                                 </div>
                                                                 <div className="flex flex-wrap gap-1.5">
-                                                                    {entry.color?.trim() && (
-                                                                        <Badge variant="secondary" className="text-[10px] font-normal">
-                                                                            {entry.color}
-                                                                        </Badge>
-                                                                    )}
                                                                     {entry.estampado?.trim() && (
                                                                         <Badge variant="outline" className="text-[10px] font-normal">
                                                                             {entry.estampado}
@@ -1115,9 +1183,9 @@ export function NewOrderDialog({
                                 <section className="space-y-3">
                                     <SectionHeader
                                         icon={Calendar}
-                                        title="Logística y pago"
+                                        title={isQuoteMode ? "Logística y entrega" : "Logística y pago"}
                                     />
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div className={cn("grid gap-4", isQuoteMode ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2")}>
                                         <div className="space-y-1.5">
                                             <Label className="text-xs font-medium">Fecha de entrega</Label>
                                             <Input
@@ -1127,39 +1195,41 @@ export function NewOrderDialog({
                                                 className="h-10"
                                             />
                                         </div>
-                                        <div className="space-y-1.5">
-                                            <Label className="text-xs font-medium">Estado de pago</Label>
-                                            <Select
-                                                value={paymentStatus}
-                                                onValueChange={(v) => {
-                                                    setPaymentStatus(v);
-                                                    if (v === "no_pagado") {
-                                                        setAbonoAmountRaw("");
-                                                        setMedioPago("");
-                                                        setConceptoAbono("");
-                                                        setFechaLimiteSaldo("");
-                                                    } else if (v === "pagado") {
-                                                        setAbonoAmountRaw("");
-                                                        setConceptoAbono("");
-                                                        setFechaLimiteSaldo("");
-                                                    }
-                                                }}
-                                            >
-                                                <SelectTrigger className="h-10">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    {PAYMENT_STATUS_OPTIONS.map((opt) => (
-                                                        <SelectItem key={opt.value} value={opt.value}>
-                                                            {opt.label}
-                                                        </SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
+                                        {!isQuoteMode && (
+                                            <div className="space-y-1.5">
+                                                <Label className="text-xs font-medium">Estado de pago</Label>
+                                                <Select
+                                                    value={paymentStatus}
+                                                    onValueChange={(v) => {
+                                                        setPaymentStatus(v);
+                                                        if (v === "no_pagado") {
+                                                            setAbonoAmountRaw("");
+                                                            setMedioPago("");
+                                                            setConceptoAbono("");
+                                                            setFechaLimiteSaldo("");
+                                                        } else if (v === "pagado") {
+                                                            setAbonoAmountRaw("");
+                                                            setConceptoAbono("");
+                                                            setFechaLimiteSaldo("");
+                                                        }
+                                                    }}
+                                                >
+                                                    <SelectTrigger className="h-10">
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {PAYMENT_STATUS_OPTIONS.map((opt) => (
+                                                            <SelectItem key={opt.value} value={opt.value}>
+                                                                {opt.label}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                        )}
                                     </div>
 
-                                    {paymentStatus === "parcial" && (
+                                    {!isQuoteMode && paymentStatus === "parcial" && (
                                         <div className="rounded-xl border border-amber-200/80 bg-amber-50/40 p-4 space-y-4 dark:bg-amber-950/10 dark:border-amber-900/40">
                                             <div>
                                                 <h4 className="text-sm font-semibold flex items-center gap-2">
@@ -1185,13 +1255,12 @@ export function NewOrderDialog({
                                                         Monto del abono <span className="text-destructive">*</span>
                                                     </Label>
                                                     <Input
-                                                        type="number"
-                                                        min={0}
-                                                        step="0.01"
-                                                        value={abonoAmountRaw}
-                                                        onChange={(e) => setAbonoAmountRaw(e.target.value)}
+                                                        type="text"
+                                                        inputMode="numeric"
+                                                        value={formatNumberWithDots(abonoAmountRaw)}
+                                                        onChange={(e) => setAbonoAmountRaw(parseRawNumber(e.target.value))}
                                                         placeholder="0"
-                                                        className="h-10"
+                                                        className="h-10 tabular-nums"
                                                     />
                                                 </div>
                                                 <div className="space-y-1.5">
@@ -1210,14 +1279,14 @@ export function NewOrderDialog({
                                                 </div>
                                             </div>
 
-                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                                <div className="space-y-1.5 sm:col-span-2">
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                                                <div className="space-y-1.5">
                                                     <Label className="text-xs font-medium">
-                                                        Medio de pago <span className="text-destructive">*</span>
+                                                        Medio de pago del abono <span className="text-destructive">*</span>
                                                     </Label>
                                                     <Select value={medioPago} onValueChange={setMedioPago}>
                                                         <SelectTrigger className="h-10 bg-background">
-                                                            <SelectValue placeholder="Selecciona..." />
+                                                            <SelectValue placeholder="Transferencia, efectivo..." />
                                                         </SelectTrigger>
                                                         <SelectContent>
                                                             {MEDIO_PAGO_OPTIONS.map((opt) => (
@@ -1228,45 +1297,37 @@ export function NewOrderDialog({
                                                         </SelectContent>
                                                     </Select>
                                                 </div>
+
+                                                <div className="space-y-1.5">
+                                                    <Label className="text-xs font-medium">
+                                                        Fecha límite para saldo restante{" "}
+                                                        <span className="text-destructive">*</span>
+                                                    </Label>
+                                                    <Input
+                                                        type="date"
+                                                        value={fechaLimiteSaldo}
+                                                        onChange={(e) => setFechaLimiteSaldo(e.target.value)}
+                                                        className="h-10 bg-background"
+                                                    />
+                                                </div>
                                             </div>
 
-                                            <div className="pt-1 border-t border-amber-200/60 dark:border-amber-900/40">
-                                                <h4 className="text-sm font-semibold mt-3 mb-1">
-                                                    Términos y compromisos futuros
-                                                </h4>
-                                                <p className="text-[11px] text-muted-foreground mb-3">
-                                                    Describe el abono y pacta la fecha del saldo restante.
-                                                </p>
-                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                                    <div className="space-y-1.5 sm:col-span-2">
-                                                        <Label className="text-xs font-medium">
-                                                            Concepto <span className="text-destructive">*</span>
-                                                        </Label>
-                                                        <Input
-                                                            value={conceptoAbono}
-                                                            onChange={(e) => setConceptoAbono(e.target.value)}
-                                                            placeholder='Ej. Abono del 50% para inicio de producción'
-                                                            className="h-10"
-                                                        />
-                                                    </div>
-                                                    <div className="space-y-1.5">
-                                                        <Label className="text-xs font-medium">
-                                                            Fecha límite del saldo{" "}
-                                                            <span className="text-destructive">*</span>
-                                                        </Label>
-                                                        <Input
-                                                            type="date"
-                                                            value={fechaLimiteSaldo}
-                                                            onChange={(e) => setFechaLimiteSaldo(e.target.value)}
-                                                            className="h-10"
-                                                        />
-                                                    </div>
-                                                </div>
+                                            <div className="space-y-1.5">
+                                                <Label className="text-xs font-medium">
+                                                    Concepto del abono <span className="text-destructive">*</span>
+                                                </Label>
+                                                <Textarea
+                                                    value={conceptoAbono}
+                                                    onChange={(e) => setConceptoAbono(e.target.value)}
+                                                    placeholder="Ej. Anticipo 50% para inicio de producción..."
+                                                    rows={2}
+                                                    className="resize-none bg-background text-xs"
+                                                />
                                             </div>
                                         </div>
                                     )}
 
-                                    {paymentStatus === "pagado" && (
+                                    {!isQuoteMode && paymentStatus === "pagado" && (
                                         <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/40 p-4 space-y-3 dark:bg-emerald-950/10 dark:border-emerald-900/40">
                                             <div className="space-y-1.5">
                                                 <Label className="text-xs font-medium">
@@ -1292,127 +1353,131 @@ export function NewOrderDialog({
                                     )}
                                 </section>
 
-                                <Separator />
+                                {hasPersonalizacion && (
+                                    <>
+                                        <Separator />
 
-                                {/* Comentarios y logo */}
-                                <section className="space-y-4">
-                                    <SectionHeader
-                                        icon={Layers}
-                                        title="Notas y personalización"
-                                    />
-                                    <div className="space-y-1.5">
-                                        <Label className="text-xs font-medium">Comentarios de la orden</Label>
-                                        <Textarea
-                                            placeholder="Indicaciones generales, condiciones de entrega, observaciones..."
-                                            value={orderComments}
-                                            onChange={(e) => setOrderComments(e.target.value)}
-                                            className="min-h-[88px] resize-y"
-                                        />
-                                    </div>
-
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                                        <div className="space-y-2">
-                                            <Label className="text-xs font-medium flex items-center gap-1.5">
-                                                <ImageIcon className="h-3.5 w-3.5" />
-                                                Logo del cliente
-                                            </Label>
-                                            <input
-                                                ref={logoInputRef}
-                                                type="file"
-                                                accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg"
-                                                className="hidden"
-                                                onChange={handleLogoFileChange}
+                                        {/* Comentarios y logo */}
+                                        <section className="space-y-4">
+                                            <SectionHeader
+                                                icon={Layers}
+                                                title="Notas y personalización"
                                             />
-                                            {logoPreviewUrl ? (
-                                                <div className="rounded-xl border bg-muted/20 p-3 space-y-3">
-                                                    <div className="flex items-center justify-center rounded-lg bg-background border overflow-hidden h-28">
-                                                        <img
-                                                            src={logoPreviewUrl}
-                                                            alt="Vista previa del logo"
-                                                            className="max-h-full max-w-full object-contain"
-                                                        />
-                                                    </div>
-                                                    <div className="flex gap-2">
-                                                        <Button
+                                            <div className="space-y-1.5">
+                                                <Label className="text-xs font-medium">Comentarios de la orden</Label>
+                                                <Textarea
+                                                    placeholder="Indicaciones generales, condiciones de entrega, observaciones..."
+                                                    value={orderComments}
+                                                    onChange={(e) => setOrderComments(e.target.value)}
+                                                    className="min-h-[88px] resize-y"
+                                                />
+                                            </div>
+
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                                                <div className="space-y-2">
+                                                    <Label className="text-xs font-medium flex items-center gap-1.5">
+                                                        <ImageIcon className="h-3.5 w-3.5" />
+                                                        Logo del cliente
+                                                    </Label>
+                                                    <input
+                                                        ref={logoInputRef}
+                                                        type="file"
+                                                        accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg"
+                                                        className="hidden"
+                                                        onChange={handleLogoFileChange}
+                                                    />
+                                                    {logoPreviewUrl ? (
+                                                        <div className="rounded-xl border bg-muted/20 p-3 space-y-3">
+                                                            <div className="flex items-center justify-center rounded-lg bg-background border overflow-hidden h-28">
+                                                                <img
+                                                                    src={logoPreviewUrl}
+                                                                    alt="Vista previa del logo"
+                                                                    className="max-h-full max-w-full object-contain"
+                                                                />
+                                                            </div>
+                                                            <div className="flex gap-2">
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="outline"
+                                                                    size="sm"
+                                                                    className="flex-1"
+                                                                    disabled={logoUploading}
+                                                                    onClick={() => logoInputRef.current?.click()}
+                                                                >
+                                                                    Cambiar
+                                                                </Button>
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    className="text-destructive hover:text-destructive"
+                                                                    disabled={logoUploading}
+                                                                    onClick={clearLogo}
+                                                                >
+                                                                    Quitar
+                                                                </Button>
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <button
                                                             type="button"
-                                                            variant="outline"
-                                                            size="sm"
-                                                            className="flex-1"
                                                             disabled={logoUploading}
                                                             onClick={() => logoInputRef.current?.click()}
+                                                            className="w-full flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-muted-foreground/20 px-4 py-5 text-sm text-muted-foreground hover:border-primary/40 hover:bg-primary/[0.03] hover:text-foreground transition-colors disabled:opacity-60"
                                                         >
-                                                            Cambiar
-                                                        </Button>
-                                                        <Button
-                                                            type="button"
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            className="text-destructive hover:text-destructive"
-                                                            disabled={logoUploading}
-                                                            onClick={clearLogo}
-                                                        >
-                                                            Quitar
-                                                        </Button>
+                                                            {logoUploading ? (
+                                                                <Loader2 className="h-5 w-5 animate-spin" />
+                                                            ) : (
+                                                                <Upload className="h-5 w-5" />
+                                                            )}
+                                                            <span className="font-medium">
+                                                                {logoUploading ? "Subiendo..." : "Subir logo"}
+                                                            </span>
+                                                            <span className="text-[11px]">PNG, JPG, WEBP o SVG (máx. 5 MB)</span>
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <Label className="text-xs font-medium">Posiciones del logo</Label>
+                                                    <div className="grid grid-cols-2 gap-1.5">
+                                                        {LOGO_POSITIONS.map((pos) => {
+                                                            const active = logoPositions.includes(pos.id);
+                                                            return (
+                                                                <button
+                                                                    key={pos.id}
+                                                                    type="button"
+                                                                    onClick={() => toggleLogoPosition(pos.id)}
+                                                                    className={cn(
+                                                                        "flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs font-medium transition-all text-left",
+                                                                        active
+                                                                            ? "border-primary bg-primary/10 text-primary shadow-sm"
+                                                                            : "border-border bg-background text-muted-foreground hover:border-primary/30 hover:bg-muted/50"
+                                                                    )}
+                                                                >
+                                                                    <span
+                                                                        className={cn(
+                                                                            "h-3.5 w-3.5 rounded-sm border shrink-0 flex items-center justify-center",
+                                                                            active
+                                                                                ? "border-primary bg-primary text-primary-foreground"
+                                                                                : "border-muted-foreground/40"
+                                                                        )}
+                                                                    >
+                                                                        {active && (
+                                                                            <svg viewBox="0 0 10 8" className="h-2 w-2 fill-current">
+                                                                                <path d="M1 4l2.5 2.5L9 1" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                                                                            </svg>
+                                                                        )}
+                                                                    </span>
+                                                                    {pos.label}
+                                                                </button>
+                                                            );
+                                                        })}
                                                     </div>
                                                 </div>
-                                            ) : (
-                                                <button
-                                                    type="button"
-                                                    disabled={logoUploading}
-                                                    onClick={() => logoInputRef.current?.click()}
-                                                    className="w-full flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-muted-foreground/20 px-4 py-5 text-sm text-muted-foreground hover:border-primary/40 hover:bg-primary/[0.03] hover:text-foreground transition-colors disabled:opacity-60"
-                                                >
-                                                    {logoUploading ? (
-                                                        <Loader2 className="h-5 w-5 animate-spin" />
-                                                    ) : (
-                                                        <Upload className="h-5 w-5" />
-                                                    )}
-                                                    <span className="font-medium">
-                                                        {logoUploading ? "Subiendo..." : "Subir logo"}
-                                                    </span>
-                                                    <span className="text-[11px]">PNG, JPG, WEBP o SVG (máx. 5 MB)</span>
-                                                </button>
-                                            )}
-                                        </div>
-                                        <div className="space-y-2">
-                                            <Label className="text-xs font-medium">Posiciones del logo</Label>
-                                            <div className="grid grid-cols-2 gap-1.5">
-                                                {LOGO_POSITIONS.map((pos) => {
-                                                    const active = logoPositions.includes(pos.id);
-                                                    return (
-                                                        <button
-                                                            key={pos.id}
-                                                            type="button"
-                                                            onClick={() => toggleLogoPosition(pos.id)}
-                                                            className={cn(
-                                                                "flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs font-medium transition-all text-left",
-                                                                active
-                                                                    ? "border-primary bg-primary/10 text-primary shadow-sm"
-                                                                    : "border-border bg-background text-muted-foreground hover:border-primary/30 hover:bg-muted/50"
-                                                            )}
-                                                        >
-                                                            <span
-                                                                className={cn(
-                                                                    "h-3.5 w-3.5 rounded-sm border shrink-0 flex items-center justify-center",
-                                                                    active
-                                                                        ? "border-primary bg-primary text-primary-foreground"
-                                                                        : "border-muted-foreground/40"
-                                                                )}
-                                                            >
-                                                                {active && (
-                                                                    <svg viewBox="0 0 10 8" className="h-2 w-2 fill-current">
-                                                                        <path d="M1 4l2.5 2.5L9 1" stroke="currentColor" strokeWidth="1.5" fill="none" />
-                                                                    </svg>
-                                                                )}
-                                                            </span>
-                                                            {pos.label}
-                                                        </button>
-                                                    );
-                                                })}
                                             </div>
-                                        </div>
-                                    </div>
-                                </section>
+                                        </section>
+                                    </>
+                                )}
                             </div>
 
                             {/* Footer fijo */}
