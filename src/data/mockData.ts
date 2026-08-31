@@ -159,6 +159,18 @@ export interface ProductionOrder {
   }[];
   shippingCost?: number | null;
   /**
+   * Domicilio ida/vuelta al asignar satélite (módulo Despacho).
+   */
+  shippingMeta?: {
+    kind: "satellite_roundtrip";
+    amount: number;
+    satelliteUserId?: string | null;
+    satelliteName?: string | null;
+    registeredAt: string;
+    stage?: string;
+    stageLabel?: string;
+  } | null;
+  /**
    * Libro de costos por capa/usuario.
    * Se actualiza al guardar la tarjeta y al avanzar de capa (congela la capa anterior).
    */

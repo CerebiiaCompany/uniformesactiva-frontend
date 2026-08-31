@@ -97,6 +97,8 @@ export default function Orders() {
   const [tnsMaterialCosts, setTnsMaterialCosts] = useState<
     Record<string, TNSOrderRealMaterialCostResponse>
   >({});
+  const tnsMaterialCostsRef = useRef(tnsMaterialCosts);
+  tnsMaterialCostsRef.current = tnsMaterialCosts;
   /** True cuando ya se intentó hidratar materiales TNS para la página actual. */
   const [tnsMaterialsHydrated, setTnsMaterialsHydrated] = useState(false);
   const [openingRealCost, setOpeningRealCost] = useState(false);
@@ -143,35 +145,29 @@ export default function Orders() {
       setTnsMaterialsHydrated(true);
       return;
     }
+    // Solo pedir TNS para órdenes aún no hidratadas (evita reconsultar todas al avanzar una).
+    const missing = activeForMaterials.filter(
+      (order) => !tnsMaterialCostsRef.current[order.id]
+    );
+    if (!missing.length) {
+      setTnsMaterialsHydrated(true);
+      return;
+    }
     let cancelled = false;
     setTnsMaterialsHydrated(false);
     void (async () => {
-      const entries = await Promise.all(
-        activeForMaterials.map(async (order) => {
+      await Promise.all(
+        missing.map(async (order) => {
           try {
             const data = await getTNSOrderRealMaterialCost(order.id);
-            return [order.id, data] as const;
+            if (cancelled || !data) return;
+            setTnsMaterialCosts((prev) => ({ ...prev, [order.id]: data }));
           } catch {
-            return [order.id, null] as const;
+            /* se usa desglose persistido */
           }
         })
       );
-      if (cancelled) return;
-      // Merge: no borrar costos previos al refrescar (evita flash sin materiales).
-      setTnsMaterialCosts((prev) => {
-        const next = { ...prev };
-        const activeIds = new Set(activeForMaterials.map((o) => o.id));
-        for (const key of Object.keys(next)) {
-          if (!activeIds.has(key) && !orders.some((o) => o.id === key)) {
-            delete next[key];
-          }
-        }
-        for (const [orderId, data] of entries) {
-          if (data) next[orderId] = data;
-        }
-        return next;
-      });
-      setTnsMaterialsHydrated(true);
+      if (!cancelled) setTnsMaterialsHydrated(true);
     })();
     return () => {
       cancelled = true;
@@ -207,26 +203,28 @@ export default function Orders() {
     return tnsMaterialsHydrated;
   };
 
-  const openRealCostDialog = async (order: Order) => {
-    setOpeningRealCost(true);
+  /** Abre al instante con desglose persistido; TNS se refresca en segundo plano. */
+  const openRealCostDialog = (order: Order) => {
     setRealCostOrder(order);
-    try {
-      if (
-        orderIncludesDeliveredMaterials(order.estado) &&
-        !tnsMaterialCosts[order.id]
-      ) {
-        try {
-          const data = await getTNSOrderRealMaterialCost(order.id);
+    setRealCostOpen(true);
+
+    if (
+      orderIncludesDeliveredMaterials(order.estado) &&
+      !tnsMaterialCosts[order.id]
+    ) {
+      setOpeningRealCost(true);
+      void getTNSOrderRealMaterialCost(order.id)
+        .then((data) => {
           if (data) {
             setTnsMaterialCosts((prev) => ({ ...prev, [order.id]: data }));
           }
-        } catch {
+        })
+        .catch(() => {
           /* se muestra lo persistido */
-        }
-      }
-      setRealCostOpen(true);
-    } finally {
-      setOpeningRealCost(false);
+        })
+        .finally(() => {
+          setOpeningRealCost(false);
+        });
     }
   };
 
@@ -600,12 +598,15 @@ export default function Orders() {
                           <TableCell className="text-right py-2.5">
                             <button
                               type="button"
-                              title="Ver desglose de costo real"
-                              disabled={openingRealCost}
+                              title={
+                                openingRealCost && realCostOrder?.id === order.id
+                                  ? "Desglose abierto — actualizando materiales TNS…"
+                                  : "Ver desglose de costo real"
+                              }
                               onClick={() => {
-                                void openRealCostDialog(order);
+                                openRealCostDialog(order);
                               }}
-                              className="inline-flex items-center justify-end gap-1 w-full text-sm tabular-nums text-red-600 hover:text-red-700 hover:underline disabled:opacity-60"
+                              className="inline-flex items-center justify-end gap-1 w-full text-sm tabular-nums text-red-600 hover:text-red-700 hover:underline"
                             >
                               {openingRealCost && realCostOrder?.id === order.id ? (
                                 <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin opacity-80" />

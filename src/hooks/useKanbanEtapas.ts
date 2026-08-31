@@ -19,7 +19,7 @@ export const DEFAULT_KANBAN_ETAPAS: KanbanEtapa[] = [
   { id: "stage-embroidery", key: "embroidery", label: "Bordado", color_class: "embroidery", orden: 3, is_system: true, activo: true },
   { id: "stage-printing", key: "printing", label: "Estampado", color_class: "printing", orden: 4, is_system: true, activo: true },
   { id: "stage-quality", key: "quality", label: "Calidad", color_class: "quality", orden: 5, is_system: true, activo: true },
-  { id: "stage-dispatch", key: "dispatch", label: "Despacho", color_class: "dispatch", orden: 6, is_system: true, activo: true },
+  { id: "stage-dispatch", key: "dispatch", label: "Para Despacho", color_class: "dispatch", orden: 6, is_system: true, activo: true },
 ];
 
 function resolveError(err: unknown, fallback: string) {

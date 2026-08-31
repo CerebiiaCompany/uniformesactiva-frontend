@@ -15,6 +15,7 @@ import { KanbanStageChip } from "@/components/KanbanStageChip";
 import { KanbanCardEditDialog, cardFormFromProductionOrder, type KanbanCardFormValues } from "@/components/KanbanCardEditDialog";
 import { KanbanNovedadesDialog } from "@/components/KanbanNovedadesDialog";
 import { StageLaborCostDialog } from "@/components/StageLaborCostDialog";
+import { SatelliteRoundtripCostDialog } from "@/components/SatelliteRoundtripCostDialog";
 import { KanbanStageSummaryDialog } from "@/components/KanbanStageSummaryDialog";
 import { useToast } from "@/hooks/use-toast";
 import { http } from "@/lib/http";
@@ -28,12 +29,15 @@ import {
   notifyOrderRealCostUpdated,
   cardHasKanbanMaterialRequests,
   reconcileOrphanLiveMaterials,
+  cardHasAssigneeForStage,
 } from "@/lib/order-real-cost";
+import { isDispatchStageKey } from "@/lib/dispatch-module";
 import {
   notifyKanbanEtapasUpdated,
   readProductionSession,
   mergeProductionUserFromApi,
   getSessionCapaActionsMap,
+  applyKanbanCapaPermissionsFromApi,
   capaHasAction,
   canMoveCardToStage,
   canProductionUserActOnStage,
@@ -307,6 +311,9 @@ export default function Production() {
   } = useKanbanEtapas();
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [prodOrders, setProdOrders] = useState<ProductionOrder[]>([]);
+  /** Últimas tarjetas por orden (evita que un PATCH viejo pise shippingCost/shippingMeta). */
+  const latestCardsByOrderRef = useRef<Record<string, ProductionOrder[]>>({});
+  const persistChainRef = useRef<Record<string, Promise<void>>>({});
   const [stages, setStages] = useState<Stage[]>([]);
   const [savingBoard, setSavingBoard] = useState(false);
   const [savingCard, setSavingCard] = useState(false);
@@ -355,6 +362,24 @@ export default function Production() {
     stageLabel: string;
   }>({ open: false, card: null, stageKey: "", stageLabel: "" });
 
+  const [roundtripDialog, setRoundtripDialog] = useState<{
+    open: boolean;
+    card: ProductionOrder | null;
+    satelliteUserId: string;
+    satelliteName: string;
+    stageKey: string;
+    stageLabel: string;
+  }>({
+    open: false,
+    card: null,
+    satelliteUserId: "",
+    satelliteName: "",
+    stageKey: "",
+    stageLabel: "",
+  });
+  const roundtripOpenRef = useRef(false);
+  const [savingRoundtrip, setSavingRoundtrip] = useState(false);
+
   const [assignModal, setAssignModal] = useState<{
     open: boolean;
     card: ProductionOrder | null;
@@ -368,6 +393,83 @@ export default function Production() {
     assigneeType: "production",
     selectedUserId: "",
   });
+
+  const openSatelliteRoundtripModal = (
+    card: ProductionOrder,
+    satelliteUserId: string,
+    satelliteName: string,
+    stageKey?: string
+  ) => {
+    const key = stageKey || card.stage;
+    const label = stages.find((s) => s.key === key)?.label || key;
+    roundtripOpenRef.current = true;
+    setRoundtripDialog({
+      open: true,
+      card,
+      satelliteUserId,
+      satelliteName,
+      stageKey: key,
+      stageLabel: label,
+    });
+  };
+
+  const saveSatelliteRoundtripCost = async (amount: number, registeredAt: string) => {
+    const { card, satelliteUserId, satelliteName, stageKey, stageLabel } = roundtripDialog;
+    if (!card?.orderId || !(amount > 0)) return;
+
+    setSavingRoundtrip(true);
+    try {
+      const shippingMeta: NonNullable<ProductionOrder["shippingMeta"]> = {
+        kind: "satellite_roundtrip",
+        amount,
+        satelliteUserId,
+        satelliteName,
+        registeredAt,
+        stage: stageKey,
+        stageLabel: stageLabel || "Domicilio ida y vuelta",
+      };
+
+      await commitOrderCards(card.orderId, (cards) =>
+        cards.map((c) =>
+          c.id === card.id
+            ? {
+                ...c,
+                // Asegura asignación satélite + domicilio en el mismo persist
+                assigneeId: null,
+                assignee: "Sin asignar",
+                satelliteAssigneeId: satelliteUserId || c.satelliteAssigneeId,
+                satelliteAssignee: satelliteName || c.satelliteAssignee,
+                shippingCost: amount,
+                shippingMeta,
+              }
+            : c
+        )
+      );
+
+      roundtripOpenRef.current = false;
+      setRoundtripDialog({
+        open: false,
+        card: null,
+        satelliteUserId: "",
+        satelliteName: "",
+        stageKey: "",
+        stageLabel: "",
+      });
+
+      toast({
+        title: "Domicilio registrado",
+        description: `Costo ida y vuelta de ${formatMoneyCop(amount)} para ${satelliteName}. Ya aparece en Despacho → Domicilios.`,
+      });
+    } catch (err: unknown) {
+      toast({
+        variant: "destructive",
+        title: "No se pudo guardar el domicilio",
+        description: err instanceof Error ? err.message : "Intenta de nuevo",
+      });
+    } finally {
+      setSavingRoundtrip(false);
+    }
+  };
 
   const openAssignModal = (card: ProductionOrder, currentStageKey: string) => {
     const initialType = card.satelliteAssigneeId ? "satellite" : "production";
@@ -456,17 +558,38 @@ export default function Production() {
           : {}),
       };
 
-      commitOrderCards(card.orderId, (cards) =>
-        cards.map((c) => (c.id === card.id ? { ...c, ...patch } : c))
-      );
-
       toast({
         title: "Asignación multicapa exitosa",
         description: `Se asignó a ${userName} (${kind === "satellite" ? "Satélite" : "Producción"}) en ${targetStages.length} capa(s).`,
       });
 
       setAssignModal({ open: false, card: null, selectedStages: [], assigneeType: "production", selectedUserId: "" });
-      fetchOrders();
+
+      if (kind === "satellite") {
+        // No persistir tarjetas aún: el modal de domicilio hará un único save
+        // (asignación + shippingCost) para que Despacho lo vea sin carrera.
+        roundtripOpenRef.current = true;
+        setProdOrders((prev) => {
+          const others = prev.filter((c) => c.orderId !== card.orderId);
+          const current = prev.filter((c) => c.orderId === card.orderId);
+          const next = current.map((c) =>
+            c.id === card.id ? { ...c, ...patch } : c
+          );
+          latestCardsByOrderRef.current[card.orderId] = next;
+          return [...others, ...next];
+        });
+        openSatelliteRoundtripModal(
+          { ...card, ...patch } as ProductionOrder,
+          userId,
+          userName,
+          targetStages[0] || card.stage
+        );
+      } else {
+        commitOrderCards(card.orderId, (cards) =>
+          cards.map((c) => (c.id === card.id ? { ...c, ...patch } : c))
+        );
+        fetchOrders();
+      }
     } catch (err: any) {
       toast({
         variant: "destructive",
@@ -574,24 +697,62 @@ export default function Production() {
     targetStageOverride?: string
   ) => {
     try {
-      const stageLabor = getCardLaborInfoForStage(order, stageKey);
-      let amount = stageLabor.totalLabor || stageLabor.satelliteTotal || Number(order.satelliteCost || 0);
-
-      if (amount <= 0 && order.laborCostPerUnit && order.quantity) {
-        amount = Number(order.laborCostPerUnit) * Number(order.quantity);
-      }
-      if (amount <= 0 && order.laborCost) {
-        amount = Number(order.laborCost);
-      }
-
       const stageKeyCompleted = stageKey || order.stage || "current";
-      const stageAssign =
+
+      if (!cardHasAssigneeForStage(order, stageKeyCompleted)) {
+        toast({
+          variant: "destructive",
+          title: "Asignación requerida",
+          description:
+            "Debes asignar a alguien en esta fase antes de terminar o mover la tarjeta. Sin responsable no se guarda el costo real de la orden.",
+        });
+        if (canManageBoard) {
+          openAssignModal(order, stageKeyCompleted);
+        }
+        return;
+      }
+
+      // Asegurar stageAssignees con el responsable vivo (atribuir costo real al congelar)
+      let workingOrder = order;
+      const hasStageAssignRecord =
         order.stageAssignees?.[stageKeyCompleted] ||
         order.stageAssignees?.[`${stageKeyCompleted}__satellite`] ||
         order.stageAssignees?.[`${stageKeyCompleted}__production`];
+      if (!hasStageAssignRecord) {
+        const nextStageAssignees = { ...(order.stageAssignees || {}) };
+        if (order.satelliteAssigneeId && order.satelliteAssignee && order.satelliteAssignee !== "Sin asignar") {
+          nextStageAssignees[`${stageKeyCompleted}__satellite`] = {
+            userId: order.satelliteAssigneeId,
+            name: order.satelliteAssignee,
+            kind: "satellite" as const,
+          };
+        } else if (order.assigneeId && order.assignee && order.assignee !== "Sin asignar") {
+          nextStageAssignees[stageKeyCompleted] = {
+            userId: order.assigneeId,
+            name: order.assignee,
+            kind: "production" as const,
+          };
+        }
+        workingOrder = { ...order, stageAssignees: nextStageAssignees };
+      }
 
-      const isSatKind = stageAssign?.kind === "satellite" || Boolean(order.satelliteAssigneeId) || (Boolean(order.satelliteName) && !order.assigneeId);
-      const prodUserId = (!isSatKind && stageAssign?.userId) || order.assigneeId || (prodSession.isProduction ? prodSession.userId : null);
+      const stageLabor = getCardLaborInfoForStage(workingOrder, stageKey);
+      let amount = stageLabor.totalLabor || stageLabor.satelliteTotal || Number(workingOrder.satelliteCost || 0);
+
+      if (amount <= 0 && workingOrder.laborCostPerUnit && workingOrder.quantity) {
+        amount = Number(workingOrder.laborCostPerUnit) * Number(workingOrder.quantity);
+      }
+      if (amount <= 0 && workingOrder.laborCost) {
+        amount = Number(workingOrder.laborCost);
+      }
+
+      const stageAssign =
+        workingOrder.stageAssignees?.[stageKeyCompleted] ||
+        workingOrder.stageAssignees?.[`${stageKeyCompleted}__satellite`] ||
+        workingOrder.stageAssignees?.[`${stageKeyCompleted}__production`];
+
+      const isSatKind = stageAssign?.kind === "satellite" || Boolean(workingOrder.satelliteAssigneeId) || (Boolean(workingOrder.satelliteName) && !workingOrder.assigneeId);
+      const prodUserId = (!isSatKind && stageAssign?.userId) || workingOrder.assigneeId || (prodSession.isProduction ? prodSession.userId : null);
 
       if (isSatKind) {
         let satelliteId = order.satelliteWorkshopId;
@@ -701,17 +862,18 @@ export default function Production() {
       }
 
       // Avanzar tarjeta a la siguiente etapa y desasignar
-      const targetOrderId = order.orderId || (selectedOrder ? selectedOrder.id : null);
-      const currentStage = stageKey || order.stage || "design";
-      const visibleStages = stages.filter((s) => isStageRequiredForCard(s.key, order));
+      const targetOrderId = workingOrder.orderId || (selectedOrder ? selectedOrder.id : null);
+      const currentStage = stageKey || workingOrder.stage || "design";
+      const visibleStages = stages.filter((s) => isStageRequiredForCard(s.key, workingOrder));
       const nextStage = targetStageOverride || getNextStageKey(visibleStages, currentStage) || currentStage;
       const prevLabel = stages.find((s) => s.key === currentStage)?.label || currentStage;
       const nextLabel = stages.find((s) => s.key === nextStage)?.label || nextStage;
       const now = new Date().toISOString();
-      const frozenCosts = freezeStageCostsOnMove(order, currentStage, prevLabel);
+      const frozenCosts = freezeStageCostsOnMove(workingOrder, currentStage, prevLabel);
 
       const movedPatch = {
         ...frozenCosts,
+        stageAssignees: workingOrder.stageAssignees,
         stage: nextStage as ProductionOrder["stage"],
         daysInStage: 0,
         assignee: "Sin asignar",
@@ -719,28 +881,35 @@ export default function Production() {
         satelliteAssignee: "Sin asignar",
         satelliteAssigneeId: null as string | null,
         stageHistory: [
-          ...(order.stageHistory || []),
+          ...(workingOrder.stageHistory || []),
           { stage: nextStage as ProductionOrder["stage"], enteredAt: now },
         ],
       };
 
-      if (targetOrderId && order.id) {
+      if (targetOrderId && workingOrder.id) {
+        // 1) Persistir costos congelados + stageAssignees (auditoría de capa)
         commitOrderCards(targetOrderId, (cards) =>
-          cards.map((o) => (o.id !== order.id ? o : { ...o, ...movedPatch }))
+          cards.map((o) => (o.id !== workingOrder.id ? o : { ...o, ...movedPatch }))
         );
+        // 2) Avanzar etapa (BE exige que la capa saliente tuviera asignado)
+        await updateOrderStage(targetOrderId, nextStage);
+        // 3) Limpiar asignación viva de la nueva capa
         void updateKanbanAssignment(targetOrderId, {
-          card_id: order.id,
+          card_id: workingOrder.id,
           stage: nextStage,
           clear: true,
           assignee_id: null,
           kind: "both",
         });
-        await updateOrderStage(targetOrderId, nextStage);
       }
 
       toast({
-        title: "Trabajo terminado",
-        description: `Trabajo de «${prevLabel}» finalizado. El pedido avanzó a la fase de «${nextLabel}» (Sin asignar) y se sumaron ${new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(amount)} a POR PAGAR.`,
+        title: isDispatchStageKey(currentStage) ? "Enviado a despacho" : "Trabajo terminado",
+        description: isDispatchStageKey(currentStage)
+          ? `Capa «${prevLabel}» marcada. El pedido queda disponible en Despacho → Pedidos listos${
+              nextStage !== currentStage ? ` y avanzó a «${nextLabel}»` : ""
+            }.`
+          : `Trabajo de «${prevLabel}» finalizado. El pedido avanzó a la fase de «${nextLabel}» (Sin asignar) y se sumaron ${new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(amount)} a POR PAGAR.`,
       });
 
       await fetchOrders();
@@ -760,7 +929,7 @@ export default function Production() {
         if (me && typeof me === "object") {
           const session = mergeProductionUserFromApi(me);
           setProdSession(session);
-          setCapaActionsMap(getSessionCapaActionsMap(session));
+          setCapaActionsMap(applyKanbanCapaPermissionsFromApi(me, session));
           return;
         }
       } catch {
@@ -843,11 +1012,12 @@ export default function Production() {
   const canManageBoard = prodSession.unrestricted;
   const capaAllowed = (stageKey: string, action: Parameters<typeof capaHasAction>[2]) =>
     capaHasAction(capaActionsMap, stageKey, action, userStageKeys);
-  const canViewBoardOnStage = (stageKey: string) =>
-    canManageBoard ||
-    (userStageKeys.length > 0 &&
-      userStageKeys.includes(stageKey) &&
-      capaAllowed(stageKey, "ver_tablero"));
+  // Intersection: capas del usuario + «Ver tablero» del rol (matriz Kanban en Administración).
+  const canViewBoardOnStage = (stageKey: string) => {
+    if (canManageBoard) return true;
+    if (!userStageKeys.length || !userStageKeys.includes(stageKey)) return false;
+    return capaAllowed(stageKey, "ver_tablero");
+  };
   const canEditOnStage = (stageKey: string) =>
     canManageBoard ||
     (userStageKeys.includes(stageKey) &&
@@ -1166,44 +1336,75 @@ export default function Production() {
       setProdOrders(
         transformed.map((c) => reconcileOrphanLiveMaterials(c, labels))
       );
+      // No pisar el ref mientras el modal de domicilio está abierto (aún no persistido)
+      if (!roundtripOpenRef.current) {
+        const byOrder: Record<string, ProductionOrder[]> = {};
+        for (const c of transformed) {
+          if (!c.orderId) continue;
+          (byOrder[c.orderId] ||= []).push(
+            reconcileOrphanLiveMaterials(c, labels)
+          );
+        }
+        latestCardsByOrderRef.current = {
+          ...latestCardsByOrderRef.current,
+          ...byOrder,
+        };
+      }
     }
   }, [rawOrders]);
 
   const commitOrderCards = (
     orderId: string,
     updater: (cards: ProductionOrder[]) => ProductionOrder[]
-  ) => {
+  ): Promise<void> => {
+    const labels: Record<string, string> = {};
+    stages.forEach((s) => {
+      labels[s.key] = s.label;
+    });
+
+    const current =
+      latestCardsByOrderRef.current[orderId] ||
+      prodOrders.filter((c) => c.orderId === orderId);
+    const nextForOrder = updater(current);
+    const withLedger = prepareCardsWithLedger(nextForOrder, labels);
+    latestCardsByOrderRef.current[orderId] = withLedger;
+
     setProdOrders((prev) => {
       const others = prev.filter((c) => c.orderId !== orderId);
-      const current = prev.filter((c) => c.orderId === orderId);
-      const nextForOrder = updater(current);
-      const labels: Record<string, string> = {};
-      stages.forEach((s) => {
-        labels[s.key] = s.label;
-      });
-      const withLedger = prepareCardsWithLedger(nextForOrder, labels);
-      const previousBreakdown = normalizeRealCostBreakdown(
-        orderId,
-        rawOrders.find((o) => o.id === orderId)?.costo_real_desglose
-      );
-      void computeFullRealCostFromOrder(orderId, withLedger, {
-        estado: "in_production",
-        previousBreakdown,
-      }).then((breakdown) => {
-        void updateKanbanTarjetas(orderId, withLedger, breakdown).then((result) => {
-          if (result.errorMessage) {
-            toast({
-              variant: "destructive",
-              title: "No se pudo guardar en el servidor",
-              description: result.errorMessage,
-            });
-            return;
-          }
-          notifyOrderRealCostUpdated(orderId);
-        });
-      });
       return [...others, ...withLedger];
     });
+
+    const previousBreakdown = normalizeRealCostBreakdown(
+      orderId,
+      rawOrders.find((o) => o.id === orderId)?.costo_real_desglose
+    );
+
+    const runPersist = async () => {
+      const cardsToSave =
+        latestCardsByOrderRef.current[orderId] || withLedger;
+      const breakdown = await computeFullRealCostFromOrder(orderId, cardsToSave, {
+        estado: "in_production",
+        previousBreakdown,
+      });
+      const result = await updateKanbanTarjetas(orderId, cardsToSave, breakdown);
+      if (result.errorMessage) {
+        toast({
+          variant: "destructive",
+          title: "No se pudo guardar en el servidor",
+          description: result.errorMessage,
+        });
+        throw new Error(result.errorMessage);
+      }
+      notifyOrderRealCostUpdated(orderId);
+    };
+
+    const prevChain = persistChainRef.current[orderId] || Promise.resolve();
+    const nextChain = prevChain.then(runPersist, runPersist);
+    persistChainRef.current[orderId] = nextChain.then(
+      () => undefined,
+      () => undefined
+    );
+    return nextChain;
   };
 
   const activeOrders = rawOrders.filter((o) => {
@@ -1285,6 +1486,19 @@ export default function Production() {
       });
       return;
     }
+    if (card && !cardHasAssigneeForStage(card, card.stage)) {
+      e.preventDefault();
+      toast({
+        variant: "destructive",
+        title: "Asignación requerida",
+        description:
+          "Asigna a alguien en esta fase antes de arrastrar la tarjeta. Sin responsable no se guarda el costo real.",
+      });
+      if (canManageBoard && card) {
+        openAssignModal(card, card.stage);
+      }
+      return;
+    }
     setDragType("card");
     setDraggedCardId(id);
     e.dataTransfer.effectAllowed = "move";
@@ -1309,6 +1523,19 @@ export default function Production() {
           ? "Solo puedes mover tarjetas asignadas a ti."
           : "Solo puedes mover tarjetas de tus capas asignadas.",
       });
+      return;
+    }
+
+    if (!cardHasAssigneeForStage(card, previousStage)) {
+      toast({
+        variant: "destructive",
+        title: "Asignación requerida",
+        description:
+          "Debes asignar a alguien en esta fase antes de mover la tarjeta. Sin responsable no se guarda el costo real de la orden.",
+      });
+      if (canManageBoard) {
+        openAssignModal(card, previousStage);
+      }
       return;
     }
 
@@ -1376,6 +1603,18 @@ export default function Production() {
     const now = new Date().toISOString();
 
     try {
+      if (!cardHasAssigneeForStage(card, previousStage)) {
+        toast({
+          variant: "destructive",
+          title: "Asignación requerida",
+          description:
+            "Debes asignar a alguien en esta fase antes de mover la tarjeta. Sin responsable no se guarda el costo real.",
+        });
+        if (canManageBoard) openAssignModal(card, previousStage);
+        setPendingCardMove(null);
+        return;
+      }
+
       // Congela costos de la capa saliente (atribuidos al usuario actual) y limpia campos vivos
       const prevLabel =
         stages.find((s) => s.key === previousStage)?.label || previousStage;
@@ -1677,12 +1916,38 @@ export default function Production() {
               [stageKey]: { userId, name: userName, kind: "production" },
             },
           };
+    if (kind === "satellite") {
+      // Persistencia única al confirmar domicilio ida/vuelta
+      roundtripOpenRef.current = true;
+      setProdOrders((prev) => {
+        const others = prev.filter((c) => c.orderId !== card.orderId);
+        const current = prev.filter((c) => c.orderId === card.orderId);
+        const next = current.map((c) =>
+          c.id === card.id ? { ...c, ...patch } : c
+        );
+        latestCardsByOrderRef.current[card.orderId!] = next;
+        return [...others, ...next];
+      });
+      setAssignOpenFor(null);
+      toast({
+        title: "Satélite asignado",
+        description: `${userName} quedó a cargo. Indica el costo del domicilio ida y vuelta.`,
+      });
+      openSatelliteRoundtripModal(
+        { ...card, ...patch } as ProductionOrder,
+        userId,
+        userName,
+        stageKey
+      );
+      return;
+    }
+
     commitOrderCards(card.orderId, (cards) =>
       cards.map((c) => (c.id === card.id ? { ...c, ...patch } : c))
     );
     setAssignOpenFor(null);
     toast({
-      title: kind === "satellite" ? "Satélite asignado" : "Producción asignada",
+      title: "Producción asignada",
       description: `${userName} quedó a cargo de esta tarjeta en la capa actual.`,
     });
   };
@@ -2386,7 +2651,7 @@ export default function Production() {
                     const canSetLabor = canOperate || canManageBoard;
                     const stageUsers = usersForStage(order.stage);
                     const stageSatUsers = satelliteUsersForStage(order.stage);
-                    const needsAssign = !order.assigneeId && !order.satelliteAssigneeId;
+                    const needsAssign = !cardHasAssigneeForStage(order, stage.key);
                     const hasProductionAssignee = Boolean(order.assigneeId);
                     const hasSatelliteAssignee = Boolean(order.satelliteAssigneeId);
                     const stageLabor = getCardLaborInfoForStage(order, stage.key);
@@ -2398,11 +2663,11 @@ export default function Production() {
                     return (
                     <div
                       key={order.id}
-                      draggable={canOperate}
+                      draggable={canOperate && !needsAssign}
                     onDragStart={(e) => handleCardDragStart(e, order.id)}
                     className={cn(
                       "bg-card rounded-lg border border-border p-3 hover:shadow-md transition-shadow relative group/card",
-                      canOperate ? "cursor-grab" : "cursor-default opacity-90",
+                      canOperate && !needsAssign ? "cursor-grab" : "cursor-default opacity-90",
                       needsAssign && canManageBoard && "ring-1 ring-amber-300/80"
                     )}
                   >
@@ -2610,15 +2875,34 @@ export default function Production() {
                           <Button
                             type="button"
                             size="sm"
+                            disabled={needsAssign}
                             onClick={(e) => {
                               e.stopPropagation();
+                              const isDispatchBoard = isDispatchStageKey(stage.key);
+                              if (needsAssign) {
+                                toast({
+                                  variant: "destructive",
+                                  title: "Asignación requerida",
+                                  description: isDispatchBoard
+                                    ? "Asigna a alguien en esta fase antes de enviar a despacho. Sin responsable no se guarda el costo real."
+                                    : "Asigna a alguien en esta fase antes de marcar Terminado. Sin responsable no se guarda el costo real.",
+                                });
+                                if (canManageBoard) openAssignModal(order, stage.key);
+                                return;
+                              }
                               handleMarkCardTerminado(order, stage.key);
                             }}
-                            className="h-6 px-2 text-[10px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white gap-1 shrink-0 rounded shadow-xs"
-                            title="Marcar trabajo como terminado en esta capa para avanzar el pedido y sumar la mano de obra a por pagar"
+                            className="h-6 px-2 text-[10px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white gap-1 shrink-0 rounded shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                            title={
+                              needsAssign
+                                ? "Asigna a alguien en esta fase antes de continuar"
+                                : isDispatchStageKey(stage.key)
+                                  ? "Marcar esta capa como lista y pasar el pedido a Despacho → Pedidos listos"
+                                  : "Marcar trabajo como terminado en esta capa para avanzar el pedido y sumar la mano de obra a por pagar"
+                            }
                           >
                             <CheckCircle2 className="h-3 w-3" />
-                            Terminado
+                            {isDispatchStageKey(stage.key) ? "A despacho" : "Terminado"}
                           </Button>
                         ) : null}
                       </div>
@@ -2691,6 +2975,22 @@ export default function Production() {
         stageKey={laborDialog.stageKey}
         stageLabel={laborDialog.stageLabel}
         onSave={saveLaborCostForStage}
+      />
+
+      <SatelliteRoundtripCostDialog
+        open={roundtripDialog.open}
+        satelliteName={roundtripDialog.satelliteName}
+        orderShortId={
+          roundtripDialog.card?.orderId
+            ? `ORD-${String(roundtripDialog.card.orderId).slice(0, 3)}`
+            : undefined
+        }
+        customerName={roundtripDialog.card?.customerName}
+        stageLabel={roundtripDialog.stageLabel}
+        saving={savingRoundtrip}
+        onConfirm={async (payload) => {
+          await saveSatelliteRoundtripCost(payload.amount, payload.registeredAt);
+        }}
       />
 
       <KanbanStageSummaryDialog
