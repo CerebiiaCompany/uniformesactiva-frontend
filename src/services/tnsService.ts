@@ -921,25 +921,51 @@ export async function getTNSInventoryMovementHistory(
 
 /**
  * Costo de materiales de una orden valorizado con precios unitarios TNS.
+ * Deduplica peticiones en vuelo (misma orden) para no bloquear UI dos veces.
  */
+const tnsOrderRealMaterialCostInflight = new Map<
+  string,
+  Promise<TNSOrderRealMaterialCostResponse>
+>();
+
 export async function getTNSOrderRealMaterialCost(
   ordenId: string
 ): Promise<TNSOrderRealMaterialCostResponse> {
-  const url = endpoints.inventory.tnsOrderRealMaterialCost(ordenId);
-  const res = await http<any>(url, { skipAuthRedirect: true });
+  const key = String(ordenId || "").trim();
+  if (!key) {
+    return {
+      status: true,
+      orden_id: ordenId,
+      materials_total: 0,
+      materials_lines: [],
+    };
+  }
 
-  if (Array.isArray(res?.materials_lines)) {
-    return res as TNSOrderRealMaterialCostResponse;
-  }
-  if (Array.isArray(res?.data?.materials_lines)) {
-    return res.data as TNSOrderRealMaterialCostResponse;
-  }
-  return {
-    status: true,
-    orden_id: ordenId,
-    materials_total: 0,
-    materials_lines: [],
-  };
+  const pending = tnsOrderRealMaterialCostInflight.get(key);
+  if (pending) return pending;
+
+  const request = (async () => {
+    const url = endpoints.inventory.tnsOrderRealMaterialCost(key);
+    const res = await http<any>(url, { skipAuthRedirect: true });
+
+    if (Array.isArray(res?.materials_lines)) {
+      return res as TNSOrderRealMaterialCostResponse;
+    }
+    if (Array.isArray(res?.data?.materials_lines)) {
+      return res.data as TNSOrderRealMaterialCostResponse;
+    }
+    return {
+      status: true,
+      orden_id: key,
+      materials_total: 0,
+      materials_lines: [],
+    };
+  })().finally(() => {
+    tnsOrderRealMaterialCostInflight.delete(key);
+  });
+
+  tnsOrderRealMaterialCostInflight.set(key, request);
+  return request;
 }
 
 /**

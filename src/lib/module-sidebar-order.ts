@@ -11,6 +11,7 @@ export const MODULE_SIDEBAR_ORDER = [
   "production",
   "inventory",
   "satellites",
+  "dispatch",
   "products",
   "billing",
   "reports",

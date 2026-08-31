@@ -27,6 +27,8 @@ export type RealCostLine = {
   materialSource?: "delivered" | "kanban_additional";
   /** Código TNS exacto (prod_Dist_Cod) para deduplicar y consumo de inventario */
   materialCode?: string;
+  /** Momento del registro (p. ej. domicilio ida/vuelta) */
+  updatedAt?: string;
 };
 
 /** Etiqueta de material sin repetir código cuando el nombre ya lo incluye. */
@@ -219,7 +221,7 @@ export function sanitizeCostLedger(ledger: KanbanCostEntry[]): KanbanCostEntry[]
       .map((e) => `${String(e.label).trim()}|${money(e.amount)}`)
   );
 
-  return ledger.filter((e) => {
+  const filtered = ledger.filter((e) => {
     const hasUser = Boolean(e.userId);
     if (hasUser) return true;
 
@@ -245,6 +247,21 @@ export function sanitizeCostLedger(ledger: KanbanCostEntry[]): KanbanCostEntry[]
 
     return false;
   });
+
+  // Un solo domicilio ida/vuelta por fingerprint o por satélite+monto
+  const seenShip = new Set<string>();
+  return filtered.filter((e) => {
+    if (e.category !== "shipping") return true;
+    const fp = String(e.fingerprint || "");
+    const key = fp.startsWith("shipping:roundtrip:")
+      ? fp
+      : `ship|${(e.userId || "").trim()}|${money(e.amount)}|${String(e.label || "")
+          .toLowerCase()
+          .includes("ida")}`;
+    if (seenShip.has(key)) return false;
+    seenShip.add(key);
+    return true;
+  });
 }
 
 function sanitizeLines(lines: RealCostLine[]): RealCostLine[] {
@@ -258,7 +275,7 @@ function sanitizeLines(lines: RealCostLine[]): RealCostLine[] {
       })
   );
 
-  return lines.filter((l) => {
+  const filtered = lines.filter((l) => {
     if (l.userId) return true;
     if (l.category === "satellite" || l.actorKind === "provider") return true;
     // Materiales del costeo / entregados siempre permanecen en el desglose
@@ -284,6 +301,32 @@ function sanitizeLines(lines: RealCostLine[]): RealCostLine[] {
     }
     return true;
   });
+
+  // Domicilio ida/vuelta: un solo registro por contraparte+monto (no sumar por cada capa)
+  return dedupeShippingLines(filtered);
+}
+
+/** Evita contar dos veces el mismo domicilio ida y vuelta. */
+function dedupeShippingLines(lines: RealCostLine[]): RealCostLine[] {
+  const seenRoundtrip = new Set<string>();
+  const out: RealCostLine[] = [];
+  for (const line of lines) {
+    if (line.category !== "shipping") {
+      out.push(line);
+      continue;
+    }
+    const label = String(line.label || "").toLowerCase();
+    const isRoundTrip = label.includes("ida y vuelta") || label.includes("domicilio");
+    if (!isRoundTrip) {
+      out.push(line);
+      continue;
+    }
+    const key = `${(line.userName || "").trim().toLowerCase()}|${money(line.amount)}`;
+    if (seenRoundtrip.has(key)) continue;
+    seenRoundtrip.add(key);
+    out.push(line);
+  }
+  return out;
 }
 
 /** Construye entradas de costo de la capa actual a partir de los campos vivos de la tarjeta. */
@@ -377,21 +420,38 @@ export function buildStageCostEntries(
       });
     }
 
-    const ship = Number(card.shippingCost);
+    const meta = card.shippingMeta;
+    const ship = Number(
+      meta?.kind === "satellite_roundtrip"
+        ? meta.amount
+        : meta?.amount ?? card.shippingCost
+    );
     if (Number.isFinite(ship) && ship > 0) {
-      const fingerprint = `shipping:${stage}:${uid}`;
+      const isRoundTrip =
+        meta?.kind === "satellite_roundtrip" || Boolean(card.satelliteAssigneeId);
+      const satName =
+        meta?.satelliteName || card.satelliteAssignee || card.satelliteName || "Satélite";
+      const satUid = String(meta?.satelliteUserId || actor.userId || "sat");
+      // Fingerprint estable (sin etapa): el valor ida+vuelta es único por tarjeta, no por capa
+      const fingerprint = isRoundTrip
+        ? `shipping:roundtrip:${card.id || "card"}:${satUid}`
+        : `shipping:${stage}:${uid}`;
       entries.push({
         id: entryId(fingerprint),
         category: "shipping",
-        label: card.items?.trim() || "Envío",
+        label: isRoundTrip
+          ? `Domicilio ida y vuelta · ${satName}`
+          : card.items?.trim() || "Envío",
         amount: money(ship),
         stage,
-        stageLabel: labelStage,
-        userId: actor.userId,
-        userName: actor.userName,
-        actorKind: actor.actorKind,
+        stageLabel: isRoundTrip
+          ? meta?.stageLabel || "Domicilio ida y vuelta"
+          : labelStage,
+        userId: meta?.satelliteUserId || actor.userId,
+        userName: isRoundTrip ? satName : actor.userName,
+        actorKind: isRoundTrip ? "satellite" : actor.actorKind,
         fingerprint,
-        updatedAt: now,
+        updatedAt: meta?.registeredAt || now,
       });
     }
   }
@@ -433,13 +493,34 @@ export function upsertStageCostLedger(
 ): KanbanCostEntry[] {
   const next = buildStageCostEntries(card, stage, stageLabel);
   const nextFp = new Set(next.map((e) => e.fingerprint));
+  const nextHasRoundtrip = next.some(
+    (n) =>
+      n.category === "shipping" &&
+      String(n.fingerprint || "").startsWith("shipping:roundtrip:")
+  );
   const currentActor = actorKey(workingAttribution(card));
   const kept = (card.costLedger || []).filter((e) => {
     if (nextFp.has(e.fingerprint)) return false;
+    // Si hay domicilio ida/vuelta vivo, quitar copias viejas (cualquier etapa/fingerprint)
+    if (
+      nextHasRoundtrip &&
+      e.category === "shipping" &&
+      (/ida y vuelta/i.test(String(e.label || "")) ||
+        String(e.fingerprint || "").startsWith("shipping:roundtrip:") ||
+        String(e.fingerprint || "").startsWith("shipping:"))
+    ) {
+      return false;
+    }
     const eUser = (e.userId || "na").trim() || "na";
     // Limpia fantasmas sin usuario de la capa actual
     if (e.stage === stage && eUser === "na") return false;
-    if (e.stage === stage && eUser === currentActor) return false;
+    if (e.stage === stage && eUser === currentActor) {
+      if (e.category === "shipping") {
+        const nextHasShipping = next.some((n) => n.category === "shipping");
+        if (!nextHasShipping) return true;
+      }
+      return false;
+    }
     return true;
   });
   return sanitizeCostLedger([...kept, ...next]);
@@ -462,12 +543,14 @@ export type FrozenWorkingCosts = Pick<
   | "satelliteName"
   | "satelliteCost"
   | "shippingCost"
+  | "shippingMeta"
 >;
 
 /**
  * Congela costos vivos del responsable actual en el ledger y deja
  * materiales / MO en blanco para el siguiente usuario (sin borrar el historial).
  * Pasa requestedMaterials de la capa saliente a materialsDeducted (histórico inmutable).
+ * El domicilio ida/vuelta (shipping) se conserva: no es costo “vivo” del asignado.
  */
 export function freezeWorkingCostsForNextAssignee(
   card: ProductionOrder,
@@ -513,7 +596,9 @@ export function freezeWorkingCostsForNextAssignee(
     satelliteId: card.satelliteId,
     satelliteName: card.satelliteName,
     satelliteCost: null,
-    shippingCost: null,
+    // Conservar domicilio satélite (modal ida/vuelta)
+    shippingCost: card.shippingCost ?? card.shippingMeta?.amount ?? null,
+    shippingMeta: card.shippingMeta ?? null,
   };
 }
 
@@ -537,6 +622,7 @@ function lineFromEntry(entry: KanbanCostEntry): RealCostLine {
     userName: entry.userName,
     actorKind: entry.actorKind,
     category: entry.category,
+    updatedAt: entry.updatedAt,
   };
 }
 
@@ -654,17 +740,29 @@ function legacyLinesFromCard(card: ProductionOrder): {
       });
     }
 
-    const ship = Number(card.shippingCost);
+    const meta = card.shippingMeta;
+    const ship = Number(
+      meta?.kind === "satellite_roundtrip"
+        ? meta.amount
+        : meta?.amount ?? card.shippingCost
+    );
     if (Number.isFinite(ship) && ship > 0) {
+      const isRoundTrip =
+        meta?.kind === "satellite_roundtrip" || Boolean(card.satelliteAssigneeId);
+      const satName =
+        meta?.satelliteName || card.satelliteAssignee || card.satelliteName || "Satélite";
       shippingLines.push({
-        label: card.items?.trim() || "Envío",
+        label: isRoundTrip
+          ? `Domicilio ida y vuelta · ${satName}`
+          : card.items?.trim() || "Envío",
         amount: money(ship),
         stage: card.stage,
         stageLabel: card.stage,
-        userId: actor.userId,
-        userName: actor.userName,
-        actorKind: actor.actorKind,
+        userId: meta?.satelliteUserId || actor.userId,
+        userName: isRoundTrip ? satName : actor.userName,
+        actorKind: isRoundTrip ? "satellite" : actor.actorKind,
         category: "shipping",
+        updatedAt: meta?.registeredAt,
       });
     }
   }
@@ -819,7 +917,9 @@ export function computeRealCostFromCards(
       cleanedCard.laborCostEnabled ||
       cleanedCard.moldEnabled ||
       (cleanedCard.satelliteCost != null && Number(cleanedCard.satelliteCost) > 0) ||
-      (cleanedCard.shippingCost != null && Number(cleanedCard.shippingCost) > 0)
+      (cleanedCard.shippingCost != null && Number(cleanedCard.shippingCost) > 0) ||
+      (cleanedCard.shippingMeta != null &&
+        Number(cleanedCard.shippingMeta.amount) > 0)
         ? upsertStageCostLedger(cleanedCard, cleanedCard.stage)
         : cleanedCard.costLedger || [];
 
@@ -1125,22 +1225,33 @@ export async function computeOrderEstimatedLaborCost(
   if (!items?.length) return 0;
 
   const summaryCache = new Map<string, Awaited<ReturnType<typeof fetchVariantCostSummary>>>();
-  let total = 0;
+  const uniqueVariantIds = [
+    ...new Set(
+      items
+        .map((item) => item.subproducto_id?.trim())
+        .filter((id): id is string => Boolean(id))
+    ),
+  ];
 
+  await Promise.all(
+    uniqueVariantIds.map(async (variantId) => {
+      try {
+        const summary = await fetchVariantCostSummary(variantId);
+        summaryCache.set(variantId, summary);
+      } catch {
+        /* variante sin costeo */
+      }
+    })
+  );
+
+  let total = 0;
   for (const item of items) {
     const variantId = item.subproducto_id?.trim();
     const qty = Number(item.cantidad) || 0;
     if (!variantId || qty <= 0) continue;
 
-    let summary = summaryCache.get(variantId);
-    if (!summary) {
-      try {
-        summary = await fetchVariantCostSummary(variantId);
-        summaryCache.set(variantId, summary);
-      } catch {
-        continue;
-      }
-    }
+    const summary = summaryCache.get(variantId);
+    if (!summary) continue;
 
     const sizeRow = item.talla_id
       ? summary.sizes.find((s) => s.talla_id === item.talla_id)
@@ -1152,9 +1263,9 @@ export async function computeOrderEstimatedLaborCost(
   return money(total);
 }
 
-/** Costo real operativo principal: materiales (entregados + adicionales) + MO Kanban. */
+/** Costo real acumulado: materiales + MO + envíos/domicilios. */
 export function computeRealAccumulatedCost(breakdown: OrderRealCostBreakdown): number {
-  return money(breakdown.materials + breakdown.labor);
+  return money(breakdown.materials + breakdown.labor + breakdown.shipping);
 }
 
 /**
@@ -1352,8 +1463,31 @@ export function getOrderRealCostFromOrder(order: {
     );
   }
 
-  // Con tarjetas: MO/satélites del Kanban + materiales entregados persistidos + adicionales
-  return composeMaterialBreakdown(operational, persistedDelivered, additional);
+  // Con tarjetas: MO/envíos del Kanban + materiales entregados persistidos + adicionales
+  const shippingLines =
+    operational.shippingLines?.length > 0
+      ? operational.shippingLines
+      : persisted?.shippingLines || [];
+  const shipping = money(
+    shippingLines.length
+      ? shippingLines.reduce((s, l) => s + (Number(l.amount) || 0), 0)
+      : Math.max(operational.shipping || 0, persisted?.shipping || 0)
+  );
+
+  return composeMaterialBreakdown(
+    {
+      ...operational,
+      shipping,
+      shippingLines,
+      // Preferir satélites del Kanban; si no hay, del persistido (card eliminada del UI)
+      satellites: operational.satellites || persisted?.satellites || 0,
+      satelliteLines: operational.satelliteLines?.length
+        ? operational.satelliteLines
+        : persisted?.satelliteLines || [],
+    },
+    persistedDelivered,
+    additional
+  );
 }
 
 export function emptyRealCost(orderId: string): OrderRealCostBreakdown {

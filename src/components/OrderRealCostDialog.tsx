@@ -88,28 +88,6 @@ function HandsIcon({ className }: { className?: string }) {
   );
 }
 
-function SewingMachineIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
-      <path d="M5 9h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2z" />
-      <path d="M16 9V6.5a1.5 1.5 0 0 1 1.5-1.5H19" />
-      <circle cx="9.5" cy="14" r="1.25" />
-      <path d="M9.5 15.25V18" />
-      <path d="M7 6h2.5" />
-      <path d="M19 5v2" />
-    </svg>
-  );
-}
-
 /** Paleta alineada al diseño: rojo marca + pasteles Kanban (Producción). */
 const SUMMARY_CARD_THEMES: Record<string, SummaryCardTheme> = {
   "Materiales entregados": {
@@ -129,15 +107,6 @@ const SUMMARY_CARD_THEMES: Record<string, SummaryCardTheme> = {
     label: "text-[#4F6B4A]",
     value: "text-[#3D5638]",
     iconWrap: "bg-[#F4F7F3] text-[#4F6B4A] border border-[#A8BFA3]/40",
-  },
-  Satélites: {
-    icon: SewingMachineIcon,
-    panel: "bg-[#F6F4F9]/95",
-    border: "border-[#B7A8C9]/45",
-    accent: "bg-[#B7A8C9]",
-    label: "text-[#6B5A82]",
-    value: "text-[#5A4A72]",
-    iconWrap: "bg-[#F6F4F9] text-[#6B5A82] border border-[#B7A8C9]/40",
   },
   "Envíos y domicilios": {
     icon: Truck,
@@ -163,38 +132,40 @@ function SummaryMetricCard({
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-xl border px-3.5 py-3 flex items-center gap-2.5 shadow-sm bg-card",
-        "motion-safe:transition-all motion-safe:duration-200 motion-safe:ease-out motion-safe:hover:scale-[1.04] hover:shadow-md hover:z-10",
+        "relative overflow-hidden rounded-2xl border px-4 py-4 shadow-sm bg-card",
+        "motion-safe:transition-all motion-safe:duration-200 motion-safe:ease-out motion-safe:hover:scale-[1.02] hover:shadow-md hover:z-10",
         theme?.panel,
         theme?.border,
       )}
     >
       <div className={cn("absolute left-0 top-0 bottom-0 w-1", theme?.accent ?? "bg-muted")} />
-      <div
-        className={cn(
-          "h-8 w-8 rounded-lg flex items-center justify-center shrink-0 ml-0.5",
-          theme?.iconWrap ?? "bg-muted text-muted-foreground"
-        )}
-      >
-        <Icon className="h-4 w-4" />
-      </div>
-      <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
-        <span
+      <div className="pl-1.5 space-y-3">
+        <div className="flex items-start gap-3">
+          <div
+            className={cn(
+              "h-9 w-9 rounded-xl flex items-center justify-center shrink-0",
+              theme?.iconWrap ?? "bg-muted text-muted-foreground"
+            )}
+          >
+            <Icon className="h-4 w-4" />
+          </div>
+          <p
+            className={cn(
+              "text-[13px] font-medium leading-snug pt-1.5",
+              theme?.label ?? "text-foreground"
+            )}
+          >
+            {title}
+          </p>
+        </div>
+        <p
           className={cn(
-            "text-sm font-medium leading-snug",
-            theme?.label ?? "text-foreground"
-          )}
-        >
-          {title}
-        </span>
-        <span
-          className={cn(
-            "tabular-nums shrink-0 text-sm font-bold",
+            "tabular-nums text-xl font-bold tracking-tight pl-0.5",
             theme?.value ?? "text-foreground"
           )}
         >
           {money(amount)}
-        </span>
+        </p>
       </div>
     </div>
   );
@@ -514,9 +485,13 @@ export function OrderRealCostDialog({
   const summaryCards = [
     { title: "Materiales entregados", amount: materialsTotal },
     { title: "Mano de obra", amount: data.labor },
-    { title: "Satélites", amount: data.satellites },
     { title: "Envíos y domicilios", amount: data.shipping },
   ];
+
+  const shippingLines = useMemo(
+    () => (data.shippingLines || []).filter((l) => (Number(l.amount) || 0) > 0),
+    [data.shippingLines]
+  );
 
   const deliveredSubtitle =
     deliveredView === "pedido"
@@ -590,7 +565,7 @@ export function OrderRealCostDialog({
         </div>
 
         <div className="px-5 sm:px-6 pb-6 pt-4 space-y-5">
-          <div className="grid grid-cols-2 gap-3 p-1">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-1">
             {summaryCards.map((card) => (
               <SummaryMetricCard key={card.title} title={card.title} amount={card.amount} />
             ))}
@@ -619,8 +594,8 @@ export function OrderRealCostDialog({
                 </span>
               </div>
               <p className="text-[11px] text-muted-foreground leading-relaxed">
-                Suma materiales entregados (incluye adicionales del Kanban) y mano de obra
-                registrada directamente por el usuario de producción o satélite en el tablero.
+                Suma materiales entregados (incluye adicionales del Kanban), mano de obra
+                registrada en el tablero y envíos/domicilios (ida y vuelta a satélite).
               </p>
             </div>
             <div className="flex items-center justify-between gap-3 text-sm border-t pt-3">
@@ -697,6 +672,39 @@ export function OrderRealCostDialog({
             ) : (
               <p className="text-sm text-muted-foreground py-4 text-center">
                 Sin mano de obra registrada en el Kanban.
+              </p>
+            )}
+          </DetailCard>
+
+          <DetailCard
+            title="Envíos y domicilios"
+            subtitle="Costo de domicilio ida y vuelta al asignar satélite y otros envíos registrados"
+          >
+            {shippingLines.length > 0 ? (
+              <div className="divide-y">
+                {shippingLines.map((line, idx) => (
+                  <div
+                    key={`${line.label}-${line.userId}-${idx}`}
+                    className="flex items-center justify-between gap-3 px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{line.label}</p>
+                      <p className="text-[11px] text-muted-foreground truncate">
+                        {[line.userName, line.stageLabel || line.stage]
+                          .filter(Boolean)
+                          .join(" · ") || "—"}
+                      </p>
+                    </div>
+                    <span className="text-sm font-semibold tabular-nums shrink-0">
+                      {money(line.amount)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground py-4 text-center">
+                Sin domicilios ni envíos registrados. Al asignar un satélite, el valor ida y
+                vuelta aparecerá aquí.
               </p>
             )}
           </DetailCard>
