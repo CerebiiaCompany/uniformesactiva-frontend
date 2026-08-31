@@ -10,6 +10,7 @@ import {
   BarChart3,
   Package,
   Satellite,
+  Truck,
   Globe,
   Scissors,
   Settings,
@@ -70,6 +71,8 @@ const MODULE_MAPPING: Record<string, string> = {
   production: "Fábrica",
   inventory: "Inventario",
   satellites: "Satélites",
+  dispatch: "Despacho",
+  despacho: "Despacho",
   costs: "Costos",
   billing: "Costos",
   reports: "Reportes",
@@ -93,6 +96,7 @@ const operacionItems = [
   { title: "Fábrica", url: "/production", icon: Factory },
   { title: "Inventario", url: "/inventory", icon: Package },
   { title: "Satélites", url: "/satellites", icon: Satellite },
+  { title: "Despacho", url: "/despacho", icon: Truck },
   { title: "Líneas", url: "/lines", icon: Layers },
   { title: "Costos", url: "/costing", icon: DollarSign },
 ];
@@ -228,6 +232,9 @@ export function AppSidebar() {
       if (normalizedModuleKey === "production") normalizedModuleKey = "factory";
       if (normalizedModuleKey === "billing") normalizedModuleKey = "costs";
       if (normalizedModuleKey === "users") normalizedModuleKey = "administration";
+      if (normalizedModuleKey === "dispatch" || normalizedModuleKey === "despacho") {
+        normalizedModuleKey = "dispatch";
+      }
       if (normalizedModuleKey === "sales" || normalizedModuleKey === "ventas") normalizedModuleKey = "sales";
 
       const mappedTitle =

@@ -48,13 +48,16 @@ export function OrderStatusPanel({ order, open, onOpenChange, onStatusChange }: 
 
     setLoading(true);
     const success = await updateOrderStatus(order.id, nextStatus, observacion || null);
+    // Liberar el botón de inmediato (el refresco de lista/TNS va en background)
+    setLoading(false);
 
     if (success) {
       setObservacion("");
       setIsConfirming(false);
-      onStatusChange();
       onOpenChange(false);
       toast({ title: "Estado actualizado", description: "La orden avanzó correctamente." });
+      // No bloquear el panel: listado y costo real se refrescan aparte
+      void Promise.resolve().then(() => onStatusChange());
     } else {
       toast({
         title: "Error al cambiar el estado",
@@ -62,7 +65,6 @@ export function OrderStatusPanel({ order, open, onOpenChange, onStatusChange }: 
         variant: "destructive",
       });
     }
-    setLoading(false);
   };
 
   return (
