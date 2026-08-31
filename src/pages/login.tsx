@@ -9,6 +9,10 @@ import { getApiBaseUrl } from "@/lib/api-base";
 import { resetAuthRedirectGuard } from "@/lib/auth-redirect";
 import { clearAuthSession, getStoredAccessToken, isAccessTokenExpired } from "@/lib/auth-session";
 import { cn } from "@/lib/utils";
+import {
+    applyKanbanCapaPermissionsFromApi,
+    mergeProductionUserFromApi,
+} from "@/lib/production-capa-permissions";
 
 const BASE_URL = getApiBaseUrl();
 
@@ -156,6 +160,8 @@ export default function Login() {
                     };
 
                     localStorage.setItem("user", JSON.stringify(cleanUser));
+                    const session = mergeProductionUserFromApi(userData);
+                    applyKanbanCapaPermissionsFromApi(userData, session);
                     window.dispatchEvent(new Event("local-session-update"));
                 }
 

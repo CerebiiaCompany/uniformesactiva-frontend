@@ -125,6 +125,39 @@ export function saveCapaActionsForRole(
   writeRoleStore(store);
 }
 
+/**
+ * Aplica la matriz Kanban que viene de /users/me/ (o permisos de rol)
+ * para que operadores Satélite/Producción no dependan del localStorage del admin.
+ */
+export function applyKanbanCapaPermissionsFromApi(
+  me: Record<string, unknown>,
+  session?: ProductionSession
+): CapaActionsMap {
+  const byRole = me.kanban_capa_permissions_by_role;
+  if (byRole && typeof byRole === "object" && !Array.isArray(byRole)) {
+    for (const [roleName, map] of Object.entries(byRole as Record<string, unknown>)) {
+      if (map && typeof map === "object" && !Array.isArray(map)) {
+        saveCapaActionsForRole(roleName, map as CapaActionsMap);
+      }
+    }
+  }
+
+  const mergedRaw = me.capa_actions ?? me.kanban_capa_permissions;
+  const merged: CapaActionsMap =
+    mergedRaw && typeof mergedRaw === "object" && !Array.isArray(mergedRaw)
+      ? (mergedRaw as CapaActionsMap)
+      : {};
+
+  const sess = session || readProductionSession();
+  if (Object.keys(merged).length > 0) {
+    if (sess.isSatellite) saveCapaActionsForRole("Satélite", merged);
+    if (sess.isProduction) saveCapaActionsForRole("Producción", merged);
+    if (sess.roles.includes("Diseño")) saveCapaActionsForRole("Diseño", merged);
+  }
+
+  return getSessionCapaActionsMap(sess);
+}
+
 export function saveProductionCapaActions(map: CapaActionsMap) {
   saveCapaActionsForRole("Producción", map);
 }
@@ -204,7 +237,11 @@ export function getCapaActionsForStage(
     return Array.isArray(configured) ? ([...configured] as CapaActionCode[]) : [];
   }
   if (!map || Object.keys(map).length === 0) {
-    return [...DEFAULT_CAPA_ACTIONS];
+    // Sin matriz de rol cargada: las capas asignadas al usuario son visibles.
+    if (!adminAssignedStageKeys || adminAssignedStageKeys.includes(stageKey)) {
+      return [...DEFAULT_CAPA_ACTIONS];
+    }
+    return [];
   }
   if (adminAssignedStageKeys?.includes(stageKey)) {
     return [...DEFAULT_CAPA_ACTIONS];

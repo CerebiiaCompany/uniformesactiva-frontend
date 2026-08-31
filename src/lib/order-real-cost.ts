@@ -198,6 +198,14 @@ function isAttributed(attr: Attribution): boolean {
   return Boolean(attr.userId && attr.actorKind !== "unassigned");
 }
 
+/** True si la tarjeta tiene producción o satélite asignado en la capa (vivo o en stageAssignees). */
+export function cardHasAssigneeForStage(
+  card: ProductionOrder,
+  stageKey?: string
+): boolean {
+  return isAttributed(workingAttribution(card, stageKey || card.stage));
+}
+
 /**
  * Elimina costos fantasma «Sin asignar» (p. ej. materiales que se re-escribieron
  * al cambiar de capa antes de reasignar responsable).
