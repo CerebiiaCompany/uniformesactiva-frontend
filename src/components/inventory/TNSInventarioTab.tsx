@@ -61,6 +61,7 @@ import {
   clasificarArticuloTNS,
   getTNSItemUnit,
   getTNSMaterialComprasHistorial,
+  getTNSMaterialNotasInventarioHistorial,
   getTNSMaterialVentasHistorial,
   getTNSOrderConsumption,
   getTNSInventoryMovementHistory,
@@ -75,6 +76,7 @@ import type {
   TNSProveedorOferta,
   TNSCompraItem,
   TNSMaterialComprasHistorialResponse,
+  TNSMaterialNotasInventarioResponse,
   TNSOrderConsumptionResponse,
   TNSVentaItem,
   TNSMaterialVentasHistorialResponse,
@@ -736,12 +738,15 @@ export function TNSInventarioTab() {
 
   const [movimientosTipoFilter, setMovimientosTipoFilter] = useState<"TODOS" | "ENTRADA" | "SALIDA">("TODOS");
   const [movimientosSearch, setMovimientosSearch] = useState<string>("");
-  const [movimientosFechaDesde, setMovimientosFechaDesde] = useState<string>(getTodayDateString);
-  const [movimientosFechaHasta, setMovimientosFechaHasta] = useState<string>(getTodayDateString);
+  const [movimientosFechaDesde, setMovimientosFechaDesde] = useState<string>("");
+  const [movimientosFechaHasta, setMovimientosFechaHasta] = useState<string>("");
   const [movimientosCopied, setMovimientosCopied] = useState<boolean>(false);
 
   const [orderConsumptionData, setOrderConsumptionData] = useState<TNSOrderConsumptionResponse | null>(null);
   const [orderConsumptionLoading, setOrderConsumptionLoading] = useState<boolean>(false);
+
+  const [notasInventarioData, setNotasInventarioData] = useState<TNSMaterialNotasInventarioResponse | null>(null);
+  const [notasInventarioLoading, setNotasInventarioLoading] = useState<boolean>(false);
 
   /** IDs de fila con salidas por consumo de órdenes HOY (match exacto BE). */
   const [orderAlertMatchedIds, setOrderAlertMatchedIds] = useState<Set<string>>(() => new Set());
@@ -896,6 +901,7 @@ export function TNSInventarioTab() {
       setComprasHistorialData(null);
       setVentasHistorialData(null);
       setOrderConsumptionData(null);
+      setNotasInventarioData(null);
       setActiveModalTab("info");
       setComprasSearchFactura("");
       setComprasSearchProveedor("");
@@ -907,10 +913,15 @@ export function TNSInventarioTab() {
       setVentasFechaHasta("");
       setMovimientosTipoFilter("TODOS");
       setMovimientosSearch("");
-      setMovimientosFechaDesde(getTodayDateString());
-      setMovimientosFechaHasta(getTodayDateString());
+      setMovimientosFechaDesde("");
+      setMovimientosFechaHasta("");
       return;
     }
+
+    setMovimientosTipoFilter("TODOS");
+    setMovimientosSearch("");
+    setMovimientosFechaDesde("");
+    setMovimientosFechaHasta("");
     let isMounted = true;
     setComprasLoading(true);
     getTNSMaterialComprasHistorial(selectedItemDetail.prod_Dist_Cod)
@@ -964,6 +975,25 @@ export function TNSInventarioTab() {
       .finally(() => {
         if (isMounted) {
           setOrderConsumptionLoading(false);
+        }
+      });
+
+    setNotasInventarioLoading(true);
+    getTNSMaterialNotasInventarioHistorial(selectedItemDetail.prod_Dist_Cod)
+      .then((res) => {
+        if (isMounted) {
+          setNotasInventarioData(res);
+        }
+      })
+      .catch((err) => {
+        console.error("Error al cargar notas de inventario TNS del material:", err);
+        if (isMounted) {
+          setNotasInventarioData(null);
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setNotasInventarioLoading(false);
         }
       });
 
@@ -1264,32 +1294,40 @@ export function TNSInventarioTab() {
 
     const baseMaterialUnitCost = getMaterialUnitCost(selectedItemDetail, comprasHistorialData);
 
-    // 1. Entradas desde Compras TNS
+    // 1. Movimientos desde Compras TNS (positivas = entrada, negativas = devolución/salida)
     const rawCompras = comprasHistorialData?.compras_historial || [];
     rawCompras.forEach((c, idx) => {
       const cant = parseTNSNumber(c.cant_Entrada || c.cantidad);
-      if (cant > 0) {
-        const valUnit = getMaterialUnitCost(selectedItemDetail, comprasHistorialData, c) || baseMaterialUnitCost;
-        const total = (parseTNSNumber(c.costo_total || c.total) > 0)
-          ? parseTNSNumber(c.costo_total || c.total)
-          : (cant * valUnit);
-        const provName = cleanTNSProveedorName(c.nomtercero || c.proveedor) || selectedItemDetail.proveedor_principal || "Proveedor TNS";
-        const docRef = c.numfactura ? `FAC-${c.numfactura} · Compra TNS` : (c.numdoc ? `DOC-${c.numdoc} · Compra` : "Compra TNS");
+      if (cant === 0) return;
 
-        allMovimientos.push({
-          id: `entrada-${idx}-${c.numfactura || c.numdoc || idx}`,
-          fecha: formatTNSDate(c.fechafactu || c.fecha),
-          fechaRaw: c.fechafactu || c.fecha || "",
-          tipo: "ENTRADA",
-          tipoLabel: "Entrada",
-          cantidad: cant,
-          referencia: docRef,
-          tercero: provName,
-          costoUnitario: valUnit,
-          costoTotal: total,
-          nota: c.concepto ? c.concepto.trim() : (valUnit > 0 ? `Ingreso a $${formatCurrency(Math.round(valUnit))} / ${unidad}` : "Ingreso de stock en TNS"),
-        });
-      }
+      const isEntrada = cant > 0;
+      const absCant = Math.abs(cant);
+      const valUnit = getMaterialUnitCost(selectedItemDetail, comprasHistorialData, c) || baseMaterialUnitCost;
+      const total = (parseTNSNumber(c.costo_total || c.total) > 0)
+        ? Math.abs(parseTNSNumber(c.costo_total || c.total))
+        : (absCant * valUnit);
+      const provName = cleanTNSProveedorName(c.nomtercero || c.proveedor) || selectedItemDetail.proveedor_principal || "Proveedor TNS";
+      const docRef = c.numfactura
+        ? `FAC-${c.numfactura} · ${isEntrada ? "Compra" : "Devolución"} TNS`
+        : (c.numdoc ? `DOC-${c.numdoc} · ${isEntrada ? "Compra" : "Devolución"}` : (isEntrada ? "Compra TNS" : "Devolución compra TNS"));
+
+      allMovimientos.push({
+        id: `${isEntrada ? "entrada" : "salida-compra"}-${idx}-${c.numfactura || c.numdoc || idx}`,
+        fecha: formatTNSDate(c.fechafactu || c.fecha),
+        fechaRaw: c.fechafactu || c.fecha || "",
+        tipo: isEntrada ? "ENTRADA" : "SALIDA",
+        tipoLabel: isEntrada ? "Entrada (Compra)" : "Salida (Devolución compra)",
+        cantidad: isEntrada ? absCant : -absCant,
+        referencia: docRef,
+        tercero: provName,
+        costoUnitario: valUnit,
+        costoTotal: total,
+        nota: c.concepto
+          ? c.concepto.trim()
+          : (isEntrada
+            ? (valUnit > 0 ? `Ingreso a $${formatCurrency(Math.round(valUnit))} / ${unidad}` : "Ingreso de stock en TNS")
+            : `Egreso por devolución/nota crédito de compra en TNS (${absCant} ${unidad})`),
+      });
     });
 
     // 2. Salidas calculadas desde Órdenes de Producción (backend: costeo por talla + insumos)
@@ -1340,6 +1378,44 @@ export function TNSInventarioTab() {
             : `Consumo registrado por venta en TNS`,
         });
       }
+    });
+
+    // 4. Movimientos reales de Notas de Inventario TNS (KardexDetallado)
+    const rawNotasInventario = notasInventarioData?.notas_inventario || [];
+    rawNotasInventario.forEach((n, idx) => {
+      const signedQty = Number(n.cantidad || 0);
+      const cant = Math.abs(signedQty);
+      if (cant <= 0) return;
+
+      const isEntrada =
+        n.direccion === "ENTRADA" ||
+        (n.direccion !== "SALIDA" && n.direccion !== "NEUTRO" && signedQty > 0);
+      const valUnit =
+        n.costo_parcial && cant > 0
+          ? Math.abs(Number(n.costo_parcial) / cant)
+          : baseMaterialUnitCost;
+      const prefijo = n.codigo_prefijo ? `${n.codigo_prefijo}-` : "";
+      const docRef = n.numero_documento
+        ? `NI ${prefijo}${n.numero_documento} · TNS`
+        : "Nota de Inventario TNS";
+      const bodegaLabel = n.bodega || selectedItemDetail.bodega_Desc || "TNS Inventario";
+      const tipoLabel = isEntrada ? "Entrada (Nota Inv.)" : "Salida (Nota Inv.)";
+
+      allMovimientos.push({
+        id: `nota-inv-${idx}-${n.numero_documento || n.fecha || idx}`,
+        fecha: formatTNSDate(n.fecha),
+        fechaRaw: n.fecha || "",
+        tipo: isEntrada ? "ENTRADA" : "SALIDA",
+        tipoLabel,
+        cantidad: isEntrada ? cant : -cant,
+        referencia: docRef,
+        tercero: bodegaLabel,
+        costoUnitario: valUnit,
+        costoTotal: Math.abs(Number(n.costo_parcial || 0)) || cant * valUnit,
+        nota: n.tipo_movimiento
+          ? `Ajuste TNS (${tipoLabel}): ${n.tipo_movimiento}${n.bodega ? ` · ${n.bodega}` : ""}`
+          : `Ajuste TNS · ${tipoLabel}`,
+      });
     });
 
     // Ordenar cronológicamente descendente
@@ -1400,6 +1476,7 @@ export function TNSInventarioTab() {
     comprasHistorialData,
     ventasHistorialData,
     orderConsumptionData,
+    notasInventarioData,
     movimientosTipoFilter,
     movimientosSearch,
     movimientosFechaDesde,
@@ -2820,8 +2897,8 @@ export function TNSInventarioTab() {
                       <div className="text-[11px] font-medium text-emerald-800 dark:text-emerald-300 flex items-center justify-between">
                         <span>
                           {movimientosFechaDesde === getTodayDateString() && movimientosFechaHasta === getTodayDateString()
-                            ? "Ingresos de Hoy (Compras TNS)"
-                            : "Total Ingresado (Compras TNS)"}
+                            ? "Ingresos de Hoy (Compras / Notas Inv.)"
+                            : "Total Ingresado (Compras / Notas Inv.)"}
                         </span>
                         <ArrowUpRight className="h-3.5 w-3.5 text-emerald-600" />
                       </div>
@@ -2843,8 +2920,8 @@ export function TNSInventarioTab() {
                       <div className="text-[11px] font-medium text-rose-800 dark:text-rose-300 flex items-center justify-between">
                         <span>
                           {movimientosFechaDesde === getTodayDateString() && movimientosFechaHasta === getTodayDateString()
-                            ? "Salidas de Hoy (Órdenes / Ventas)"
-                            : "Total Salido (Órdenes / Ventas)"}
+                            ? "Salidas de Hoy (Notas Inv. / Órdenes / Ventas)"
+                            : "Total Salido (Notas Inv. / Órdenes / Ventas)"}
                         </span>
                         <ArrowDownRight className="h-3.5 w-3.5 text-rose-600" />
                       </div>
@@ -2885,10 +2962,22 @@ export function TNSInventarioTab() {
                     <div>
                       <p className="font-semibold">Módulo 100% Informativo y de Auditoría</p>
                       <p className="text-[11px] text-sky-800 dark:text-sky-300 mt-0.5 leading-relaxed">
-                        Este historial es <strong>netamente informativo</strong> y refleja los movimientos del material: las <strong>entradas (en verde)</strong> provienen de compras registradas en TNS y las <strong>salidas (en rojo)</strong> se calculan según las órdenes de producción y ventas. El stock oficial de TNS no se altera automáticamente para permitir la verificación del operario.
+                        Este historial es <strong>netamente informativo</strong> y refleja los movimientos del material: las <strong>entradas (en verde)</strong> provienen de compras y notas de inventario registradas en TNS; las <strong>salidas (en rojo)</strong> incluyen notas de inventario, consumo por órdenes de producción y ventas. El stock oficial de TNS no se altera automáticamente para permitir la verificación del operario.
                       </p>
                     </div>
                   </div>
+
+                  {!notasInventarioLoading && notasInventarioData?.message ? (
+                    <div className="flex items-start gap-2.5 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 text-amber-900 dark:text-amber-200 text-xs">
+                      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+                      <div>
+                        <p className="font-semibold">Notas de inventario TNS no disponibles vía API</p>
+                        <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5 leading-relaxed">
+                          {notasInventarioData.message} Las compras y el consumo informativo por órdenes siguen mostrándose con normalidad.
+                        </p>
+                      </div>
+                    </div>
+                  ) : null}
 
                   {/* Barra de Filtros de Tipo, Buscador y Botón de Copiar */}
                   <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 pt-1">
@@ -2994,10 +3083,10 @@ export function TNSInventarioTab() {
                   </div>
 
                   {/* Tabla de registros de movimientos */}
-                  {orderConsumptionLoading ? (
+                  {comprasLoading || ventasLoading || orderConsumptionLoading || notasInventarioLoading ? (
                     <div className="py-8 px-4 text-center text-xs text-muted-foreground border rounded-lg bg-muted/20">
                       <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-red-600" />
-                      <p className="font-medium text-foreground">Calculando consumo por órdenes de producción…</p>
+                      <p className="font-medium text-foreground">Cargando movimientos TNS (compras, notas de inventario, órdenes y ventas)…</p>
                     </div>
                   ) : movimientosReport.records.length === 0 ? (
                     <div className="py-8 px-4 text-center text-xs text-muted-foreground border rounded-lg bg-muted/20 space-y-2">
@@ -3052,12 +3141,12 @@ export function TNSInventarioTab() {
                                   {isEntrada ? (
                                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100/80 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 px-2.5 py-0.5 text-[11px] font-semibold">
                                       <ArrowUpRight className="h-3 w-3 text-emerald-600" />
-                                      Entrada
+                                      {m.tipoLabel || "Entrada"}
                                     </span>
                                   ) : (
                                     <span className="inline-flex items-center gap-1 rounded-full bg-rose-100/80 dark:bg-rose-950/50 text-rose-800 dark:text-rose-300 px-2.5 py-0.5 text-[11px] font-semibold">
                                       <ArrowDownRight className="h-3 w-3 text-rose-600" />
-                                      Salida
+                                      {m.tipoLabel || "Salida"}
                                     </span>
                                   )}
                                 </TableCell>
@@ -3118,10 +3207,15 @@ export function TNSInventarioTab() {
                   )}
 
                   {/* Nota al pie al estilo de la referencia */}
-                  <div className="text-[11px] text-muted-foreground pt-1 flex items-center justify-between">
+                  <div className="text-[11px] text-muted-foreground pt-1 flex items-center justify-between gap-3">
                     <span>
-                      Las entradas provienen de las compras y stock ingresado en TNS. Las salidas se calculan según las órdenes de producción y ventas para informar los movimientos sin alterar el stock oficial de TNS.
+                      Entradas TNS: compras y notas de inventario (ingresos). Salidas TNS: notas de inventario (egresos/ajustes). Las salidas por órdenes de la plataforma son informativas y no modifican el stock oficial de TNS.
                     </span>
+                    {notasInventarioData?.message ? (
+                      <span className="text-amber-700 dark:text-amber-300 shrink-0">
+                        Notas TNS: {notasInventarioData.message}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
               )}

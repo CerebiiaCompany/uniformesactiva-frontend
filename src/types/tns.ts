@@ -192,6 +192,49 @@ export interface TNSMaterialComprasHistorialResponse {
   total_compras: number;
 }
 
+export interface TNSNotaInventarioItem {
+  codigo_articulo: string;
+  nombre_articulo?: string;
+  fecha: string;
+  codigo_prefijo?: string;
+  numero_documento?: string;
+  tipo_movimiento?: string;
+  es_nota_inventario?: boolean;
+  direccion?: "ENTRADA" | "SALIDA" | "NEUTRO" | string;
+  bodega?: string;
+  cantidad: number;
+  saldo_anterior?: number;
+  costo_anterior?: number;
+  costo_parcial?: number;
+  remision?: string;
+  numero_remision?: string;
+  numero_traslado?: string;
+}
+
+export interface TNSNotasInventarioSummary {
+  entradas?: number;
+  salidas?: number;
+  total_cantidad_abs?: number;
+  solo_notas_inventario?: boolean;
+}
+
+export interface TNSNotasInventarioResponse {
+  status?: boolean;
+  message?: string | null;
+  data: TNSNotaInventarioItem[];
+  total_count: number;
+  summary?: TNSNotasInventarioSummary | null;
+}
+
+export interface TNSMaterialNotasInventarioResponse {
+  status?: boolean;
+  message?: string | null;
+  codigo_articulo: string;
+  notas_inventario: TNSNotaInventarioItem[];
+  total_notas: number;
+  summary?: TNSNotasInventarioSummary | null;
+}
+
 export interface TNSOrderConsumptionMovement {
   id: string;
   fecha: string;
