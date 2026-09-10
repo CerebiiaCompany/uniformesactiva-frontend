@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { AppLayout } from "@/components/AppLayout";
 import { StatCard } from "@/components/StatCard";
+import { StatusBadge } from "@/components/StatusBadge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -14,6 +15,15 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   DollarSign,
   TrendingUp,
@@ -25,11 +35,18 @@ import {
   ExternalLink,
   AlertTriangle,
   Info,
+  Calendar,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/format-number";
+import {
+  getOrderCollectedAmount,
+  paymentStatusBadgeClass,
+  paymentStatusLabel,
+  resolveEffectivePaymentStatus,
+} from "@/lib/payment-status";
+import { formatOrderShortId } from "@/lib/order-fields";
 import { useOrders, type Order } from "@/hooks/useOrders";
-import { useDashboard } from "@/hooks/useDashboard";
 import { useGetCostCatalogs } from "@/hooks/useGetCostCatalogs";
 import { useGetProductLines } from "@/hooks/useGetProductLines";
 import { useGetMaterials } from "@/hooks/useGetMaterials";
@@ -42,14 +59,18 @@ function num(value: string | number | null | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-function marginPct(order: Order): number {
-  // Backend stores margen_ganancia as fraction (0.25 = 25%)
-  const raw = num(order.margen_ganancia);
-  return raw <= 1 && raw >= -1 ? raw * 100 : raw;
+function orderCollectedAmount(order: Order): number {
+  return getOrderCollectedAmount(order);
 }
 
-function shortOrderId(id: string) {
-  return `ORD-${id.slice(-3).toUpperCase()}`;
+function orderRealizedProfit(order: Order): number {
+  return orderCollectedAmount(order) - num(order.costo_total);
+}
+
+function orderRealizedMarginPct(order: Order): number {
+  const collected = orderCollectedAmount(order);
+  if (collected <= 0) return 0;
+  return (orderRealizedProfit(order) / collected) * 100;
 }
 
 function orderQty(order: Order): number {
@@ -62,9 +83,143 @@ function unitCost(order: Order): number {
   return qty > 0 ? total / qty : total;
 }
 
+type CostingPeriodPreset =
+  | "current_month"
+  | "previous_month"
+  | "last_3_months"
+  | "current_year"
+  | "custom";
+
+interface CostingPeriodBounds {
+  dateFrom: string;
+  dateTo: string;
+  label: string;
+}
+
+function toDateInputValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function startOfMonth(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function endOfMonth(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0);
+}
+
+function formatMonthLabel(monthKey: string): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  const date = new Date(year, month - 1, 1);
+  return date.toLocaleDateString("es-CO", { month: "long", year: "numeric" });
+}
+
+function formatShortDate(dateValue: string): string {
+  const [year, month, day] = dateValue.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  return date.toLocaleDateString("es-CO", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function resolvePeriodBounds(
+  preset: CostingPeriodPreset,
+  customFrom: string,
+  customTo: string
+): CostingPeriodBounds {
+  const now = new Date();
+
+  if (preset === "current_month") {
+    const from = startOfMonth(now);
+    const to = endOfMonth(now);
+    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    return {
+      dateFrom: toDateInputValue(from),
+      dateTo: toDateInputValue(to),
+      label: formatMonthLabel(monthKey),
+    };
+  }
+
+  if (preset === "previous_month") {
+    const previous = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const from = startOfMonth(previous);
+    const to = endOfMonth(previous);
+    const monthKey = `${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, "0")}`;
+    return {
+      dateFrom: toDateInputValue(from),
+      dateTo: toDateInputValue(to),
+      label: formatMonthLabel(monthKey),
+    };
+  }
+
+  if (preset === "last_3_months") {
+    const from = startOfMonth(new Date(now.getFullYear(), now.getMonth() - 2, 1));
+    const to = endOfMonth(now);
+    return {
+      dateFrom: toDateInputValue(from),
+      dateTo: toDateInputValue(to),
+      label: "Últimos 3 meses",
+    };
+  }
+
+  if (preset === "current_year") {
+    const from = new Date(now.getFullYear(), 0, 1);
+    const to = new Date(now.getFullYear(), 11, 31);
+    return {
+      dateFrom: toDateInputValue(from),
+      dateTo: toDateInputValue(to),
+      label: `Año ${now.getFullYear()}`,
+    };
+  }
+
+  const fallbackFrom = toDateInputValue(startOfMonth(now));
+  const fallbackTo = toDateInputValue(endOfMonth(now));
+  const dateFrom = customFrom || fallbackFrom;
+  const dateTo = customTo || fallbackTo;
+
+  return {
+    dateFrom,
+    dateTo,
+    label: `${formatShortDate(dateFrom)} – ${formatShortDate(dateTo)}`,
+  };
+}
+
+function aggregateOrderTotals(orderList: Order[]) {
+  const costo = orderList.reduce((s, o) => s + num(o.costo_total), 0);
+  const ingreso = orderList.reduce((s, o) => s + orderCollectedAmount(o), 0);
+  const ganancia = orderList.reduce((s, o) => s + orderRealizedProfit(o), 0);
+  const margins = orderList
+    .map(orderRealizedMarginPct)
+    .filter((m) => Number.isFinite(m) && m !== 0);
+  const avgMargin =
+    margins.length > 0 ? margins.reduce((a, b) => a + b, 0) / margins.length : 0;
+  return { costo, ingreso, ganancia, avgMargin, count: orderList.length };
+}
+
 export default function Costing() {
-  const { stats, loading: dashLoading } = useDashboard();
   const { orders, loading: ordersLoading, fetchOrders, totalCount } = useOrders();
+  const [periodPreset, setPeriodPreset] = useState<CostingPeriodPreset>("current_month");
+  const [customDateFrom, setCustomDateFrom] = useState("");
+  const [customDateTo, setCustomDateTo] = useState("");
+
+  const period = useMemo(
+    () => resolvePeriodBounds(periodPreset, customDateFrom, customDateTo),
+    [periodPreset, customDateFrom, customDateTo]
+  );
+
+  useEffect(() => {
+    fetchOrders({
+      page: 1,
+      page_size: 100,
+      fecha_desde: period.dateFrom,
+      fecha_hasta: period.dateTo,
+    });
+  }, [fetchOrders, period.dateFrom, period.dateTo]);
   const {
     supplyTypes,
     laborPhases,
@@ -74,24 +229,21 @@ export default function Costing() {
   const { lines, isLoading: linesLoading } = useGetProductLines();
   const { materials: inventory, isLoading: inventoryLoading } = useGetMaterials();
 
-  useEffect(() => {
-    fetchOrders({ page: 1, page_size: 100 });
-  }, [fetchOrders]);
+  const periodTotals = useMemo(() => aggregateOrderTotals(orders), [orders]);
 
-  const totals = useMemo(() => {
-    const costo = orders.reduce((s, o) => s + num(o.costo_total), 0);
-    const ingreso = orders.reduce((s, o) => s + num(o.valor_venta_proyectado), 0);
-    const ganancia = orders.reduce((s, o) => s + num(o.ganancia), 0);
-    const margins = orders.map(marginPct).filter((m) => Number.isFinite(m));
-    const avgMargin =
-      margins.length > 0 ? margins.reduce((a, b) => a + b, 0) / margins.length : 0;
-    return { costo, ingreso, ganancia, avgMargin };
-  }, [orders]);
+  const periodSubtitle =
+    periodTotals.count > 0
+      ? `${periodTotals.count} orden${periodTotals.count === 1 ? "" : "es"} · ${period.label}`
+      : `Sin órdenes en ${period.label}`;
 
-  const monthlyCost =
-    stats != null ? Math.max(0, num(stats.monthlyRevenue) - num(stats.monthlyProfit)) : totals.costo;
-
-  const loading = dashLoading || ordersLoading;
+  const handlePresetChange = (value: CostingPeriodPreset) => {
+    setPeriodPreset(value);
+    if (value === "custom") {
+      const now = new Date();
+      setCustomDateFrom((current) => current || toDateInputValue(startOfMonth(now)));
+      setCustomDateTo((current) => current || toDateInputValue(endOfMonth(now)));
+    }
+  };
 
   return (
     <AppLayout
@@ -112,32 +264,92 @@ export default function Costing() {
           </p>
         </div>
 
+        <Card>
+          <CardContent className="py-4">
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Calendar className="h-4 w-4 text-primary" />
+                Filtro por período
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
+                <div className="space-y-1.5">
+                  <Label htmlFor="costing-period-preset">Período</Label>
+                  <Select
+                    value={periodPreset}
+                    onValueChange={(value) => handlePresetChange(value as CostingPeriodPreset)}
+                  >
+                    <SelectTrigger id="costing-period-preset">
+                      <SelectValue placeholder="Seleccionar período" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="current_month">Mes actual</SelectItem>
+                      <SelectItem value="previous_month">Mes anterior</SelectItem>
+                      <SelectItem value="last_3_months">Últimos 3 meses</SelectItem>
+                      <SelectItem value="current_year">Año en curso</SelectItem>
+                      <SelectItem value="custom">Rango personalizado</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="costing-date-from">Desde</Label>
+                  <Input
+                    id="costing-date-from"
+                    type="date"
+                    value={periodPreset === "custom" ? customDateFrom : period.dateFrom}
+                    disabled={periodPreset !== "custom"}
+                    onChange={(event) => setCustomDateFrom(event.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="costing-date-to">Hasta</Label>
+                  <Input
+                    id="costing-date-to"
+                    type="date"
+                    value={periodPreset === "custom" ? customDateTo : period.dateTo}
+                    disabled={periodPreset !== "custom"}
+                    onChange={(event) => setCustomDateTo(event.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Rango aplicado</Label>
+                  <p className="text-sm text-muted-foreground min-h-10 flex items-center">
+                    {period.label}
+                    {totalCount > orders.length
+                      ? ` · mostrando ${orders.length} de ${totalCount}`
+                      : null}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
-            title="Costo mes (órdenes)"
-            value={loading ? "…" : fmt(stats ? monthlyCost : totals.costo)}
+            title="Costo período"
+            value={ordersLoading ? "…" : fmt(periodTotals.costo)}
+            subtitle={periodSubtitle}
             icon={DollarSign}
             variant="default"
           />
           <StatCard
-            title="Ingresos mes"
-            value={loading ? "…" : fmt(stats?.monthlyRevenue ?? totals.ingreso)}
+            title="Ingresos período"
+            value={ordersLoading ? "…" : fmt(periodTotals.ingreso)}
+            subtitle="Cobrado en plataforma (pagado + abonos)"
             icon={TrendingUp}
             variant="accent"
           />
           <StatCard
-            title="Ganancia mes"
-            value={loading ? "…" : fmt(stats?.monthlyProfit ?? totals.ganancia)}
+            title="Ganancia período"
+            value={ordersLoading ? "…" : fmt(periodTotals.ganancia)}
+            subtitle="Ingreso cobrado − costo de órdenes"
             icon={TrendingUp}
             variant="success"
           />
           <StatCard
             title="Margen promedio"
-            value={
-              loading
-                ? "…"
-                : `${(stats?.avgMargin ?? totals.avgMargin).toFixed(1)}%`
-            }
+            value={ordersLoading ? "…" : `${periodTotals.avgMargin.toFixed(1)}%`}
+            subtitle="Sobre ingreso cobrado en plataforma"
             icon={Calculator}
             variant="warning"
           />
@@ -168,7 +380,12 @@ export default function Costing() {
           </TabsList>
 
           <TabsContent value="orders" className="mt-4">
-            <OrdersTab orders={orders} loading={ordersLoading} totalCount={totalCount} />
+            <OrdersTab
+              orders={orders}
+              loading={ordersLoading}
+              totalCount={totalCount}
+              periodLabel={period.label}
+            />
           </TabsContent>
 
           <TabsContent value="products" className="mt-4">
@@ -192,7 +409,7 @@ export default function Costing() {
           </TabsContent>
 
           <TabsContent value="profit" className="mt-4">
-            <ProfitTab orders={orders} loading={ordersLoading} />
+            <ProfitTab orders={orders} loading={ordersLoading} periodLabel={period.label} />
           </TabsContent>
         </Tabs>
       </div>
@@ -204,10 +421,12 @@ function OrdersTab({
   orders,
   loading,
   totalCount,
+  periodLabel,
 }: {
   orders: Order[];
   loading: boolean;
   totalCount: number;
+  periodLabel: string;
 }) {
   return (
     <Card>
@@ -215,7 +434,9 @@ function OrdersTab({
         <div>
           <CardTitle className="text-lg font-semibold tracking-tight">Costo real por orden</CardTitle>
           <p className="text-xs text-muted-foreground mt-1">
-            Valores calculados al crear/actualizar la orden (costo_total, ganancia, margen).
+            Período: {periodLabel}. Mismo ID que en Órdenes (ORD-XXX). Valores calculados al
+            crear/actualizar la orden. La ganancia usa ingreso cobrado; revise estado de pago en
+            abonos parciales.
             {totalCount > orders.length
               ? ` Mostrando ${orders.length} de ${totalCount}.`
               : null}
@@ -229,7 +450,7 @@ function OrdersTab({
           </div>
         ) : orders.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-10">
-            No hay órdenes registradas.
+            No hay órdenes en el período seleccionado.
           </p>
         ) : (
           <Table>
@@ -238,23 +459,40 @@ function OrdersTab({
                 <TableHead>Orden</TableHead>
                 <TableHead>Cliente</TableHead>
                 <TableHead>Producto</TableHead>
+                <TableHead>Estado</TableHead>
                 <TableHead className="text-right">Cant.</TableHead>
                 <TableHead className="text-right">Costo unit.</TableHead>
                 <TableHead className="text-right">Costo total</TableHead>
-                <TableHead className="text-right">Ingreso</TableHead>
+                <TableHead className="text-right">Ingreso cobrado</TableHead>
+                <TableHead className="text-right">Ganancia</TableHead>
                 <TableHead className="text-right">Margen</TableHead>
+                <TableHead>Estado de pago</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {orders.map((o) => {
-                const m = marginPct(o);
+                const collected = orderCollectedAmount(o);
+                const profit = orderRealizedProfit(o);
+                const m = orderRealizedMarginPct(o);
+                const paymentStatus = resolveEffectivePaymentStatus(o);
                 const qty = orderQty(o);
                 return (
                   <TableRow key={o.id}>
-                    <TableCell className="font-semibold">{shortOrderId(o.id)}</TableCell>
+                    <TableCell className="font-semibold">
+                      <Link
+                        to={`/orders?highlight=${encodeURIComponent(o.id)}`}
+                        className="text-primary hover:underline underline-offset-2"
+                        title="Abrir en módulo Órdenes"
+                      >
+                        {formatOrderShortId(o.id)}
+                      </Link>
+                    </TableCell>
                     <TableCell>{o.cliente_nombre}</TableCell>
                     <TableCell className="max-w-[180px] truncate">
                       {o.producto_nombre || "—"}
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge status={o.estado} compact />
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{qty || "—"}</TableCell>
                     <TableCell className="text-right tabular-nums">
@@ -264,19 +502,49 @@ function OrdersTab({
                       {fmt(num(o.costo_total))}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {fmt(num(o.valor_venta_proyectado))}
+                      {fmt(collected)}
+                    </TableCell>
+                    <TableCell
+                      className={cn(
+                        "text-right tabular-nums font-medium",
+                        profit > 0
+                          ? "text-emerald-700"
+                          : profit < 0
+                            ? "text-destructive"
+                            : undefined
+                      )}
+                    >
+                      {fmt(profit)}
                     </TableCell>
                     <TableCell
                       className={cn(
                         "text-right tabular-nums",
-                        m >= 25
-                          ? "text-emerald-700"
-                          : m >= 15
-                            ? "text-amber-700"
-                            : "text-destructive"
+                        collected <= 0
+                          ? "text-muted-foreground"
+                          : m >= 25
+                            ? "text-emerald-700"
+                            : m >= 15
+                              ? "text-amber-700"
+                              : "text-destructive"
                       )}
                     >
-                      {m.toFixed(1)}%
+                      {collected <= 0 ? "—" : `${m.toFixed(1)}%`}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "text-[11px] font-semibold whitespace-nowrap",
+                          paymentStatusBadgeClass(paymentStatus)
+                        )}
+                        title={
+                          paymentStatus === "parcial"
+                            ? "Abono parcial: la ganancia puede verse negativa hasta completar el cobro"
+                            : undefined
+                        }
+                      >
+                        {paymentStatusLabel(paymentStatus)}
+                      </Badge>
                     </TableCell>
                   </TableRow>
                 );
@@ -531,10 +799,18 @@ function LaborTab({
   );
 }
 
-function ProfitTab({ orders, loading }: { orders: Order[]; loading: boolean }) {
+function ProfitTab({
+  orders,
+  loading,
+  periodLabel,
+}: {
+  orders: Order[];
+  loading: boolean;
+  periodLabel: string;
+}) {
   const ranked = useMemo(
     () =>
-      [...orders].sort((a, b) => marginPct(b) - marginPct(a)),
+      [...orders].sort((a, b) => orderRealizedMarginPct(b) - orderRealizedMarginPct(a)),
     [orders]
   );
 
@@ -543,7 +819,7 @@ function ProfitTab({ orders, loading }: { orders: Order[]; loading: boolean }) {
       <CardHeader className="pb-3">
         <CardTitle className="text-lg font-semibold tracking-tight">Rentabilidad por orden</CardTitle>
         <p className="text-xs text-muted-foreground mt-1">
-          Ordenado por margen real almacenado en cada orden.
+          Período: {periodLabel}. Rentabilidad sobre ingreso cobrado en plataforma.
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -555,27 +831,31 @@ function ProfitTab({ orders, loading }: { orders: Order[]; loading: boolean }) {
           <p className="text-sm text-muted-foreground text-center py-6">Sin datos.</p>
         ) : (
           ranked.map((o) => {
-            const m = marginPct(o);
+            const collected = orderCollectedAmount(o);
+            const profit = orderRealizedProfit(o);
+            const m = orderRealizedMarginPct(o);
             const width = Math.min(100, Math.max(0, (m / 40) * 100));
             return (
               <div key={o.id} className="space-y-1">
                 <div className="flex justify-between text-sm gap-2">
                   <span className="truncate">
-                    <span className="font-semibold">{shortOrderId(o.id)}</span>
+                    <span className="font-semibold">{formatOrderShortId(o.id)}</span>
                     {" · "}
                     {o.cliente_nombre}
                   </span>
                   <span
                     className={cn(
                       "font-bold shrink-0",
-                      m >= 25
-                        ? "text-emerald-700"
-                        : m >= 20
-                          ? "text-amber-700"
-                          : "text-destructive"
+                      collected <= 0
+                        ? "text-muted-foreground"
+                        : m >= 25
+                          ? "text-emerald-700"
+                          : m >= 20
+                            ? "text-amber-700"
+                            : "text-destructive"
                     )}
                   >
-                    {m.toFixed(1)}%
+                    {collected <= 0 ? "—" : `${m.toFixed(1)}%`}
                   </span>
                 </div>
                 <div className="h-2 rounded-full bg-muted overflow-hidden">
@@ -593,8 +873,8 @@ function ProfitTab({ orders, loading }: { orders: Order[]; loading: boolean }) {
                 </div>
                 <div className="flex justify-between text-[11px] text-muted-foreground">
                   <span>Costo {fmt(num(o.costo_total))}</span>
-                  <span>Ingreso {fmt(num(o.valor_venta_proyectado))}</span>
-                  <span>Ganancia {fmt(num(o.ganancia))}</span>
+                  <span>Cobrado {fmt(collected)}</span>
+                  <span>Ganancia {fmt(profit)}</span>
                 </div>
               </div>
             );
