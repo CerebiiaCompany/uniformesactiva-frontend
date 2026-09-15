@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,12 +36,16 @@ import {
   Search,
   Building2,
   Users,
+  CheckCircle2,
+  Upload,
+  Loader2,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PedidosCompraTNSTab } from "@/components/satellites/PedidosCompraTNSTab";
 import type { PedidoCompra } from "@/types/tns";
 import { getPedidosCompra } from "@/services/tnsService";
 import { parseStageKeys } from "@/lib/production-capa-permissions";
+import { resolveMediaUrl } from "@/lib/api-base";
 import {
   extractTnsSatelliteData,
   getDefaultSatelliteStageKeys,
@@ -428,14 +432,25 @@ export default function Satellites() {
       const prev = selectedCard.settlements?.[cardId] || selectedCard.settlements?.[rawId] || {
         status: confirmDetail.paymentStatus,
       };
+      const hasSupport =
+        Boolean(prev.support_document_url || confirmDetail.supportDocumentUrl) ||
+        Boolean(prev.support_document_path);
+      // Recibido completo NO marca pagado: solo el documento soporte liquida la deuda.
       const settlementEntry = {
         ...prev,
-        status: prev.status || confirmDetail.paymentStatus,
+        status: (hasSupport ? "paid" : "pending") as "pending" | "paid",
         amount: agreedCost ?? confirmDetail.cost,
         work_status: confirmWorkStatus,
         observations: confirmObservations.trim(),
         agreed_cost: agreedCost,
         confirmed_at: new Date().toISOString(),
+        support_document_url: prev.support_document_url || confirmDetail.supportDocumentUrl || null,
+        support_document_name: prev.support_document_name || confirmDetail.supportDocumentName || null,
+        support_document_path: prev.support_document_path || null,
+        support_uploaded_at: prev.support_uploaded_at || null,
+        ...(hasSupport
+          ? { paid_at: prev.paid_at || new Date().toISOString() }
+          : { paid_at: null }),
       };
       const nextSettlements = {
         ...(selectedCard.settlements || {}),
@@ -453,12 +468,24 @@ export default function Satellites() {
           /* fallback silent */
         }
       } else {
+        const allPaid =
+          Object.values(nextSettlements).length > 0 &&
+          Object.values(nextSettlements).every((s) => s.status === "paid");
         await updateSatellite({
           id: selectedCard.id,
-          payload: { settlements: nextSettlements },
+          payload: {
+            settlements: nextSettlements,
+            payment_status: allPaid ? "al_dia" : "pendiente",
+          },
         });
       }
-      toast.success("Confirmación de trabajo guardada");
+      toast.success(
+        confirmWorkStatus === "recibido_completo"
+          ? hasSupport
+            ? "Recepción confirmada. La orden ya tenía soporte y permanece como pagada"
+            : "Recepción confirmada. La deuda sigue pendiente hasta cargar el documento soporte"
+          : "Confirmación de trabajo guardada"
+      );
       setConfirmDetail(null);
       await refetch();
       await loadMetrics();
@@ -516,6 +543,84 @@ export default function Satellites() {
     }
   };
 
+  const resolveSupportUrl = (pathOrUrl?: string | null): string | null =>
+    resolveMediaUrl(pathOrUrl);
+
+  const uploadSupportForOrder = async (detail: SatelliteOrderDetail, file: File) => {
+    if (!selectedCard) return;
+    const allowed =
+      /^(application\/pdf|image\/(png|jpeg|jpg|webp)|application\/msword|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document)$/i.test(
+        file.type
+      ) || /\.(pdf|png|jpe?g|webp|docx?)$/i.test(file.name);
+    if (!allowed) {
+      toast.error("Formato no permitido. Usa PDF, imagen, DOC o DOCX.");
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      toast.error("El archivo supera el máximo de 8 MB.");
+      return;
+    }
+
+    setSavingConfirm(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const uploaded = await http<{ path: string; url: string; filename: string }>(
+        endpoints.satellites.uploadSupport(),
+        { method: "POST", body: formData }
+      );
+
+      const rawId = String(detail.orderId).replace(/^PO-/, "").replace(/^tns-/, "");
+      const cardId = detail.orderId || `PO-${rawId}`;
+      const prev = selectedCard.settlements?.[cardId] || selectedCard.settlements?.[rawId] || {
+        status: detail.paymentStatus,
+        amount: detail.agreedCost ?? detail.cost,
+        work_status: detail.workStatus,
+      };
+      const supportEntry = {
+        ...prev,
+        status: "paid" as const,
+        amount: prev.amount ?? detail.agreedCost ?? detail.cost,
+        paid_at: prev.paid_at || new Date().toISOString(),
+        support_document_url: uploaded.url || resolveMediaUrl(uploaded.path) || uploaded.path,
+        support_document_path: uploaded.path,
+        support_document_name: uploaded.filename || file.name,
+        support_uploaded_at: new Date().toISOString(),
+      };
+      const nextSettlements = {
+        ...(selectedCard.settlements || {}),
+        [cardId]: supportEntry,
+        [rawId]: supportEntry,
+      };
+
+      if (selectedCard.id.startsWith("prod-") && selectedCard.userIds[0]) {
+        const uId = selectedCard.userIds[0];
+        await http(endpoints.users.detail(uId), {
+          method: "PATCH",
+          body: JSON.stringify({ settlements: nextSettlements }),
+        });
+      } else {
+        const allPaid =
+          Object.values(nextSettlements).length > 0 &&
+          Object.values(nextSettlements).every((s) => s.status === "paid");
+        await updateSatellite({
+          id: selectedCard.id,
+          payload: {
+            settlements: nextSettlements,
+            payment_status: allPaid ? "al_dia" : "pendiente",
+          },
+        });
+      }
+      toast.success("Documento soporte cargado: la deuda de esta orden quedó marcada como pagada");
+      await refetch();
+      await loadMetrics();
+    } catch (err: any) {
+      toast.error(err?.message || "No se pudo subir el documento soporte");
+    } finally {
+      setSavingConfirm(false);
+    }
+  };
+
   const markOrderPending = async (orderId: string, amount: number) => {
     if (!selectedCard) return;
     try {
@@ -547,6 +652,42 @@ export default function Satellites() {
     return getUniqueTnsTerceros(tnsPedidos, etapas);
   }, [tnsPedidos, etapas]);
 
+  /** Terceros TNS que aún no están registrados como satélite (evita duplicar / desvincular). */
+  const availableTnsTercerosForSatellite = useMemo(() => {
+    return tnsTerceros.filter((t) => {
+      const exists = satellites.some((s) =>
+        isSamePersonIdentity(
+          { names: [t.name, t.contactName], nit: t.nit },
+          {
+            names: [s.name, s.contact_name],
+            nit: s.nit || s.nit_tercero || "",
+          }
+        )
+      );
+      return !exists;
+    });
+  }, [tnsTerceros, satellites]);
+
+  const availableTnsTercerosForProduction = useMemo(() => {
+    return tnsTerceros.filter((t) => {
+      const exists = productionUsers.some((u) =>
+        isSamePersonIdentity(
+          { names: [t.name, t.contactName], nit: t.nit },
+          {
+            names: [u.fullName, u.tnsName, u.name],
+            nit: u.nit || "",
+          }
+        )
+      );
+      return !exists;
+    });
+  }, [tnsTerceros, productionUsers]);
+
+  const availableTnsTerceros =
+    createMode === "production"
+      ? availableTnsTercerosForProduction
+      : availableTnsTercerosForSatellite;
+
   const matchingTnsSuggestion = useMemo(() => {
     const nName = normalizeText(form.name);
     const nNit = normalizeText(form.nit);
@@ -577,6 +718,38 @@ export default function Satellites() {
 
   const handleSelectTnsTercero = (tercero: UniqueTnsTercero) => {
     const extracted = extractTnsSatelliteData(tercero.latestPedido, etapas);
+    if (createMode === "satellite") {
+      const existing = findDuplicateSatellite({
+        name: extracted.name || tercero.name,
+        nit: extracted.nit || tercero.nit,
+        contactName: extracted.person_name || tercero.contactName,
+      });
+      if (existing) {
+        const existingId = "id" in existing ? String(existing.id) : "";
+        toast.error(
+          `«${extracted.name || tercero.name}» ya está registrado. Ábrelo en el listado; no crees otro o se desvincula de TNS.`
+        );
+        setIsCreateOpen(false);
+        setMainTab("satelites");
+        if (existingId) setSelectedId(existingId);
+        return;
+      }
+    } else {
+      const existingProd = findDuplicateProductionUser({
+        name: extracted.person_name || tercero.contactName,
+        tnsName: extracted.name || tercero.name,
+        nit: extracted.nit || tercero.nit,
+      });
+      if (existingProd) {
+        toast.error(
+          `«${existingProd.fullName}» ya está registrado como usuario de producción.`
+        );
+        setIsCreateOpen(false);
+        setMainTab("produccion");
+        return;
+      }
+    }
+
     setSelectedTnsKey(tercero.nit || tercero.name);
     setForm((p) => ({
       ...p,
@@ -1000,6 +1173,9 @@ export default function Satellites() {
       await loadMetrics();
     } catch (err: any) {
       setFormError(err?.message || "No se pudo crear el satélite.");
+      if (err?.status === 409 || /ya existe/i.test(String(err?.message || ""))) {
+        toast.error(err?.message || "Ese satélite ya existe.");
+      }
     } finally {
       setIsCreatingAll(false);
     }
@@ -1021,7 +1197,11 @@ export default function Satellites() {
   const handleDeleteSatelliteConfirm = async () => {
     if (!deletingSatellite) return;
     try {
-      await deleteSatellite(deletingSatellite.id);
+      // Si el tablero está en $0, confirmar al backend para ignorar liquidaciones huérfanas
+      await deleteSatellite({
+        id: deletingSatellite.id,
+        confirmZero: Number(deletingSatellite.porPagar || 0) <= 0,
+      });
       toast.success(`Satélite "${deletingSatellite.name}" eliminado`);
       if (selectedId === deletingSatellite.id) {
         setSelectedId(null);
@@ -1174,6 +1354,8 @@ export default function Satellites() {
                   detail={detail}
                   busy={updatingSatellite || savingConfirm}
                   onConfirmEdit={() => openConfirmDialog(detail)}
+                  onUploadSupport={(file) => uploadSupportForOrder(detail, file)}
+                  resolveSupportUrl={resolveSupportUrl}
                 />
               ))}
             </div>
@@ -1616,7 +1798,7 @@ export default function Satellites() {
               </p>
 
               {/* Selector de autocompletado rápido desde TNS */}
-              {tnsTerceros.length > 0 && (
+              {availableTnsTerceros.length > 0 && (
                 <div className="bg-muted/40 border border-border/80 rounded-xl p-3 space-y-2">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
@@ -1624,17 +1806,27 @@ export default function Satellites() {
                       <span>Autocompletar desde TNS (ERP)</span>
                     </div>
                     <span className="text-[11px] text-muted-foreground">
-                      {tnsTerceros.length} {tnsTerceros.length === 1 ? "tercero disponible" : "terceros disponibles"}
+                      {availableTnsTerceros.length}{" "}
+                      {availableTnsTerceros.length === 1
+                        ? "tercero disponible"
+                        : "terceros disponibles"}
+                      {tnsTerceros.length > availableTnsTerceros.length
+                        ? ` · ${tnsTerceros.length - availableTnsTerceros.length} ya registrados`
+                        : ""}
                     </span>
                   </div>
                   <p className="text-[11px] text-muted-foreground">
-                    Selecciona un tercero para cargar automáticamente sus datos y preseleccionar la capa asignada por artículos (<strong>nomMat</strong>).
+                    {createMode === "production"
+                      ? "Solo aparecen terceros que aún no son usuarios de producción."
+                      : "Solo aparecen terceros que aún no son satélites. Conserva NIT/nombre para mantener la sincronización con TNS."}
                   </p>
                   <Select
                     value={selectedTnsKey}
                     onValueChange={(val) => {
                       setSelectedTnsKey(val);
-                      const found = tnsTerceros.find((t) => (t.nit ? t.nit : t.name) === val);
+                      const found = availableTnsTerceros.find(
+                        (t) => (t.nit ? t.nit : t.name) === val
+                      );
                       if (found) {
                         handleSelectTnsTercero(found);
                       }
@@ -1644,7 +1836,7 @@ export default function Satellites() {
                       <SelectValue placeholder="— Seleccionar satélite/tercero desde TNS —" />
                     </SelectTrigger>
                     <SelectContent className="max-h-64">
-                      {tnsTerceros.map((t) => (
+                      {availableTnsTerceros.map((t) => (
                         <SelectItem
                           key={t.nit || t.name}
                           value={t.nit || t.name}
@@ -1670,6 +1862,13 @@ export default function Satellites() {
                   </Select>
                 </div>
               )}
+              {tnsTerceros.length > 0 && availableTnsTerceros.length === 0 ? (
+                <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  {createMode === "production"
+                    ? "Todos los terceros TNS detectados ya están usuarios de producción. Usa el listado existente."
+                    : "Todos los terceros TNS detectados ya están satélites. Usa el listado existente para no crear duplicados ni perder el vínculo con TNS."}
+                </p>
+              ) : null}
 
               {/* Sugerencia de autocompletado si el usuario escribe nombre o NIT */}
               {matchingTnsSuggestion && !tnsAutoFilledInfo && (
@@ -2014,12 +2213,18 @@ function SatelliteOrderCard({
   detail,
   busy,
   onConfirmEdit,
+  onUploadSupport,
+  resolveSupportUrl,
 }: {
   detail: SatelliteOrderDetail;
   busy: boolean;
   onConfirmEdit: () => void;
+  onUploadSupport: (file: File) => void;
+  resolveSupportUrl: (pathOrUrl?: string | null) => string | null;
 }) {
   const [showStages, setShowStages] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const workBadge =
     detail.workStatus === "recibido_completo"
       ? {
@@ -2042,6 +2247,7 @@ function SatelliteOrderCard({
       : detail.cost;
 
   const stages = detail.stagesWorked || [];
+  const supportUrl = resolveSupportUrl(detail.supportDocumentUrl);
 
   return (
     <div className="rounded-xl border bg-card p-4 shadow-sm space-y-3">
@@ -2100,15 +2306,29 @@ function SatelliteOrderCard({
           <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             Capas realizadas por este satélite
           </p>
-          {stages.length > 0 ? (
-            <button
-              type="button"
-              className="text-[11px] font-medium text-red-700 hover:underline"
-              onClick={() => setShowStages((v) => !v)}
-            >
-              {showStages ? "Ocultar detalle" : "Ver detalle"}
-            </button>
-          ) : null}
+          <div className="flex items-center gap-2 shrink-0">
+            {supportUrl ? (
+              <a
+                href={supportUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 hover:underline"
+                title={detail.supportDocumentName || "Documento soporte"}
+              >
+                <CheckCircle2 className="h-3 w-3" />
+                Ver soporte
+              </a>
+            ) : null}
+            {stages.length > 0 ? (
+              <button
+                type="button"
+                className="text-[11px] font-medium text-red-700 hover:underline"
+                onClick={() => setShowStages((v) => !v)}
+              >
+                {showStages ? "Ocultar detalle" : "Ver detalle"}
+              </button>
+            ) : null}
+          </div>
         </div>
 
         {stages.length === 0 ? (
@@ -2221,6 +2441,17 @@ function SatelliteOrderCard({
       </div>
 
       <div className="flex flex-wrap gap-2 pt-1">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,application/pdf,image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) onUploadSupport(file);
+            e.target.value = "";
+          }}
+        />
         <Button type="button" variant="outline" size="sm" className="h-8 text-xs gap-1" disabled>
           <FileText className="h-3.5 w-3.5" />
           Guía PDF
@@ -2236,6 +2467,52 @@ function SatelliteOrderCard({
           <CheckSquare className="h-3.5 w-3.5" />
           Confirmar / Editar
         </Button>
+        {supportUrl ? (
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs gap-1 border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+              asChild
+            >
+              <a
+                href={supportUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={detail.supportDocumentName || "Abrir documento soporte"}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Soporte cargado
+              </a>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs gap-1 text-muted-foreground"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={busy}
+              title="Reemplazar documento soporte"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              Reemplazar
+            </Button>
+          </>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs gap-1"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={busy}
+            title="Subir comprobante de pago"
+          >
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+            Documento soporte
+          </Button>
+        )}
       </div>
     </div>
   );

@@ -1507,6 +1507,61 @@ export function emptyRealCost(orderId: string): OrderRealCostBreakdown {
   };
 }
 
+const DISPATCH_CLIENT_LABEL = "Costo de despacho (entrega cliente)";
+
+/** Agrega/reemplaza el costo de despacho a cliente en el desglose de envíos/domicilios. */
+export function appendClientDispatchShippingCost(
+  orderId: string,
+  previous: OrderRealCostBreakdown | null | undefined,
+  amount: number,
+  registeredAt = new Date().toISOString()
+): OrderRealCostBreakdown {
+  const base = previous || emptyRealCost(orderId);
+  const cleanAmount = money(amount);
+  const withoutPrev = (base.shippingLines || []).filter((line) => {
+    const label = String(line.label || "").toLowerCase();
+    return !(
+      label.includes("costo de despacho") ||
+      label.includes("despacho (entrega") ||
+      label.includes("despacho a cliente")
+    );
+  });
+
+  const shippingLines =
+    cleanAmount > 0
+      ? [
+          ...withoutPrev,
+          {
+            label: DISPATCH_CLIENT_LABEL,
+            detail: "Registro desde Despacho al marcar entregado",
+            amount: cleanAmount,
+            stage: "dispatch",
+            stageLabel: "Despacho",
+            category: "shipping" as const,
+            updatedAt: registeredAt,
+          },
+        ]
+      : withoutPrev;
+
+  const shipping = money(shippingLines.reduce((s, l) => s + (Number(l.amount) || 0), 0));
+  const materials = money(base.materials);
+  const labor = money(base.labor);
+  const satellites = money(base.satellites);
+
+  return {
+    ...base,
+    orderId,
+    updatedAt: registeredAt,
+    materials,
+    labor,
+    satellites,
+    shipping,
+    shippingLines,
+    total: money(materials + labor + satellites + shipping),
+    byUser: Array.isArray(base.byUser) ? base.byUser : [],
+  };
+}
+
 /** Dispara refresco de UI en Órdenes cuando el costo real cambió en BD. */
 export function notifyOrderRealCostUpdated(orderId: string) {
   if (typeof window === "undefined") return;

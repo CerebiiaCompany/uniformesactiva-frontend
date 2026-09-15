@@ -120,3 +120,42 @@ export function paymentBadgeLabel(kind: PaymentBadgeKind): string {
   if (kind === "parcial") return "PARCIAL";
   return "NO";
 }
+
+/** Etiqueta legible para tablas y reportes (Costos, etc.). */
+export function paymentStatusLabel(status: PaymentStatus): string {
+  if (status === "pagado") return "Pagado";
+  if (status === "parcial") return "Parcial abonado";
+  return "No pagado";
+}
+
+export function paymentStatusBadgeClass(status: PaymentStatus): string {
+  if (status === "pagado") {
+    return "bg-emerald-100 text-emerald-800 border border-emerald-200";
+  }
+  if (status === "parcial") {
+    return "bg-amber-100 text-amber-900 border border-amber-200";
+  }
+  return "bg-red-100 text-red-800 border border-red-200";
+}
+
+/** Monto cobrado/registrado en plataforma por una orden (pagado + abonos parciales). */
+export function getOrderCollectedAmount(entity: PaymentSubjectLike): number {
+  const status = resolveEffectivePaymentStatus(entity);
+  const sale =
+    asAmount(entity.valor_venta_proyectado) ||
+    asAmount(entity.detalle_abono?.monto_total) ||
+    0;
+
+  if (status === "pagado") {
+    return sale > 0 ? sale : 0;
+  }
+
+  if (status === "parcial") {
+    const abono = asAmount(
+      entity.detalle_abono?.monto_abono ?? entity.detalle_abono?.abono_detalle?.monto_abono
+    );
+    return Number.isFinite(abono) && abono > 0 ? abono : 0;
+  }
+
+  return 0;
+}

@@ -1,5 +1,12 @@
 import { type OrderLogoFields } from "@/hooks/useOrders";
 
+/** Identificador corto ORD-XXX (misma regla en Órdenes, Despacho y Dashboard). */
+export function formatOrderShortId(orderId: string | null | undefined): string {
+    const raw = String(orderId || "").trim();
+    if (!raw) return "ORD-???";
+    return `ORD-${raw.slice(0, 3).toUpperCase()}`;
+}
+
 export const LOGO_POSITION_OPTIONS = [
     { id: "logo_manga_derecha", label: "Mng. Der" },
     { id: "logo_manga_izquierda", label: "Mng. Izq" },

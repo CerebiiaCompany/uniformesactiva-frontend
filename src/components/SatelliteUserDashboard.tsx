@@ -21,6 +21,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { resolveMediaUrl } from "@/lib/api-base";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
 import {
@@ -33,6 +34,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import type { Order } from "@/hooks/useOrders";
 import type { Satellite as SatelliteWorkshop } from "@/hooks/useSatellites";
@@ -43,6 +51,13 @@ import {
   getKanbanStageSoftPanelClass,
   getKanbanStageSoftTextClass,
 } from "@/lib/kanban-stage-theme";
+import {
+  buildHistoryPeriodOptions,
+  currentMonthKey,
+  matchesHistoryPayment,
+  matchesHistoryPeriod,
+  type HistoryPaymentFilter,
+} from "@/lib/history-period-filters";
 import {
   buildSatelliteUserPanel,
   formatMoneyCop,
@@ -83,6 +98,8 @@ export function SatelliteUserDashboard() {
   const [expandedOrders, setExpandedOrders] = useState<Record<string, boolean>>({});
   const [currentWorkshop, setCurrentWorkshop] = useState<SatelliteWorkshop | null>(null);
   const [updatingTerminado, setUpdatingTerminado] = useState<string | null>(null);
+  const [historyPeriod, setHistoryPeriod] = useState(currentMonthKey);
+  const [historyPayment, setHistoryPayment] = useState<HistoryPaymentFilter>("todos");
   const [laborConfirmDialog, setLaborConfirmDialog] = useState<{
     open: boolean;
     order: any;
@@ -311,6 +328,15 @@ export function SatelliteUserDashboard() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const periodOptions = useMemo(() => buildHistoryPeriodOptions(), []);
+  const filteredHistory = useMemo(() => {
+    return (panel?.orderHistory || []).filter(
+      (item) =>
+        matchesHistoryPeriod(item.periodDate, historyPeriod) &&
+        matchesHistoryPayment(item.paymentStatus, historyPayment)
+    );
+  }, [panel?.orderHistory, historyPeriod, historyPayment]);
 
   if (loading && !panel) {
     return (
@@ -623,15 +649,57 @@ export function SatelliteUserDashboard() {
             <p className="text-xs text-muted-foreground">
               Resumen de tus pedidos. Expande cada uno para ver las capas trabajadas.
             </p>
+            <div className="flex flex-wrap items-end gap-3 pt-3">
+              <div className="space-y-1 min-w-[180px]">
+                <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  Periodo
+                </Label>
+                <Select value={historyPeriod} onValueChange={setHistoryPeriod}>
+                  <SelectTrigger className="h-9 bg-background">
+                    <SelectValue placeholder="Periodo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {periodOptions.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1 min-w-[160px]">
+                <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  Estado de pago
+                </Label>
+                <Select
+                  value={historyPayment}
+                  onValueChange={(v) => setHistoryPayment(v as HistoryPaymentFilter)}
+                >
+                  <SelectTrigger className="h-9 bg-background">
+                    <SelectValue placeholder="Pago" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos</SelectItem>
+                    <SelectItem value="paid">Pagado</SelectItem>
+                    <SelectItem value="pending">No pagado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <p className="text-[11px] text-muted-foreground pb-2 ml-auto">
+                Mostrando {filteredHistory.length} de {(data.orderHistory || []).length}
+              </p>
+            </div>
           </CardHeader>
           <CardContent>
-            {(data.orderHistory || []).length === 0 ? (
+            {filteredHistory.length === 0 ? (
               <p className="text-sm text-muted-foreground py-4 text-center">
-                Aún no hay historial de trabajo en pedidos asignados.
+                {(data.orderHistory || []).length === 0
+                  ? "Aún no hay historial de trabajo en pedidos asignados."
+                  : "No hay pedidos para el periodo o estado de pago seleccionados."}
               </p>
             ) : (
               <div className="space-y-3">
-                {data.orderHistory.map((item) => {
+                {filteredHistory.map((item) => {
                   const expanded = Boolean(expandedOrders[item.orderId]);
                   const workedStages = item.stages.filter(
                     (s) =>
@@ -735,7 +803,26 @@ export function SatelliteUserDashboard() {
                         </div>
                       </div>
 
-                      <div className="flex justify-end">
+                      <div className="flex flex-wrap justify-end gap-2">
+                        {item.supportDocumentUrl ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs gap-1 border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                            asChild
+                          >
+                            <a
+                              href={resolveMediaUrl(item.supportDocumentUrl) || "#"}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title={item.supportDocumentName || "Documento soporte de pago"}
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              Soporte cargado
+                            </a>
+                          </Button>
+                        ) : null}
                         <Button
                           type="button"
                           variant="outline"

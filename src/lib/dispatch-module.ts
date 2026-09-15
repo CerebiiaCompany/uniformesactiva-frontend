@@ -34,6 +34,10 @@ export function isOrderReadyForDispatch(order: Order): boolean {
   return isDispatchStageKey(order.etapa_produccion);
 }
 
+export function isOrderDelivered(order: Order): boolean {
+  return String(order.estado || "").toLowerCase() === "delivered";
+}
+
 export type DispatchReadyOrder = {
   order: Order;
   shortId: string;
@@ -41,6 +45,11 @@ export type DispatchReadyOrder = {
   stageKey: string;
   dueDate: string | null;
   paymentLabel: string;
+};
+
+export type DispatchDeliveredOrder = DispatchReadyOrder & {
+  address: string;
+  deliveredAt: string | null;
 };
 
 export function toDispatchReadyRow(order: Order): DispatchReadyOrder {
@@ -63,6 +72,25 @@ export function toDispatchReadyRow(order: Order): DispatchReadyOrder {
     stageKey: order.etapa_produccion || "dispatch",
     dueDate: order.fecha_estimada_entrega || null,
     paymentLabel,
+  };
+}
+
+export function formatClientAddress(parts: {
+  address?: string | null;
+  city?: string | null;
+}): string {
+  return [parts.address, parts.city].map((p) => String(p || "").trim()).filter(Boolean).join(", ");
+}
+
+export function toDispatchDeliveredRow(
+  order: Order,
+  address = ""
+): DispatchDeliveredOrder {
+  const base = toDispatchReadyRow(order);
+  return {
+    ...base,
+    address: address.trim() || "—",
+    deliveredAt: order.fecha_entrega_real || null,
   };
 }
 
@@ -204,13 +232,18 @@ export function collectShipmentsFromOrder(order: Order): DispatchShipmentRow[] {
       continue;
     }
     const dir = inferDirection(`${label} ${line.userName || ""} ${line.stageLabel || ""}`);
+    // Despacho a cliente desde módulo Despacho
+    const direction =
+      /costo de despacho|entrega cliente|despacho a cliente/i.test(label)
+        ? ("a_cliente" as const)
+        : dir;
     pushRow({
-      id: `ship-${order.id}-${line.id || label}`,
+      id: `ship-${order.id}-${label}-${amount}-${line.updatedAt || "na"}`,
       orderId: order.id,
       shortId,
       customerName: order.cliente_nombre,
-      direction: dir,
-      directionLabel: directionLabel(dir),
+      direction,
+      directionLabel: directionLabel(direction),
       counterpart: line.userName || order.cliente_nombre || "—",
       address: "",
       amount,

@@ -110,6 +110,8 @@ export type SatelliteOrderDetail = {
   stagesWorked: SatelliteOrderStageWork[];
   /** Origen: local o tns */
   source?: "local" | "tns";
+  supportDocumentUrl?: string | null;
+  supportDocumentName?: string | null;
 };
 
 export const SATELLITE_WORK_STATUS_OPTIONS: {
@@ -961,8 +963,19 @@ export function buildSatelliteOrderDetails(params: {
       settlements[`PO-${rawId}`] ||
       (primary?.id ? settlements[primary.id] : undefined);
 
+    const workStatus: SatelliteWorkStatus =
+      settlement?.work_status === "recibido_completo"
+        ? "recibido_completo"
+        : settlement?.work_status === "recibido_faltantes"
+          ? "recibido_faltantes"
+          : "enviado";
+
+    // Si hay soporte de pago, la deuda queda pagada aunque el trabajo aún no esté confirmado.
     const paymentStatus: "pending" | "paid" =
-      settlement?.status === "paid" ? "paid" : "pending";
+      settlement?.status === "paid" ||
+      Boolean(settlement?.support_document_url || settlement?.support_document_path)
+        ? "paid"
+        : "pending";
 
     const orderItemsQty =
       row.order.items?.reduce((s, it) => s + (Number(it.cantidad) || 0), 0) || 0;
@@ -971,14 +984,6 @@ export function buildSatelliteOrderDetails(params: {
       0
     );
     const qty = orderItemsQty > 0 ? orderItemsQty : maxCardQty;
-
-    const workStatus: SatelliteWorkStatus =
-      paymentStatus === "paid" ||
-      settlement?.work_status === "recibido_completo"
-        ? "recibido_completo"
-        : settlement?.work_status === "recibido_faltantes"
-          ? "recibido_faltantes"
-          : "enviado";
 
     const agreedFromSettlement =
       settlement?.agreed_cost != null && Number.isFinite(Number(settlement.agreed_cost))
@@ -1039,6 +1044,8 @@ export function buildSatelliteOrderDetails(params: {
       confirmedAt: settlement?.confirmed_at || null,
       stagesWorked,
       source: "local",
+      supportDocumentUrl: settlement?.support_document_url || null,
+      supportDocumentName: settlement?.support_document_name || null,
     });
   }
 
@@ -1116,7 +1123,12 @@ export function buildSatelliteOrderDetails(params: {
       // Solo un settlement local explícito "pending" podría forzar lo contrario.
       let paymentStatus: "pending" | "paid" = "paid";
       if (settlement?.status === "pending") paymentStatus = "pending";
-      if (settlement?.status === "paid") paymentStatus = "paid";
+      if (
+        settlement?.status === "paid" ||
+        Boolean(settlement?.support_document_url || settlement?.support_document_path)
+      ) {
+        paymentStatus = "paid";
+      }
 
       details.push({
         orderId,
@@ -1143,6 +1155,8 @@ export function buildSatelliteOrderDetails(params: {
         confirmedAt: getPedidoFecha(p) || null,
         stagesWorked,
         source: "tns",
+        supportDocumentUrl: settlement?.support_document_url || null,
+        supportDocumentName: settlement?.support_document_name || null,
       });
     }
   }
