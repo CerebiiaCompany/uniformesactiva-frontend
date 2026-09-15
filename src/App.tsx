@@ -26,6 +26,9 @@ import ProductivityReportPage from "./pages/ProductivityReportPage";
 import QuotesReportPage from "./pages/QuotesReportPage";
 import InventoryReportPage from "./pages/InventoryReportPage";
 import PurchasesReportPage from "./pages/PurchasesReportPage";
+import SatellitesReportPage from "./pages/SatellitesReportPage";
+import DeliveriesReportPage from "./pages/DeliveriesReportPage";
+import ClientsReportPage from "./pages/ClientsReportPage";
 import Website from "./pages/Website";
 import Administration from "./pages/Administration";
 import AdministrationSubmodule from "./pages/AdministrationSubmodule";
@@ -82,6 +85,9 @@ const App = () => (
             <Route path="/reports/cotizaciones" element={<QuotesReportPage />} />
             <Route path="/reports/inventario" element={<InventoryReportPage />} />
             <Route path="/reports/compras" element={<PurchasesReportPage />} />
+            <Route path="/reports/satelites" element={<SatellitesReportPage />} />
+            <Route path="/reports/entregas" element={<DeliveriesReportPage />} />
+            <Route path="/reports/clientes" element={<ClientsReportPage />} />
             <Route path="/website" element={<Website />} />
             <Route path="/administration" element={<Administration />} />
             <Route path="/administration/:tab" element={<AdministrationSubmodule />} />

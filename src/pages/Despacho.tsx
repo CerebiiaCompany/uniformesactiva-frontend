@@ -21,23 +21,38 @@ import { cn } from "@/lib/utils";
 import {
   collectShipmentsFromOrder,
   collectShipmentsFromSatellites,
+  formatClientAddress,
+  isOrderDelivered,
   isOrderReadyForDispatch,
+  toDispatchDeliveredRow,
   toDispatchReadyRow,
+  type DispatchDeliveredOrder,
   type DispatchShipmentRow,
 } from "@/lib/dispatch-module";
-import { ORDER_REAL_COST_EVENT } from "@/lib/order-real-cost";
+import {
+  appendClientDispatchShippingCost,
+  normalizeRealCostBreakdown,
+  notifyOrderRealCostUpdated,
+  ORDER_REAL_COST_EVENT,
+} from "@/lib/order-real-cost";
 import { DispatchOrderPreviewDialog } from "@/components/DispatchOrderPreviewDialog";
+import {
+  DispatchDeliveryCostDialog,
+  type DispatchDeliveryCostPayload,
+} from "@/components/DispatchDeliveryCostDialog";
+import type { Client } from "@/hooks/useGetClients";
 import {
   ArrowLeftRight,
   CheckCircle2,
   Eye,
   Loader2,
+  MapPin,
   PackageCheck,
   Search,
   Truck,
 } from "lucide-react";
 
-type TabId = "listos" | "domicilios";
+type TabId = "listos" | "domicilios" | "entregados";
 
 async function fetchAllOrders(): Promise<Order[]> {
   const all: Order[] = [];
@@ -58,6 +73,33 @@ async function fetchAllOrders(): Promise<Order[]> {
     page += 1;
   }
   return all;
+}
+
+async function fetchClientsAddressMap(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  let page = 1;
+  let total = Infinity;
+  while (map.size < total && page <= 40) {
+    const params = new URLSearchParams({
+      page: String(page),
+      page_size: "100",
+    });
+    const data = await http<{
+      results?: Client[];
+      count?: number;
+      items?: Client[];
+      total_count?: number;
+    }>(`${endpoints.clients.list()}?${params.toString()}`);
+    const items = data.results || data.items || [];
+    total = data.count ?? data.total_count ?? items.length;
+    for (const c of items) {
+      if (!c?.id) continue;
+      map.set(String(c.id), formatClientAddress({ address: c.address, city: c.city }));
+    }
+    if (items.length === 0) break;
+    page += 1;
+  }
+  return map;
 }
 
 function money(value: number | string) {
@@ -88,20 +130,28 @@ function formatDateTime(value: string | null | undefined) {
 
 export default function Despacho() {
   const { toast } = useToast();
-  const { updateOrderStatus } = useOrders();
+  const { updateOrderStatus, updateKanbanTarjetas } = useOrders();
   const { satellites, isLoading: loadingSatellites } = useGetSatellites();
   const [orders, setOrders] = useState<Order[]>([]);
+  const [clientAddresses, setClientAddresses] = useState<Map<string, string>>(
+    () => new Map()
+  );
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabId>("listos");
   const [search, setSearch] = useState("");
   const [markingId, setMarkingId] = useState<string | null>(null);
   const [previewOrder, setPreviewOrder] = useState<Order | null>(null);
+  const [deliverDialogOrder, setDeliverDialogOrder] = useState<Order | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await fetchAllOrders();
+      const [list, addresses] = await Promise.all([
+        fetchAllOrders(),
+        fetchClientsAddressMap().catch(() => new Map<string, string>()),
+      ]);
       setOrders(list);
+      setClientAddresses(addresses);
     } catch (err: unknown) {
       toast({
         variant: "destructive",
@@ -141,6 +191,30 @@ export default function Despacho() {
       });
   }, [orders]);
 
+  const deliveredRows = useMemo(() => {
+    return orders
+      .filter(isOrderDelivered)
+      .map((order) =>
+        toDispatchDeliveredRow(
+          order,
+          clientAddresses.get(String(order.cliente_id || "")) || ""
+        )
+      )
+      .sort((a, b) => {
+        const ta = a.deliveredAt
+          ? new Date(a.deliveredAt).getTime()
+          : a.order.fecha_creacion
+            ? new Date(a.order.fecha_creacion).getTime()
+            : 0;
+        const tb = b.deliveredAt
+          ? new Date(b.deliveredAt).getTime()
+          : b.order.fecha_creacion
+            ? new Date(b.order.fecha_creacion).getTime()
+            : 0;
+        return tb - ta;
+      });
+  }, [orders, clientAddresses]);
+
   const shipmentRows = useMemo(() => {
     const byId = new Map<string, Order>();
     for (const order of orders) {
@@ -175,6 +249,16 @@ export default function Despacho() {
     });
   }, [readyRows, search]);
 
+  const filteredDelivered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return deliveredRows;
+    return deliveredRows.filter((row) => {
+      const hay =
+        `${row.shortId} ${row.order.cliente_nombre} ${row.order.producto_nombre} ${row.address}`.toLowerCase();
+      return hay.includes(term);
+    });
+  }, [deliveredRows, search]);
+
   const filteredShipments = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return shipmentRows;
@@ -185,13 +269,43 @@ export default function Despacho() {
     });
   }, [shipmentRows, search]);
 
-  const markDelivered = async (order: Order) => {
+  const openDeliverDialog = (order: Order) => {
+    setDeliverDialogOrder(order);
+  };
+
+  const confirmDeliverWithCost = async (payload: DispatchDeliveryCostPayload) => {
+    const order = deliverDialogOrder;
+    if (!order) return;
+
     setMarkingId(order.id);
     try {
+      if (payload.amount > 0) {
+        const previous = normalizeRealCostBreakdown(order.id, order.costo_real_desglose);
+        const breakdown = appendClientDispatchShippingCost(
+          order.id,
+          previous,
+          payload.amount,
+          payload.registeredAt
+        );
+        const cards = Array.isArray(order.kanban_tarjetas) ? order.kanban_tarjetas : [];
+        const costResult = await updateKanbanTarjetas(order.id, cards, breakdown);
+        if (costResult.errorMessage) {
+          toast({
+            variant: "destructive",
+            title: "No se pudo guardar el costo de despacho",
+            description: costResult.errorMessage,
+          });
+          return;
+        }
+        notifyOrderRealCostUpdated(order.id);
+      }
+
       const ok = await updateOrderStatus(
         order.id,
         "delivered",
-        "Despacho confirmado desde módulo Despacho"
+        payload.amount > 0
+          ? `Despacho confirmado. Costo de despacho: $${formatCurrency(payload.amount)}`
+          : "Despacho confirmado desde módulo Despacho"
       );
       if (!ok) {
         toast({
@@ -201,10 +315,16 @@ export default function Despacho() {
         });
         return;
       }
+
+      const shortId = toDispatchReadyRow(order).shortId;
       toast({
         title: "Pedido despachado",
-        description: `${toDispatchReadyRow(order).shortId} quedó como entregado.`,
+        description:
+          payload.amount > 0
+            ? `${shortId} quedó entregado. Costo de despacho ${formatCurrency(payload.amount)} sumado en Despacho y domicilios.`
+            : `${shortId} quedó como entregado.`,
       });
+      setDeliverDialogOrder(null);
       await reload();
     } finally {
       setMarkingId(null);
@@ -213,16 +333,15 @@ export default function Despacho() {
 
   const busy = loading || loadingSatellites;
 
+  const subtitle =
+    activeTab === "listos"
+      ? "Pedidos que llegaron al tablero Para Despacho y están listos para entrega."
+      : activeTab === "domicilios"
+        ? "Domicilios y envíos hacia/desde satélites y entregas a cliente."
+        : "Historial de pedidos ya entregados, con dirección de entrega.";
+
   return (
-    <AppLayout
-      title="Despacho"
-      subtitle={
-        activeTab === "listos"
-          ? "Pedidos que llegaron al tablero Para Despacho y están listos para entrega."
-          : "Domicilios y envíos hacia/desde satélites y entregas a cliente."
-      }
-      eyebrow="Operación"
-    >
+    <AppLayout title="Despacho" subtitle={subtitle} eyebrow="Operación">
       <div className="space-y-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2 border-b border-border pb-px overflow-x-auto">
@@ -238,6 +357,12 @@ export default function Despacho() {
               icon={Truck}
               label={`Domicilios (${shipmentRows.length})`}
             />
+            <TabButton
+              active={activeTab === "entregados"}
+              onClick={() => setActiveTab("entregados")}
+              icon={CheckCircle2}
+              label={`Entregados (${deliveredRows.length})`}
+            />
           </div>
 
           <div className="relative w-full sm:w-72">
@@ -248,7 +373,9 @@ export default function Despacho() {
               placeholder={
                 activeTab === "listos"
                   ? "Buscar pedido, cliente…"
-                  : "Buscar envío, satélite…"
+                  : activeTab === "domicilios"
+                    ? "Buscar envío, satélite…"
+                    : "Buscar pedido, cliente, dirección…"
               }
               className="pl-8 h-9"
             />
@@ -264,12 +391,33 @@ export default function Despacho() {
           <ReadyOrdersTable
             rows={filteredReady}
             markingId={markingId}
-            onMarkDelivered={markDelivered}
+            onMarkDelivered={openDeliverDialog}
             onPreview={(order) => setPreviewOrder(order)}
           />
-        ) : (
+        ) : activeTab === "domicilios" ? (
           <ShipmentsTable rows={filteredShipments} />
+        ) : (
+          <DeliveredOrdersTable
+            rows={filteredDelivered}
+            onPreview={(order) => setPreviewOrder(order)}
+          />
         )}
+
+        <DispatchDeliveryCostDialog
+          open={Boolean(deliverDialogOrder)}
+          orderShortId={
+            deliverDialogOrder
+              ? toDispatchReadyRow(deliverDialogOrder).shortId
+              : undefined
+          }
+          customerName={deliverDialogOrder?.cliente_nombre}
+          productName={deliverDialogOrder?.producto_nombre || undefined}
+          saving={Boolean(deliverDialogOrder && markingId === deliverDialogOrder.id)}
+          onCancel={() => {
+            if (!markingId) setDeliverDialogOrder(null);
+          }}
+          onConfirm={confirmDeliverWithCost}
+        />
 
         <DispatchOrderPreviewDialog
           open={Boolean(previewOrder)}
@@ -402,6 +550,89 @@ function ReadyOrdersTable({
               </TableRow>
             );
           })}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function DeliveredOrdersTable({
+  rows,
+  onPreview,
+}: {
+  rows: DispatchDeliveredOrder[];
+  onPreview: (order: Order) => void;
+}) {
+  if (!rows.length) {
+    return (
+      <EmptyState
+        icon={CheckCircle2}
+        title="Sin pedidos entregados"
+        description="Cuando marques un pedido como entregado desde Pedidos listos, quedará registrado aquí con su dirección."
+      />
+    );
+  }
+
+  return (
+    <div className="rounded-xl border bg-card overflow-hidden">
+      <Table>
+        <TableHeader>
+          <TableRow className="bg-muted/40">
+            <TableHead>Pedido</TableHead>
+            <TableHead>Cliente</TableHead>
+            <TableHead>Producto</TableHead>
+            <TableHead className="text-center">Uds</TableHead>
+            <TableHead className="text-right">Venta</TableHead>
+            <TableHead className="text-center">Pago</TableHead>
+            <TableHead>Dirección</TableHead>
+            <TableHead className="text-center">Entrega</TableHead>
+            <TableHead className="text-center">Estado</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={row.order.id}>
+              <TableCell>
+                <div className="inline-flex items-center gap-1.5">
+                  <span className="font-semibold">{row.shortId}</span>
+                  <button
+                    type="button"
+                    title="Ver detalle del pedido entregado"
+                    onClick={() => onPreview(row.order)}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+                  >
+                    <Eye className="h-4 w-4" />
+                    <span className="sr-only">Ver detalle</span>
+                  </button>
+                </div>
+              </TableCell>
+              <TableCell>{row.order.cliente_nombre}</TableCell>
+              <TableCell className="max-w-[200px] truncate">
+                {row.order.producto_nombre || "—"}
+              </TableCell>
+              <TableCell className="text-center tabular-nums">{row.quantity}</TableCell>
+              <TableCell className="text-right tabular-nums">
+                {money(row.order.valor_venta_proyectado)}
+              </TableCell>
+              <TableCell className="text-center text-xs font-medium">
+                {row.paymentLabel}
+              </TableCell>
+              <TableCell className="max-w-[260px]">
+                <div className="inline-flex items-start gap-1.5 text-sm">
+                  <MapPin className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />
+                  <span className="line-clamp-2" title={row.address}>
+                    {row.address || "—"}
+                  </span>
+                </div>
+              </TableCell>
+              <TableCell className="text-center text-sm whitespace-nowrap">
+                {formatDate(row.deliveredAt || row.dueDate)}
+              </TableCell>
+              <TableCell className="text-center">
+                <StatusBadge status={row.order.estado} compact />
+              </TableCell>
+            </TableRow>
+          ))}
         </TableBody>
       </Table>
     </div>

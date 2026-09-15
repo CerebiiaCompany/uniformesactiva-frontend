@@ -34,11 +34,13 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { matchesReportSearch } from "@/lib/report-search";
+import { printReportDocument } from "@/lib/report-print";
 import {
   exportProductivityReportCsv,
   getProductivityReport,
 } from "@/services/reportsService";
 import type { ProductivityReportResponse } from "@/types/reports";
+import { toast } from "sonner";
 
 function toStageType(etapa: string): StatusType {
   const allowed: StatusType[] = [
@@ -101,6 +103,55 @@ export default function ProductivityReportPage() {
   );
   const showInitialLoader = loading && !data;
 
+  const handlePrintPdf = async () => {
+    try {
+      await printReportDocument({
+        title: "Eficiencia productiva",
+        documentLabel: "Informe de eficiencia productiva",
+        summary: [
+          { label: "Tarjetas activas", value: String(summary?.tarjetas_activas ?? 0) },
+          { label: "Retrasadas", value: String(summary?.retrasadas ?? 0) },
+          {
+            label: "Días prom. en etapa",
+            value: (summary?.dias_promedio_etapa ?? 0).toLocaleString("es-CO", {
+              minimumFractionDigits: 1,
+              maximumFractionDigits: 1,
+            }),
+          },
+          { label: "Prendas en proceso", value: String(summary?.prendas_en_proceso ?? 0) },
+        ],
+        columns: [
+          { key: "tarjeta", label: "Tarjeta" },
+          { key: "orden", label: "Orden" },
+          { key: "cliente", label: "Cliente" },
+          { key: "etapa", label: "Etapa" },
+          { key: "responsable", label: "Responsable" },
+          { key: "cant", label: "Cant.", align: "right" },
+          { key: "dias", label: "Días en etapa", align: "right" },
+          { key: "entrega", label: "Entrega", align: "right" },
+          { key: "estado", label: "Estado" },
+        ],
+        rows: rows.map((r) => [
+          r.tarjeta,
+          r.orden,
+          r.cliente,
+          r.etapa_label,
+          r.responsable || "—",
+          String(r.cantidad),
+          String(r.dias_en_etapa),
+          r.fecha_entrega || "—",
+          r.estado_label,
+        ]),
+        notes:
+          "Cada fila corresponde a una tarjeta Kanban de órdenes en producción. Retraso: fecha de entrega vencida o más de 7 días en la misma etapa.",
+        signLeft: "Elaborado por",
+        signRight: "Revisado por",
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo generar el PDF");
+    }
+  };
+
   return (
     <AppLayout
       title="Eficiencia productiva"
@@ -125,7 +176,7 @@ export default function ProductivityReportPage() {
               <Download className="h-4 w-4 mr-2" />
               CSV / Excel
             </Button>
-            <Button size="sm" onClick={() => window.print()} disabled={!rows.length}>
+            <Button size="sm" onClick={handlePrintPdf} disabled={!rows.length}>
               <FileText className="h-4 w-4 mr-2" />
               PDF
             </Button>

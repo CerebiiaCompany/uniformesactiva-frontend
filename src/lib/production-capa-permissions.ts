@@ -339,6 +339,10 @@ export function mergeProductionUserFromApi(me: Record<string, unknown>): Product
       production_stage_keys:
         me.production_stage_keys || prev.production_stage_keys || [],
       satellite_id: me.satellite_id ? String(me.satellite_id) : prev.satellite_id || "",
+      settlements:
+        me.settlements && typeof me.settlements === "object"
+          ? me.settlements
+          : prev.settlements || {},
     };
     localStorage.setItem("user", JSON.stringify(next));
   } catch {

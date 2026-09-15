@@ -62,6 +62,10 @@ export type SatelliteOrderHistory = {
   workStatus: SatelliteOrderDetail["workStatus"];
   totalLabor: number;
   stages: SatelliteStageActivity[];
+  supportDocumentUrl?: string | null;
+  supportDocumentName?: string | null;
+  /** Fecha de referencia para filtro por periodo (YYYY-MM-DD) */
+  periodDate?: string | null;
 };
 
 export type SatelliteUserPanelData = {
@@ -326,6 +330,14 @@ export function buildSatelliteOrderHistory(params: {
         ? detail.agreedCost
         : stages.reduce((sum, st) => sum + st.laborAmount, 0) || detail.cost;
 
+    const stageDates = stages
+      .map((s) => s.updatedAt)
+      .filter(Boolean) as string[];
+    const periodDate =
+      (detail.paidAt || detail.confirmedAt || detail.dueDate || stageDates.sort().at(-1) || "")
+        .toString()
+        .slice(0, 10) || null;
+
     history.push({
       orderId: detail.orderId,
       orderCode: detail.orderCode,
@@ -337,6 +349,9 @@ export function buildSatelliteOrderHistory(params: {
       workStatus: detail.workStatus,
       totalLabor,
       stages,
+      supportDocumentUrl: detail.supportDocumentUrl || null,
+      supportDocumentName: detail.supportDocumentName || null,
+      periodDate,
     });
   }
 

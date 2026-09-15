@@ -25,8 +25,10 @@ import {
 } from "lucide-react";
 import { formatCurrency } from "@/lib/format-number";
 import { matchesReportSearch } from "@/lib/report-search";
+import { printReportDocument } from "@/lib/report-print";
 import { exportPurchasesReportCsv, getPurchasesReport } from "@/services/reportsService";
 import type { PurchasesReportResponse } from "@/types/reports";
+import { toast } from "sonner";
 
 const fmtMoney = (value: number) => `$${formatCurrency(value)}`;
 const fmtQty = (value: number) =>
@@ -71,6 +73,48 @@ export default function PurchasesReportPage() {
   );
   const showInitialLoader = loading && !data;
 
+  const handlePrintPdf = async () => {
+    try {
+      await printReportDocument({
+        title: "Compras por Proveedor",
+        documentLabel: "Informe de compras por proveedor",
+        summary: [
+          { label: "Proveedores", value: String(summary?.proveedores_total ?? 0) },
+          { label: "Compras registradas", value: String(summary?.compras_registradas ?? 0) },
+          { label: "Monto comprado", value: fmtMoney(summary?.monto_comprado ?? 0) },
+          { label: "Materiales distintos", value: String(summary?.materiales_distintos ?? 0) },
+        ],
+        columns: [
+          { key: "proveedor", label: "Proveedor" },
+          { key: "materiales", label: "Materiales", align: "right" },
+          { key: "entradas", label: "Entradas", align: "right" },
+          { key: "cantidad", label: "Cantidad", align: "right" },
+          { key: "monto", label: "Monto", align: "right" },
+          { key: "particip", label: "Particip.", align: "right" },
+          { key: "ultima", label: "Última compra", align: "right" },
+        ],
+        rows: rows.map((r) => [
+          r.proveedor,
+          String(r.materiales),
+          String(r.entradas),
+          fmtQty(r.cantidad),
+          fmtMoney(r.monto),
+          `${r.participacion_pct.toLocaleString("es-CO", {
+            minimumFractionDigits: 1,
+            maximumFractionDigits: 1,
+          })}%`,
+          r.ultima_compra || "—",
+        ]),
+        notes:
+          "Fuente: ComprasDetalladas TNS (entradas de material, últimos 2 años). Montos y cantidades reflejan el inventario real registrado en el ERP.",
+        signLeft: "Elaborado por",
+        signRight: "Revisado por",
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo generar el PDF");
+    }
+  };
+
   return (
     <AppLayout
       title="Compras por Proveedor"
@@ -95,7 +139,7 @@ export default function PurchasesReportPage() {
               <Download className="h-4 w-4 mr-2" />
               CSV / Excel
             </Button>
-            <Button size="sm" onClick={() => window.print()} disabled={!rows.length}>
+            <Button size="sm" onClick={handlePrintPdf} disabled={!rows.length}>
               <FileText className="h-4 w-4 mr-2" />
               PDF
             </Button>

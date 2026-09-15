@@ -34,8 +34,10 @@ import {
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/format-number";
 import { matchesReportSearch } from "@/lib/report-search";
+import { printReportDocument } from "@/lib/report-print";
 import { exportInventoryReportCsv, getInventoryReport } from "@/services/reportsService";
 import type { InventoryReportResponse } from "@/types/reports";
+import { toast } from "sonner";
 
 const fmtMoney = (value: number) => `$${formatCurrency(value)}`;
 const fmtQty = (value: number) =>
@@ -97,6 +99,53 @@ export default function InventoryReportPage() {
     return Array.from(set).sort((a, b) => a.localeCompare(b, "es"));
   }, [allRows]);
 
+  const handlePrintPdf = async () => {
+    try {
+      await printReportDocument({
+        title: "Reporte de Inventario",
+        documentLabel: "Informe de inventario",
+        summary: [
+          { label: "Materiales", value: String(summary?.materiales_total ?? 0) },
+          { label: "Valor del inventario", value: fmtMoney(summary?.valor_inventario ?? 0) },
+          { label: "En stock bajo", value: String(summary?.stock_bajo ?? 0) },
+          { label: "Movimientos", value: String(summary?.movimientos_total ?? 0) },
+        ],
+        columns: [
+          { key: "id", label: "ID" },
+          { key: "material", label: "Material" },
+          { key: "categoria", label: "Categoría" },
+          { key: "unidad", label: "Unidad" },
+          { key: "stock", label: "Stock", align: "right" },
+          { key: "minimo", label: "Mínimo", align: "right" },
+          { key: "costo", label: "Costo unit.", align: "right" },
+          { key: "valor", label: "Valor", align: "right" },
+          { key: "proveedores", label: "Proveedores", align: "right" },
+          { key: "proveedor_ref", label: "Proveedor ref." },
+          { key: "estado", label: "Estado" },
+        ],
+        rows: rows.map((r) => [
+          r.codigo,
+          r.material,
+          r.categoria,
+          r.unidad,
+          fmtQty(r.stock),
+          fmtQty(r.minimo),
+          fmtMoney(r.costo_unitario),
+          fmtMoney(r.valor),
+          String(r.proveedores),
+          r.proveedor_ref || "—",
+          r.estado,
+        ]),
+        notes:
+          "Fuente: inventario transaccional TNS (ERP). Los mínimos locales se aplican solo cuando hay coincidencia por código o nombre.",
+        signLeft: "Elaborado por",
+        signRight: "Revisado por",
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo generar el PDF");
+    }
+  };
+
   return (
     <AppLayout
       title="Reporte de Inventario"
@@ -121,7 +170,7 @@ export default function InventoryReportPage() {
               <Download className="h-4 w-4 mr-2" />
               CSV / Excel
             </Button>
-            <Button size="sm" onClick={() => window.print()} disabled={!rows.length}>
+            <Button size="sm" onClick={handlePrintPdf} disabled={!rows.length}>
               <FileText className="h-4 w-4 mr-2" />
               PDF
             </Button>

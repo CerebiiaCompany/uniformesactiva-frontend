@@ -21,19 +21,19 @@ import {
   FileText,
   Loader2,
   Search,
-  TrendingUp,
+  Users,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/format-number";
 import { matchesReportSearch } from "@/lib/report-search";
 import { printReportDocument } from "@/lib/report-print";
-import { exportSalesReportCsv, getSalesReport } from "@/services/reportsService";
-import type { SalesReportResponse } from "@/types/reports";
+import { exportClientsReportCsv, getClientsReport } from "@/services/reportsService";
+import type { ClientsReportResponse } from "@/types/reports";
 import { toast } from "sonner";
 
 const fmtMoney = (value: number) => `$${formatCurrency(value)}`;
 
-export default function SalesReportPage() {
-  const [data, setData] = useState<SalesReportResponse | null>(null);
+export default function ClientsReportPage() {
+  const [data, setData] = useState<ClientsReportResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -42,7 +42,7 @@ export default function SalesReportPage() {
     let mounted = true;
     setLoading(true);
     setError(null);
-    getSalesReport()
+    getClientsReport()
       .then((res) => {
         if (mounted) setData(res);
       })
@@ -64,48 +64,78 @@ export default function SalesReportPage() {
   const allRows = data?.rows ?? [];
   const rows = useMemo(
     () =>
-      allRows.filter((row) => matchesReportSearch(search, row.cliente, row.ciudad)),
+      allRows.filter((row) =>
+        matchesReportSearch(
+          search,
+          row.cliente,
+          row.empresa,
+          row.ciudad,
+          row.telefono,
+          row.correo,
+          row.nit
+        )
+      ),
     [allRows, search]
   );
   const showInitialLoader = loading && !data;
 
+  const totals = useMemo(
+    () => ({
+      ordenes: rows.reduce((sum, row) => sum + (Number(row.ordenes) || 0), 0),
+      facturacion: rows.reduce((sum, row) => sum + (Number(row.facturacion) || 0), 0),
+    }),
+    [rows]
+  );
+
   const handlePrintPdf = async () => {
     try {
       await printReportDocument({
-        title: "Reporte de Ventas",
-        documentLabel: "Informe de ventas",
+        title: "Reporte de Clientes",
+        documentLabel: "Informe de clientes",
         summary: [
-          { label: "Ventas totales", value: fmtMoney(summary?.ventas_totales ?? 0) },
-          { label: "Utilidad estimada", value: fmtMoney(summary?.utilidad_estimada ?? 0) },
+          { label: "Clientes", value: String(summary?.clientes_total ?? 0) },
+          { label: "Facturación histórica", value: fmtMoney(summary?.facturacion_historica ?? 0) },
+          { label: "Órdenes históricas", value: String(summary?.ordenes_historicas ?? 0) },
           { label: "Ticket promedio", value: fmtMoney(summary?.ticket_promedio ?? 0) },
-          {
-            label: "Cotizaciones aprobadas",
-            value: `${summary?.cotizaciones_aprobadas ?? 0} / ${summary?.cotizaciones_total ?? 0}`,
-          },
         ],
         columns: [
           { key: "cliente", label: "Cliente" },
+          { key: "empresa", label: "Empresa" },
           { key: "ciudad", label: "Ciudad" },
+          { key: "telefono", label: "Teléfono" },
+          { key: "correo", label: "Correo" },
           { key: "ordenes", label: "Órdenes", align: "right" },
-          { key: "prendas", label: "Prendas", align: "right" },
-          { key: "ventas", label: "Ventas", align: "right" },
-          { key: "costo", label: "Costo", align: "right" },
-          { key: "utilidad", label: "Utilidad", align: "right" },
-          { key: "particip", label: "Particip.", align: "right" },
-          { key: "ultima", label: "Última orden", align: "right" },
+          { key: "facturacion", label: "Facturación", align: "right" },
+          { key: "ticket", label: "Ticket prom.", align: "right" },
+          { key: "desde", label: "Cliente desde" },
+          { key: "ultima", label: "Última interacción" },
         ],
         rows: rows.map((r) => [
           r.cliente,
+          r.empresa || "—",
           r.ciudad,
+          r.telefono || "—",
+          r.correo || "—",
           String(r.ordenes),
-          String(r.prendas),
-          fmtMoney(r.ventas),
-          fmtMoney(r.costo),
-          fmtMoney(r.utilidad),
-          `${r.participacion_pct.toLocaleString("es-CO", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`,
-          r.ultima_orden || "—",
+          fmtMoney(r.facturacion),
+          fmtMoney(r.ticket_promedio),
+          r.cliente_desde || "—",
+          r.ultima_interaccion || "—",
         ]),
-        notes: "Ventas calculadas desde órdenes registradas en la plataforma.",
+        totalsRow: [
+          "Totales",
+          "",
+          "",
+          "",
+          "",
+          String(totals.ordenes),
+          fmtMoney(totals.facturacion),
+          "",
+          "",
+          "",
+        ],
+        notes:
+          "Facturación = suma de valor de venta de órdenes del cliente. Ticket promedio = facturación / órdenes.",
         signLeft: "Elaborado por",
         signRight: "Revisado por",
       });
@@ -116,8 +146,8 @@ export default function SalesReportPage() {
 
   return (
     <AppLayout
-      title="Reporte de Ventas"
-      subtitle="Ingresos por cliente, participación, ticket promedio y cotizaciones"
+      title="Reporte de Clientes"
+      subtitle="Histórico comercial por cliente: órdenes, facturación, ticket y última interacción"
       eyebrow="Reportes"
     >
       <div className="space-y-5 print:space-y-4">
@@ -129,7 +159,12 @@ export default function SalesReportPage() {
             </Link>
           </Button>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={() => exportSalesReportCsv(rows)} disabled={!rows.length}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => exportClientsReportCsv(rows)}
+              disabled={!rows.length}
+            >
               <Download className="h-4 w-4 mr-2" />
               CSV / Excel
             </Button>
@@ -143,7 +178,7 @@ export default function SalesReportPage() {
         {showInitialLoader ? (
           <div className="flex items-center justify-center py-16 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin mr-2" />
-            Cargando reporte de ventas…
+            Cargando reporte de clientes…
           </div>
         ) : error ? (
           <Card>
@@ -152,31 +187,25 @@ export default function SalesReportPage() {
         ) : (
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+              <StatCard title="CLIENTES" value={summary?.clientes_total ?? 0} icon={Users} />
               <StatCard
-                title="VENTAS TOTALES"
-                value={summary?.ventas_totales ?? 0}
+                title="FACTURACIÓN HISTÓRICA"
+                value={summary?.facturacion_historica ?? 0}
                 formatValue={(n) => fmtMoney(n)}
-                icon={TrendingUp}
+                icon={DollarSign}
                 variant="success"
               />
               <StatCard
-                title="UTILIDAD ESTIMADA"
-                value={summary?.utilidad_estimada ?? 0}
-                formatValue={(n) => fmtMoney(n)}
-                icon={DollarSign}
+                title="ÓRDENES HISTÓRICAS"
+                value={summary?.ordenes_historicas ?? 0}
+                icon={ClipboardList}
+                variant="accent"
               />
               <StatCard
                 title="TICKET PROMEDIO"
                 value={summary?.ticket_promedio ?? 0}
                 formatValue={(n) => fmtMoney(n)}
                 icon={DollarSign}
-                variant="accent"
-              />
-              <StatCard
-                title="COTIZACIONES APROBADAS"
-                value={`${summary?.cotizaciones_aprobadas ?? 0} / ${summary?.cotizaciones_total ?? 0}`}
-                icon={ClipboardList}
-                variant="warning"
               />
             </div>
 
@@ -184,7 +213,7 @@ export default function SalesReportPage() {
               <CardHeader className="pb-3">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <CardTitle className="text-base">
-                    Detalle ({rows.length} registros)
+                    Detalle ({rows.length} {rows.length === 1 ? "registro" : "registros"})
                   </CardTitle>
                   <div className="relative min-w-[220px] print:hidden">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -200,7 +229,7 @@ export default function SalesReportPage() {
               <CardContent className="p-0 sm:p-6 sm:pt-0">
                 {rows.length === 0 ? (
                   <div className="py-10 text-center text-sm text-muted-foreground">
-                    No hay ventas ni cotizaciones registradas para los filtros seleccionados.
+                    Sin resultados para los filtros aplicados.
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
@@ -208,44 +237,49 @@ export default function SalesReportPage() {
                       <TableHeader>
                         <TableRow>
                           <TableHead>Cliente</TableHead>
+                          <TableHead>Empresa</TableHead>
                           <TableHead>Ciudad</TableHead>
+                          <TableHead>Teléfono</TableHead>
+                          <TableHead>Correo</TableHead>
                           <TableHead className="text-right">Órdenes</TableHead>
-                          <TableHead className="text-right">Prendas</TableHead>
-                          <TableHead className="text-right">Ventas</TableHead>
-                          <TableHead className="text-right">Costo</TableHead>
-                          <TableHead className="text-right">Utilidad</TableHead>
-                          <TableHead className="text-right">Particip.</TableHead>
-                          <TableHead className="text-right">Última orden</TableHead>
+                          <TableHead className="text-right">Facturación</TableHead>
+                          <TableHead className="text-right">Ticket prom.</TableHead>
+                          <TableHead>Cliente desde</TableHead>
+                          <TableHead>Última interacción</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {rows.map((row) => (
-                          <TableRow key={row.client_id}>
+                          <TableRow key={row.id}>
                             <TableCell className="font-semibold">{row.cliente}</TableCell>
+                            <TableCell>{row.empresa || "—"}</TableCell>
                             <TableCell>{row.ciudad}</TableCell>
+                            <TableCell className="whitespace-nowrap">{row.telefono}</TableCell>
+                            <TableCell>{row.correo}</TableCell>
                             <TableCell className="text-right tabular-nums">{row.ordenes}</TableCell>
-                            <TableCell className="text-right tabular-nums">{row.prendas}</TableCell>
                             <TableCell className="text-right tabular-nums font-medium">
-                              {fmtMoney(row.ventas)}
+                              {fmtMoney(row.facturacion)}
                             </TableCell>
                             <TableCell className="text-right tabular-nums">
-                              {fmtMoney(row.costo)}
+                              {fmtMoney(row.ticket_promedio)}
                             </TableCell>
-                            <TableCell className="text-right tabular-nums text-emerald-700 dark:text-emerald-400">
-                              {fmtMoney(row.utilidad)}
+                            <TableCell className="whitespace-nowrap text-muted-foreground">
+                              {row.cliente_desde || "—"}
                             </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {row.participacion_pct.toLocaleString("es-CO", {
-                                minimumFractionDigits: 1,
-                                maximumFractionDigits: 1,
-                              })}
-                              %
-                            </TableCell>
-                            <TableCell className="text-right whitespace-nowrap text-muted-foreground">
-                              {row.ultima_orden || "—"}
+                            <TableCell className="whitespace-nowrap text-muted-foreground">
+                              {row.ultima_interaccion || "—"}
                             </TableCell>
                           </TableRow>
                         ))}
+                        <TableRow className="bg-muted/40 font-semibold">
+                          <TableCell>Totales</TableCell>
+                          <TableCell colSpan={4} />
+                          <TableCell className="text-right tabular-nums">{totals.ordenes}</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {fmtMoney(totals.facturacion)}
+                          </TableCell>
+                          <TableCell colSpan={3} />
+                        </TableRow>
                       </TableBody>
                     </Table>
                   </div>
@@ -254,9 +288,9 @@ export default function SalesReportPage() {
             </Card>
 
             <p className="text-[11px] text-muted-foreground print:hidden">
-              Las ventas se calculan desde las órdenes registradas en la plataforma (conversión de
-              cotización o creación directa). Las cotizaciones muestran el pipeline comercial por
-              cliente, incluyendo estados aprobados y convertidos a orden.
+              Facturación = suma de valor de venta de órdenes del cliente. Ticket promedio =
+              facturación / órdenes. Última interacción = la fecha más reciente entre órdenes,
+              cotizaciones o actualización del cliente.
             </p>
           </>
         )}

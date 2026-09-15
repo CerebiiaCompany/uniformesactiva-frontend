@@ -33,8 +33,10 @@ import {
 } from "lucide-react";
 import { formatCurrency } from "@/lib/format-number";
 import { matchesReportSearch } from "@/lib/report-search";
+import { printReportDocument } from "@/lib/report-print";
 import { exportQuotesReportCsv, getQuotesReport } from "@/services/reportsService";
 import type { QuotesReportResponse } from "@/types/reports";
+import { toast } from "sonner";
 
 const fmtMoney = (value: number) => `$${formatCurrency(value)}`;
 
@@ -100,6 +102,53 @@ export default function QuotesReportPage() {
   );
   const showInitialLoader = loading && !data;
 
+  const handlePrintPdf = async () => {
+    try {
+      await printReportDocument({
+        title: "Reporte de Cotizaciones",
+        documentLabel: "Informe de cotizaciones",
+        summary: [
+          { label: "Cotizaciones", value: String(summary?.cotizaciones_total ?? 0) },
+          { label: "Monto total", value: fmtMoney(summary?.monto_total ?? 0) },
+          { label: "Pipeline ponderado", value: fmtMoney(summary?.pipeline_ponderado ?? 0) },
+          { label: "Aprobadas", value: String(summary?.cotizaciones_aprobadas ?? 0) },
+        ],
+        columns: [
+          { key: "cotizacion", label: "Cotización" },
+          { key: "cliente", label: "Cliente" },
+          { key: "items", label: "Ítems" },
+          { key: "estado", label: "Estado" },
+          { key: "tomada", label: "Tomada por" },
+          { key: "creada", label: "Creada" },
+          { key: "enviada", label: "Enviada" },
+          { key: "vigente", label: "Vigente hasta" },
+          { key: "novedades", label: "Novedades", align: "right" },
+          { key: "prob", label: "Prob.", align: "right" },
+          { key: "monto", label: "Monto", align: "right" },
+        ],
+        rows: rows.map((r) => [
+          r.codigo,
+          r.cliente,
+          r.items,
+          r.estado_label,
+          r.tomado_por || "—",
+          r.fecha_creacion || "—",
+          r.fecha_envio || "—",
+          r.vigente_hasta || "—",
+          String(r.novedades),
+          `${r.probabilidad}%`,
+          fmtMoney(r.monto),
+        ]),
+        notes:
+          "El pipeline ponderado suma el monto de cada cotización multiplicado por su probabilidad de cierre. Las inactivas se excluyen del reporte.",
+        signLeft: "Elaborado por",
+        signRight: "Revisado por",
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo generar el PDF");
+    }
+  };
+
   return (
     <AppLayout
       title="Reporte de Cotizaciones"
@@ -124,7 +173,7 @@ export default function QuotesReportPage() {
               <Download className="h-4 w-4 mr-2" />
               CSV / Excel
             </Button>
-            <Button size="sm" onClick={() => window.print()} disabled={!rows.length}>
+            <Button size="sm" onClick={handlePrintPdf} disabled={!rows.length}>
               <FileText className="h-4 w-4 mr-2" />
               PDF
             </Button>

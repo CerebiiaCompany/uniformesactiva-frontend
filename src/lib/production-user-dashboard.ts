@@ -1,5 +1,6 @@
 import type { Order } from "@/hooks/useOrders";
 import type { ProductionOrder } from "@/data/mockData";
+import type { SatelliteSettlement } from "@/hooks/useSatellites";
 import { formatMoneyCop } from "@/lib/satellite-dashboard";
 import { parseStageKeys, cardAssignedToOperatorOnAllowedStage, type ProductionSession } from "@/lib/production-capa-permissions";
 
@@ -16,7 +17,23 @@ export type StoredProductionUser = {
   stageKeys: string[];
   roles: string[];
   isProduction: boolean;
+  settlements: Record<string, SatelliteSettlement>;
 };
+
+function resolveSettlement(
+  settlements: Record<string, SatelliteSettlement> | undefined,
+  orderId: string,
+  cardIds?: string[]
+): SatelliteSettlement | undefined {
+  if (!settlements || typeof settlements !== "object") return undefined;
+  const rawId = String(orderId).replace(/^PO-/, "");
+  return (
+    settlements[rawId] ||
+    settlements[orderId] ||
+    settlements[`PO-${rawId}`] ||
+    (cardIds || []).map((id) => settlements[id]).find(Boolean)
+  );
+}
 
 export type ProductionUserAlert = {
   id: string;
@@ -66,6 +83,8 @@ export type ProductionOrderDetail = {
   /** Desglose de MO y pago por cada capa del pedido */
   stagePayments: ProductionStagePayment[];
   cardIds: string[];
+  supportDocumentUrl?: string | null;
+  supportDocumentName?: string | null;
 };
 
 export type ProductionOrderHistory = {
@@ -79,6 +98,10 @@ export type ProductionOrderHistory = {
   paymentStatus: "pending" | "paid";
   totalLabor: number;
   stages: ProductionStageActivity[];
+  supportDocumentUrl?: string | null;
+  supportDocumentName?: string | null;
+  /** Fecha de referencia para filtro por periodo (YYYY-MM-DD) */
+  periodDate?: string | null;
 };
 
 export type ProductionUserPanelData = {
@@ -119,6 +142,11 @@ export function readStoredProductionUser(): StoredProductionUser | null {
     const fullName =
       `${firstName} ${lastName}`.trim() || String(u.username || "Usuario producción");
 
+    const settlements =
+      u.settlements && typeof u.settlements === "object" && !Array.isArray(u.settlements)
+        ? (u.settlements as Record<string, SatelliteSettlement>)
+        : {};
+
     return {
       id: String(u.id || "").trim(),
       username: String(u.username || ""),
@@ -136,6 +164,7 @@ export function readStoredProductionUser(): StoredProductionUser | null {
       ),
       roles,
       isProduction: true,
+      settlements,
     };
   } catch {
     return null;
@@ -595,11 +624,21 @@ export function buildProductionOrderDetails(params: {
 
     const costFromStages = stagePayments.reduce((s, st) => s + st.cost, 0);
     const cost = costFromStages > 0 ? costFromStages : row.cost;
-    const paymentStatus: "pending" | "paid" = stagePayments.every(
-      (st) => st.paymentStatus === "paid"
-    )
+    const cardIds = row.cards.map((c) => c.id);
+    const settlement = resolveSettlement(user.settlements, orderId, cardIds);
+    const settlementPaid =
+      settlement?.status === "paid" ||
+      Boolean(settlement?.support_document_url || settlement?.support_document_path);
+    if (settlementPaid) {
+      for (const st of stagePayments) {
+        st.paymentStatus = "paid";
+      }
+    }
+    const paymentStatus: "pending" | "paid" = settlementPaid
       ? "paid"
-      : "pending";
+      : stagePayments.every((st) => st.paymentStatus === "paid")
+        ? "paid"
+        : "pending";
 
     details.push({
       orderId,
@@ -615,7 +654,9 @@ export function buildProductionOrderDetails(params: {
       inWork: row.inWork,
       paymentStatus,
       stagePayments,
-      cardIds: row.cards.map((c) => c.id),
+      cardIds,
+      supportDocumentUrl: settlement?.support_document_url || null,
+      supportDocumentName: settlement?.support_document_name || null,
     });
   }
 
@@ -711,6 +752,12 @@ export function buildProductionOrderHistory(params: {
     const totalLabor =
       stages.reduce((s, st) => s + st.laborAmount, 0) || detail.cost;
 
+    const stageDates = stages
+      .map((s) => s.updatedAt)
+      .filter(Boolean) as string[];
+    const periodDate =
+      (detail.dueDate || stageDates.sort().at(-1) || "").toString().slice(0, 10) || null;
+
     history.push({
       orderId: detail.orderId,
       orderCode: detail.orderCode,
@@ -722,6 +769,9 @@ export function buildProductionOrderHistory(params: {
       paymentStatus: detail.paymentStatus,
       totalLabor,
       stages,
+      supportDocumentUrl: detail.supportDocumentUrl || null,
+      supportDocumentName: detail.supportDocumentName || null,
+      periodDate,
     });
   }
 

@@ -77,6 +77,7 @@ export const endpoints = {
         list: (params?: string) => `${base()}/api/v1/satellites/${params ? `?${params}` : ""}`,
         create: () => `${base()}/api/v1/satellites/`,
         detail: (id: string) => `${base()}/api/v1/satellites/${id}/`,
+        uploadSupport: () => `${base()}/api/v1/satellites/upload-support/`,
         tnsPedidosCompra: (params?: string) =>
             `${base()}/api/v1/orders/tns/pedidos-compra/${params ? `?${params}` : ''}`,
     },
@@ -124,6 +125,12 @@ export const endpoints = {
             `${base()}/api/v1/reports/inventario/${params ? `?${params}` : ""}`,
         purchases: (params?: string) =>
             `${base()}/api/v1/reports/compras/${params ? `?${params}` : ""}`,
+        satellites: (params?: string) =>
+            `${base()}/api/v1/reports/satelites/${params ? `?${params}` : ""}`,
+        deliveries: (params?: string) =>
+            `${base()}/api/v1/reports/entregas/${params ? `?${params}` : ""}`,
+        clients: (params?: string) =>
+            `${base()}/api/v1/reports/clientes/${params ? `?${params}` : ""}`,
     },
     productos: {
         list: () => `${base()}/api/v1/products/productos/`,

@@ -20,34 +20,12 @@ import {
 } from "lucide-react";
 import { formatCurrency } from "@/lib/format-number";
 import { cn } from "@/lib/utils";
-import { getInventoryReport, getOrdersReport, getProductivityReport, getProfitabilityReport, getPurchasesReport, getQuotesReport, getSalesReport } from "@/services/reportsService";
+import { getClientsReport, getDeliveriesReport, getInventoryReport, getOrdersReport, getProductivityReport, getProfitabilityReport, getPurchasesReport, getQuotesReport, getSalesReport, getSatellitesReport } from "@/services/reportsService";
 import type { ReportCardDefinition } from "@/types/reports";
 
 const fmtMoney = (value: number) => `$${formatCurrency(value)}`;
 
-const staticReports: ReportCardDefinition[] = [
-  {
-    id: "satelites",
-    title: "Reporte de Satélites",
-    description: "Trabajos asignados, estado, costos y pagos por liquidar",
-    countLabel: "Próximamente",
-    disabled: true,
-  },
-  {
-    id: "entregas",
-    title: "Entregas y Domicilios",
-    description: "Despachos a clientes y envíos a satélites con costos reales",
-    countLabel: "Próximamente",
-    disabled: true,
-  },
-  {
-    id: "clientes",
-    title: "Reporte de Clientes",
-    description: "Histórico, órdenes, facturación y última interacción",
-    countLabel: "Próximamente",
-    disabled: true,
-  },
-];
+const staticReports: ReportCardDefinition[] = [];
 
 const iconByReport: Record<string, typeof FileText> = {
   ordenes: FileText,
@@ -159,6 +137,27 @@ export default function Reports() {
     loading: boolean;
   }>({ proveedores: 0, monto: 0, compras: 0, tnsDisponible: true, loading: true });
 
+  const [satellitesSummary, setSatellitesSummary] = useState<{
+    trabajos: number;
+    activos: number;
+    porLiquidar: number;
+    loading: boolean;
+  }>({ trabajos: 0, activos: 0, porLiquidar: 0, loading: true });
+
+  const [deliveriesSummary, setDeliveriesSummary] = useState<{
+    movimientos: number;
+    entregados: number;
+    costo: number;
+    loading: boolean;
+  }>({ movimientos: 0, entregados: 0, costo: 0, loading: true });
+
+  const [clientsSummary, setClientsSummary] = useState<{
+    clientes: number;
+    facturacion: number;
+    ordenes: number;
+    loading: boolean;
+  }>({ clientes: 0, facturacion: 0, ordenes: 0, loading: true });
+
   useEffect(() => {
     let mounted = true;
     getOrdersReport()
@@ -249,6 +248,45 @@ export default function Reports() {
       })
       .catch(() => {
         if (mounted) setPurchasesSummary((prev) => ({ ...prev, loading: false }));
+      });
+    getSatellitesReport()
+      .then((res) => {
+        if (!mounted) return;
+        setSatellitesSummary({
+          trabajos: res.summary.trabajos_total,
+          activos: res.summary.satelites_activos,
+          porLiquidar: res.summary.por_liquidar,
+          loading: false,
+        });
+      })
+      .catch(() => {
+        if (mounted) setSatellitesSummary((prev) => ({ ...prev, loading: false }));
+      });
+    getDeliveriesReport()
+      .then((res) => {
+        if (!mounted) return;
+        setDeliveriesSummary({
+          movimientos: res.summary.movimientos_total,
+          entregados: res.summary.entregados,
+          costo: res.summary.costo_envios,
+          loading: false,
+        });
+      })
+      .catch(() => {
+        if (mounted) setDeliveriesSummary((prev) => ({ ...prev, loading: false }));
+      });
+    getClientsReport()
+      .then((res) => {
+        if (!mounted) return;
+        setClientsSummary({
+          clientes: res.summary.clientes_total,
+          facturacion: res.summary.facturacion_historica,
+          ordenes: res.summary.ordenes_historicas,
+          loading: false,
+        });
+      })
+      .catch(() => {
+        if (mounted) setClientsSummary((prev) => ({ ...prev, loading: false }));
       });
     return () => {
       mounted = false;
@@ -353,6 +391,45 @@ export default function Reports() {
     [purchasesSummary]
   );
 
+  const satellitesReport = useMemo<ReportCardDefinition>(
+    () => ({
+      id: "satelites",
+      title: "Reporte de Satélites",
+      description: "Trabajos asignados, estado, costos y pagos por liquidar",
+      countLabel: satellitesSummary.loading
+        ? "Cargando…"
+        : `${satellitesSummary.trabajos} trabajos · ${satellitesSummary.activos} satélites · ${fmtMoney(satellitesSummary.porLiquidar)} por liquidar`,
+      route: "/reports/satelites",
+    }),
+    [satellitesSummary]
+  );
+
+  const deliveriesReport = useMemo<ReportCardDefinition>(
+    () => ({
+      id: "entregas",
+      title: "Entregas y Domicilios",
+      description: "Despachos a clientes y envíos a satélites con costos reales",
+      countLabel: deliveriesSummary.loading
+        ? "Cargando…"
+        : `${deliveriesSummary.movimientos} movimientos · ${deliveriesSummary.entregados} entregados · ${fmtMoney(deliveriesSummary.costo)} envíos`,
+      route: "/reports/entregas",
+    }),
+    [deliveriesSummary]
+  );
+
+  const clientsReport = useMemo<ReportCardDefinition>(
+    () => ({
+      id: "clientes",
+      title: "Reporte de Clientes",
+      description: "Histórico, órdenes, facturación y última interacción",
+      countLabel: clientsSummary.loading
+        ? "Cargando…"
+        : `${clientsSummary.clientes} clientes · ${fmtMoney(clientsSummary.facturacion)} · ${clientsSummary.ordenes} órdenes`,
+      route: "/reports/clientes",
+    }),
+    [clientsSummary]
+  );
+
   const allInformes = [
     ordersReport,
     salesReport,
@@ -361,6 +438,9 @@ export default function Reports() {
     quotesReport,
     inventoryReport,
     purchasesReport,
+    satellitesReport,
+    deliveriesReport,
+    clientsReport,
     ...staticReports,
   ];
 
@@ -389,7 +469,10 @@ export default function Reports() {
           productivitySummary.loading ||
           quotesSummary.loading ||
           inventorySummary.loading ||
-          purchasesSummary.loading ? (
+          purchasesSummary.loading ||
+          satellitesSummary.loading ||
+          deliveriesSummary.loading ||
+          clientsSummary.loading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
               Actualizando métricas de reportes…

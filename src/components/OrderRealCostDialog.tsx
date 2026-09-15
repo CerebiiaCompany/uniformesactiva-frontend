@@ -2,7 +2,9 @@ import type { ComponentType, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
   Calculator,
+  Download,
   Layers,
+  Loader2,
   Package,
   Shirt,
   Truck,
@@ -30,6 +32,8 @@ import {
   type DeliveredInfoLine,
   type DeliveredMaterialsInfo,
 } from "@/lib/delivered-materials-info";
+import { printReportDocument } from "@/lib/report-print";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -38,6 +42,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { toast } from "sonner";
 
 type DeliveredMaterialsView = "pedido" | "prenda" | "variante";
 
@@ -53,6 +58,30 @@ type OrderRealCostDialogProps = {
 
 function money(value: number) {
   return `$${formatCurrency(value)}`;
+}
+
+function categoryLabel(line: RealCostLine, fallback: string): string {
+  const cat = String(line.category || "").toLowerCase();
+  if (cat === "materials") {
+    return line.materialSource === "kanban_additional"
+      ? "Material adicional (Kanban)"
+      : "Material entregado";
+  }
+  if (cat === "labor" || cat === "mold") return "Mano de obra";
+  if (cat === "satellite") return "Satélite / taller";
+  if (cat === "shipping") return "Despacho y domicilios";
+  return fallback;
+}
+
+function lineDetail(line: RealCostLine): string {
+  const parts = [
+    line.detail,
+    line.stageLabel || line.stage,
+    line.userName,
+  ]
+    .map((p) => String(p || "").trim())
+    .filter(Boolean);
+  return parts.join(" · ") || "—";
 }
 
 type SummaryCardTheme = {
@@ -108,7 +137,7 @@ const SUMMARY_CARD_THEMES: Record<string, SummaryCardTheme> = {
     value: "text-[#3D5638]",
     iconWrap: "bg-[#F4F7F3] text-[#4F6B4A] border border-[#A8BFA3]/40",
   },
-  "Envíos y domicilios": {
+  "Despacho y domicilios": {
     icon: Truck,
     panel: "bg-[#F5F6F7]/95",
     border: "border-[#A8B0B8]/45",
@@ -412,6 +441,7 @@ export function OrderRealCostDialog({
   const [deliveredInfo, setDeliveredInfo] = useState<DeliveredMaterialsInfo | null>(null);
   const [loadingDeliveredInfo, setLoadingDeliveredInfo] = useState(false);
   const [deliveredInfoError, setDeliveredInfoError] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -485,13 +515,110 @@ export function OrderRealCostDialog({
   const summaryCards = [
     { title: "Materiales entregados", amount: materialsTotal },
     { title: "Mano de obra", amount: data.labor },
-    { title: "Envíos y domicilios", amount: data.shipping },
+    { title: "Despacho y domicilios", amount: data.shipping },
   ];
 
   const shippingLines = useMemo(
     () => (data.shippingLines || []).filter((l) => (Number(l.amount) || 0) > 0),
     [data.shippingLines]
   );
+
+  const satelliteLines = useMemo(
+    () => (data.satelliteLines || []).filter((l) => (Number(l.amount) || 0) > 0),
+    [data.satelliteLines]
+  );
+
+  const handlePrintBreakdown = async () => {
+    setPrinting(true);
+    try {
+      const detailRows: string[][] = [];
+
+      for (const line of deliveredMaterials) {
+        if (!(Number(line.amount) > 0)) continue;
+        detailRows.push([
+          line.label || "Material",
+          categoryLabel(line, "Material entregado"),
+          lineDetail(line),
+          money(Number(line.amount) || 0),
+        ]);
+      }
+      for (const line of additionalMaterials) {
+        if (!(Number(line.amount) > 0)) continue;
+        detailRows.push([
+          line.label || "Material adicional",
+          categoryLabel(line, "Material adicional (Kanban)"),
+          lineDetail(line),
+          money(Number(line.amount) || 0),
+        ]);
+      }
+      for (const line of laborKanbanLines) {
+        if (!(Number(line.amount) > 0)) continue;
+        detailRows.push([
+          line.label || "Mano de obra",
+          categoryLabel(line, "Mano de obra"),
+          lineDetail(line),
+          money(Number(line.amount) || 0),
+        ]);
+      }
+      for (const line of satelliteLines) {
+        detailRows.push([
+          line.label || "Satélite",
+          categoryLabel(line, "Satélite / taller"),
+          lineDetail(line),
+          money(Number(line.amount) || 0),
+        ]);
+      }
+      for (const line of shippingLines) {
+        detailRows.push([
+          line.label || "Despacho / domicilio",
+          categoryLabel(line, "Despacho y domicilios"),
+          lineDetail(line),
+          money(Number(line.amount) || 0),
+        ]);
+      }
+
+      await printReportDocument({
+        title: "Desglose de costo real",
+        documentLabel: `Informe ${shortId}`,
+        summary: [
+          { label: "Orden", value: shortId },
+          { label: "Materiales entregados", value: money(materialsTotal) },
+          { label: "Mano de obra", value: money(data.labor) },
+          { label: "Despacho y domicilios", value: money(data.shipping) },
+          {
+            label: "Costo aproximado MO (variante)",
+            value: money(estimatedLabor ?? 0),
+          },
+          { label: "Costo estimado de la orden", value: money(estimated) },
+          { label: "Costo real acumulado", value: money(realAccumulated) },
+          {
+            label: savings >= 0 ? "Ahorro vs estimado" : "Sobrecosto vs estimado",
+            value: money(Math.abs(savings)),
+          },
+        ],
+        columns: [
+          { key: "concepto", label: "Concepto" },
+          { key: "categoria", label: "Categoría" },
+          { key: "detalle", label: "Detalle" },
+          { key: "valor", label: "Valor", align: "right" },
+        ],
+        rows: detailRows,
+        totalsRow: ["TOTAL COSTO REAL", "", "", money(realAccumulated)],
+        notes:
+          "Telas a precio TNS; insumos al precio del costeo de variante. Los materiales adicionales del Kanban se suman a materiales entregados. Despacho y domicilios incluye ida/vuelta a satélite y costo de despacho al entregar.",
+        signLeft: "Elaborado por",
+        signRight: "Revisado por",
+      });
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "No se pudo generar el PDF del desglose."
+      );
+    } finally {
+      setPrinting(false);
+    }
+  };
 
   const deliveredSubtitle =
     deliveredView === "pedido"
@@ -554,14 +681,32 @@ export function OrderRealCostDialog({
               adicionales del Kanban se suman a materiales entregados.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-8 w-8 rounded-full bg-red-600 text-white flex items-center justify-center shrink-0 hover:bg-red-700"
-            aria-label="Cerrar"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 text-xs"
+              disabled={printing}
+              onClick={() => void handlePrintBreakdown()}
+              title="Descargar informe PDF del desglose"
+            >
+              {printing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              {printing ? "Generando…" : "Descargar PDF"}
+            </Button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-8 w-8 rounded-full bg-red-600 text-white flex items-center justify-center shrink-0 hover:bg-red-700"
+              aria-label="Cerrar"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         <div className="px-5 sm:px-6 pb-6 pt-4 space-y-5">
@@ -677,8 +822,8 @@ export function OrderRealCostDialog({
           </DetailCard>
 
           <DetailCard
-            title="Envíos y domicilios"
-            subtitle="Costo de domicilio ida y vuelta al asignar satélite y otros envíos registrados"
+            title="Despacho y domicilios"
+            subtitle="Costo de despacho al entregar, domicilio ida/vuelta a satélite y otros envíos"
           >
             {shippingLines.length > 0 ? (
               <div className="divide-y">

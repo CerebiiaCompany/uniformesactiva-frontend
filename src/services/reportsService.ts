@@ -1,6 +1,8 @@
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
 import type {
+  ClientsReportResponse,
+  DeliveriesReportResponse,
   InventoryReportResponse,
   OrdersReportResponse,
   ProductivityReportResponse,
@@ -8,6 +10,7 @@ import type {
   PurchasesReportResponse,
   QuotesReportResponse,
   SalesReportResponse,
+  SatellitesReportResponse,
 } from "@/types/reports";
 
 export async function getOrdersReport(params?: {
@@ -500,6 +503,219 @@ export function exportPurchasesReportCsv(rows: PurchasesReportResponse["rows"]):
   const link = document.createElement("a");
   link.href = url;
   link.download = `reporte-compras-proveedor-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function getSatellitesReport(params?: {
+  estado?: string;
+  search?: string;
+}): Promise<SatellitesReportResponse> {
+  const query = new URLSearchParams();
+  if (params?.estado?.trim()) query.append("estado", params.estado.trim());
+  if (params?.search?.trim()) query.append("search", params.search.trim());
+
+  const url = endpoints.reports.satellites(query.toString() || undefined);
+  const res = await http<any>(url, { skipAuthRedirect: true });
+
+  if (res?.summary && Array.isArray(res.rows)) {
+    return { status: true, ...res } as SatellitesReportResponse;
+  }
+  if (res?.data?.summary && Array.isArray(res.data.rows)) {
+    return { status: true, ...res.data } as SatellitesReportResponse;
+  }
+
+  return {
+    status: false,
+    summary: {
+      trabajos_total: 0,
+      satelites_activos: 0,
+      costo_total: 0,
+      por_liquidar: 0,
+    },
+    rows: [],
+  };
+}
+
+export function exportSatellitesReportCsv(rows: SatellitesReportResponse["rows"]): void {
+  const headers = [
+    "Tarjeta",
+    "Orden",
+    "Cliente",
+    "Satélite",
+    "Especialidad",
+    "Etapa",
+    "Cantidad",
+    "Enviado",
+    "Recibido",
+    "Estado",
+    "Costo",
+    "Pago",
+  ];
+  const lines = rows.map((r) =>
+    [
+      r.tarjeta,
+      r.orden,
+      r.cliente,
+      r.satelite,
+      r.especialidad,
+      r.etapa_label,
+      String(r.cantidad),
+      r.fecha_enviado || "",
+      r.fecha_recibido || "",
+      r.estado_label,
+      String(r.costo),
+      r.pago_label,
+    ]
+      .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
+      .join(",")
+  );
+  const csv = [headers.join(","), ...lines].join("\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `reporte-satelites-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function getDeliveriesReport(params?: {
+  tipo?: string;
+  estado?: string;
+  search?: string;
+}): Promise<DeliveriesReportResponse> {
+  const query = new URLSearchParams();
+  if (params?.tipo?.trim()) query.append("tipo", params.tipo.trim());
+  if (params?.estado?.trim()) query.append("estado", params.estado.trim());
+  if (params?.search?.trim()) query.append("search", params.search.trim());
+
+  const url = endpoints.reports.deliveries(query.toString() || undefined);
+  const res = await http<any>(url, { skipAuthRedirect: true });
+
+  if (res?.summary && Array.isArray(res.rows)) {
+    return { status: true, ...res } as DeliveriesReportResponse;
+  }
+  if (res?.data?.summary && Array.isArray(res.data.rows)) {
+    return { status: true, ...res.data } as DeliveriesReportResponse;
+  }
+
+  return {
+    status: false,
+    summary: {
+      movimientos_total: 0,
+      entregados: 0,
+      costo_envios: 0,
+      costo_promedio: 0,
+    },
+    rows: [],
+    totales: { costo: 0 },
+  };
+}
+
+export function exportDeliveriesReportCsv(rows: DeliveriesReportResponse["rows"]): void {
+  const headers = [
+    "ID",
+    "Tipo",
+    "Orden",
+    "Destino",
+    "Dirección",
+    "Responsable",
+    "Fecha",
+    "Estado",
+    "Observaciones",
+    "Costo",
+  ];
+  const lines = rows.map((r) =>
+    [
+      r.codigo || r.id,
+      r.tipo_label,
+      r.orden,
+      r.destino,
+      r.direccion,
+      r.responsable,
+      r.fecha || "",
+      r.estado_label,
+      r.observaciones,
+      String(r.costo),
+    ]
+      .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
+      .join(",")
+  );
+  const csv = [headers.join(","), ...lines].join("\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `reporte-entregas-domicilios-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function getClientsReport(params?: {
+  search?: string;
+}): Promise<ClientsReportResponse> {
+  const query = new URLSearchParams();
+  if (params?.search?.trim()) query.append("search", params.search.trim());
+
+  const url = endpoints.reports.clients(query.toString() || undefined);
+  const res = await http<any>(url, { skipAuthRedirect: true });
+
+  if (res?.summary && Array.isArray(res.rows)) {
+    return { status: true, ...res } as ClientsReportResponse;
+  }
+  if (res?.data?.summary && Array.isArray(res.data.rows)) {
+    return { status: true, ...res.data } as ClientsReportResponse;
+  }
+
+  return {
+    status: false,
+    summary: {
+      clientes_total: 0,
+      facturacion_historica: 0,
+      ordenes_historicas: 0,
+      ticket_promedio: 0,
+    },
+    rows: [],
+    totales: { ordenes: 0, facturacion: 0 },
+  };
+}
+
+export function exportClientsReportCsv(rows: ClientsReportResponse["rows"]): void {
+  const headers = [
+    "Cliente",
+    "Empresa",
+    "Ciudad",
+    "Teléfono",
+    "Correo",
+    "Órdenes",
+    "Facturación",
+    "Ticket prom.",
+    "Cliente desde",
+    "Última interacción",
+  ];
+  const lines = rows.map((r) =>
+    [
+      r.cliente,
+      r.empresa,
+      r.ciudad,
+      r.telefono,
+      r.correo,
+      String(r.ordenes),
+      String(r.facturacion),
+      String(r.ticket_promedio),
+      r.cliente_desde || "",
+      r.ultima_interaccion || "",
+    ]
+      .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
+      .join(",")
+  );
+  const csv = [headers.join(","), ...lines].join("\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `reporte-clientes-${new Date().toISOString().slice(0, 10)}.csv`;
   link.click();
   URL.revokeObjectURL(url);
 }

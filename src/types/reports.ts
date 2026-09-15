@@ -217,3 +217,105 @@ export interface PurchasesReportResponse {
   summary: PurchasesReportSummary;
   rows: PurchasesReportRow[];
 }
+
+export interface SatellitesReportSummary {
+  trabajos_total: number;
+  satelites_activos: number;
+  costo_total: number;
+  por_liquidar: number;
+}
+
+export interface SatellitesReportRow {
+  id: string;
+  tarjeta: string;
+  orden: string;
+  orden_id: string;
+  cliente: string;
+  satelite: string;
+  satelite_id?: string | null;
+  especialidad: string;
+  etapa: string;
+  etapa_label: string;
+  cantidad: number;
+  fecha_enviado: string | null;
+  fecha_recibido: string | null;
+  estado: string;
+  estado_label: string;
+  costo: number;
+  pago: string;
+  pago_label: string;
+  por_liquidar: number;
+}
+
+export interface SatellitesReportResponse {
+  status: boolean;
+  summary: SatellitesReportSummary;
+  rows: SatellitesReportRow[];
+}
+
+export interface DeliveriesReportSummary {
+  movimientos_total: number;
+  entregados: number;
+  costo_envios: number;
+  costo_promedio: number;
+}
+
+export interface DeliveriesReportRow {
+  id: string;
+  codigo: string;
+  tipo: string;
+  tipo_label: string;
+  orden: string;
+  orden_id: string;
+  destino: string;
+  direccion: string;
+  responsable: string;
+  fecha: string | null;
+  estado: string;
+  estado_label: string;
+  observaciones: string;
+  costo: number;
+  source?: string;
+}
+
+export interface DeliveriesReportResponse {
+  status: boolean;
+  summary: DeliveriesReportSummary;
+  rows: DeliveriesReportRow[];
+  totales?: {
+    costo: number;
+  };
+}
+
+export interface ClientsReportSummary {
+  clientes_total: number;
+  facturacion_historica: number;
+  ordenes_historicas: number;
+  ticket_promedio: number;
+}
+
+export interface ClientsReportRow {
+  id: string;
+  cliente: string;
+  empresa: string;
+  ciudad: string;
+  telefono: string;
+  correo: string;
+  nit?: string | null;
+  tipo_cliente?: string;
+  ordenes: number;
+  facturacion: number;
+  ticket_promedio: number;
+  cliente_desde: string | null;
+  ultima_interaccion: string | null;
+}
+
+export interface ClientsReportResponse {
+  status: boolean;
+  summary: ClientsReportSummary;
+  rows: ClientsReportRow[];
+  totales?: {
+    ordenes: number;
+    facturacion: number;
+  };
+}
