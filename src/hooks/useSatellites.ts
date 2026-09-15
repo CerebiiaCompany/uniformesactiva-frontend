@@ -19,6 +19,11 @@ export type SatelliteSettlement = {
     observations?: string;
     agreed_cost?: number | null;
     confirmed_at?: string | null;
+    /** Comprobante / documento soporte de pago */
+    support_document_url?: string | null;
+    support_document_name?: string | null;
+    support_document_path?: string | null;
+    support_uploaded_at?: string | null;
 };
 
 export interface Satellite {
@@ -137,8 +142,15 @@ export function useUpdateSatellite() {
 export function useDeleteSatellite() {
     const queryClient = useQueryClient();
     const mutation = useMutation({
-        mutationFn: (id: string) =>
-            http(endpoints.satellites.detail(id), { method: "DELETE" }),
+        mutationFn: (input: string | { id: string; confirmZero?: boolean }) => {
+            const id = typeof input === "string" ? input : input.id;
+            const confirmZero =
+                typeof input === "string" ? false : Boolean(input.confirmZero);
+            const url = confirmZero
+                ? `${endpoints.satellites.detail(id)}?confirm_zero=1`
+                : endpoints.satellites.detail(id);
+            return http(url, { method: "DELETE" });
+        },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["satellites"] });
         },

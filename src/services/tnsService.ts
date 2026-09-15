@@ -10,6 +10,8 @@ import type {
   TNSProveedorOferta,
   TNSCompraItem,
   TNSMaterialComprasHistorialResponse,
+  TNSNotasInventarioResponse,
+  TNSMaterialNotasInventarioResponse,
   TNSOrderConsumptionResponse,
   TNSOrderConsumptionAlertsMatchResponse,
   TNSInventoryMovementHistoryResponse,
@@ -40,6 +42,8 @@ export type {
   TNSProveedorOferta,
   TNSCompraItem,
   TNSMaterialComprasHistorialResponse,
+  TNSNotasInventarioResponse,
+  TNSMaterialNotasInventarioResponse,
   TNSOrderConsumptionResponse,
   TNSOrderConsumptionAlertsMatchResponse,
   TNSInventoryMovementHistoryResponse,
@@ -762,6 +766,93 @@ export async function getTNSMaterialComprasHistorial(
     return res.data as TNSMaterialComprasHistorialResponse;
   }
   return res as TNSMaterialComprasHistorialResponse;
+}
+
+export interface TNSNotasInventarioParams {
+  search?: string;
+  cod_articulo?: string;
+  bodega?: string;
+  fecha_inicial?: string;
+  fecha_final?: string;
+  solo_notas?: boolean;
+  tipo?: string;
+  page?: number;
+  page_size?: number;
+  force_refresh?: boolean;
+}
+
+/**
+ * Consulta notas de inventario desde KardexDetallado TNS (listado general).
+ */
+export async function getTNSNotasInventario(
+  params: TNSNotasInventarioParams = {}
+): Promise<TNSNotasInventarioResponse> {
+  const query = new URLSearchParams();
+  if (params.search?.trim()) query.append("search", params.search.trim());
+  if (params.cod_articulo?.trim()) query.append("cod_articulo", params.cod_articulo.trim());
+  if (params.bodega?.trim()) query.append("bodega", params.bodega.trim());
+  if (params.fecha_inicial?.trim()) query.append("fecha_inicial", params.fecha_inicial.trim());
+  if (params.fecha_final?.trim()) query.append("fecha_final", params.fecha_final.trim());
+  if (params.tipo?.trim()) query.append("tipo", params.tipo.trim());
+  if (params.solo_notas === false) query.append("solo_notas", "false");
+  if (params.page != null) query.append("page", String(params.page));
+  if (params.page_size != null) query.append("page_size", String(params.page_size));
+  if (params.force_refresh) query.append("force_refresh", "true");
+
+  const url = endpoints.inventory.tnsNotasInventario(query.toString());
+  const res = await http<any>(url, { skipAuthRedirect: true });
+
+  if (res && Array.isArray(res.data)) {
+    return res as TNSNotasInventarioResponse;
+  }
+  if (res?.data && Array.isArray(res.data.data)) {
+    return res.data as TNSNotasInventarioResponse;
+  }
+  return {
+    status: Boolean(res?.status),
+    message: res?.message ?? null,
+    data: [],
+    total_count: 0,
+    summary: null,
+  };
+}
+
+/**
+ * Historial de notas de inventario TNS para un material específico.
+ */
+export async function getTNSMaterialNotasInventarioHistorial(
+  codigoArticulo: string,
+  options: {
+    fecha_inicial?: string;
+    fecha_final?: string;
+    force_refresh?: boolean;
+  } = {}
+): Promise<TNSMaterialNotasInventarioResponse> {
+  const query = new URLSearchParams();
+  if (options.fecha_inicial?.trim()) query.append("fecha_inicial", options.fecha_inicial.trim());
+  if (options.fecha_final?.trim()) query.append("fecha_final", options.fecha_final.trim());
+  if (options.force_refresh) query.append("force_refresh", "true");
+
+  const url = endpoints.inventory.tnsNotasInventarioMaterial(
+    codigoArticulo,
+    query.toString() || undefined
+  );
+  const res = await http<any>(url, { skipAuthRedirect: true });
+
+  if (res && res.data && res.data.codigo_articulo) {
+    return res.data as TNSMaterialNotasInventarioResponse;
+  }
+  if (res?.codigo_articulo) {
+    return res as TNSMaterialNotasInventarioResponse;
+  }
+  return {
+    status: false,
+    codigo_articulo: codigoArticulo,
+    notas_inventario: [],
+    total_notas: 0,
+    summary: null,
+    message: res?.message ?? "No se pudo consultar notas de inventario TNS",
+  };
 }
 
 /**
@@ -1602,6 +1693,8 @@ export const tnsService = {
   getTNSInventarioSummary,
   getTNSComprasReporte,
   getTNSMaterialComprasHistorial,
+  getTNSNotasInventario,
+  getTNSMaterialNotasInventarioHistorial,
   getTNSOrderConsumption,
   matchTNSOrderConsumptionAlerts,
   getTNSInventoryMovementHistory,

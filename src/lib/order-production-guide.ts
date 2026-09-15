@@ -1,7 +1,7 @@
 import { endpoints } from "@/lib/api-endpoints";
 import { formatCurrency, parseApiNumber } from "@/lib/format-number";
 import { http } from "@/lib/http";
-import { getActiveLogoLabels } from "@/lib/order-fields";
+import { formatOrderShortId, getActiveLogoLabels } from "@/lib/order-fields";
 import type { Order } from "@/hooks/useOrders";
 import { resolveEffectivePaymentStatus } from "@/lib/payment-status";
 
@@ -28,10 +28,6 @@ function fmtDate(value?: string | null): string {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value.slice(0, 10);
   return d.toLocaleDateString("es-CO");
-}
-
-function shortOrderId(id: string): string {
-  return `ORD-${id.slice(-3).toUpperCase()}`;
 }
 
 function paymentLabel(order: Order): string {
@@ -107,7 +103,7 @@ function buildGuideHtml(
   client: OrderGuideClientInfo | null,
   logoDataUri?: string | null
 ): string {
-  const orderCode = shortOrderId(order.id);
+  const orderCode = formatOrderShortId(order.id);
   const printedAt = new Date().toLocaleString("es-CO", {
     dateStyle: "short",
     timeStyle: "medium",

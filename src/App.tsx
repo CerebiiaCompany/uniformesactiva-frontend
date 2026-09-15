@@ -19,6 +19,16 @@ import Despacho from "./pages/Despacho";
 import Costing from "./pages/Costing";
 import VariantCostPage from "./pages/VariantCostPage";
 import Reports from "./pages/Reports";
+import OrdersReportPage from "./pages/OrdersReportPage";
+import SalesReportPage from "./pages/SalesReportPage";
+import ProfitabilityReportPage from "./pages/ProfitabilityReportPage";
+import ProductivityReportPage from "./pages/ProductivityReportPage";
+import QuotesReportPage from "./pages/QuotesReportPage";
+import InventoryReportPage from "./pages/InventoryReportPage";
+import PurchasesReportPage from "./pages/PurchasesReportPage";
+import SatellitesReportPage from "./pages/SatellitesReportPage";
+import DeliveriesReportPage from "./pages/DeliveriesReportPage";
+import ClientsReportPage from "./pages/ClientsReportPage";
 import Website from "./pages/Website";
 import Administration from "./pages/Administration";
 import AdministrationSubmodule from "./pages/AdministrationSubmodule";
@@ -68,6 +78,16 @@ const App = () => (
             <Route path="/dispatch" element={<Despacho />} />
             <Route path="/costing" element={<Costing />} />
             <Route path="/reports" element={<Reports />} />
+            <Route path="/reports/ordenes" element={<OrdersReportPage />} />
+            <Route path="/reports/ventas" element={<SalesReportPage />} />
+            <Route path="/reports/rentabilidad" element={<ProfitabilityReportPage />} />
+            <Route path="/reports/eficiencia" element={<ProductivityReportPage />} />
+            <Route path="/reports/cotizaciones" element={<QuotesReportPage />} />
+            <Route path="/reports/inventario" element={<InventoryReportPage />} />
+            <Route path="/reports/compras" element={<PurchasesReportPage />} />
+            <Route path="/reports/satelites" element={<SatellitesReportPage />} />
+            <Route path="/reports/entregas" element={<DeliveriesReportPage />} />
+            <Route path="/reports/clientes" element={<ClientsReportPage />} />
             <Route path="/website" element={<Website />} />
             <Route path="/administration" element={<Administration />} />
             <Route path="/administration/:tab" element={<AdministrationSubmodule />} />

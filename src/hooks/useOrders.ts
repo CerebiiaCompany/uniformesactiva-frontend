@@ -147,6 +147,8 @@ export interface OrderListFilters {
     estado?: string;
     payment_status?: 'paid' | 'unpaid' | 'todos'; // Ajustado a los valores del selector
     fecha_creacion?: string;
+    fecha_desde?: string;
+    fecha_hasta?: string;
     page?: number;
     page_size?: number;
 }
@@ -194,6 +196,14 @@ function buildOrderQueryParams(filters: OrderListFilters): URLSearchParams {
 
     if (filters.fecha_creacion) {
         params.set("fecha_creacion", filters.fecha_creacion);
+    }
+
+    if (filters.fecha_desde) {
+        params.set("fecha_desde", filters.fecha_desde);
+    }
+
+    if (filters.fecha_hasta) {
+        params.set("fecha_hasta", filters.fecha_hasta);
     }
 
     params.set("page", String(filters.page ?? 1));

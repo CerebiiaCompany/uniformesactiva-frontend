@@ -68,11 +68,16 @@ export const endpoints = {
         tnsVentas: (params?: string) => `${base()}/api/v1/inventory/tns/ventas/${params ? `?${params}` : ''}`,
         tnsVentasMaterial: (codigoArticulo: string, params?: string) =>
             `${base()}/api/v1/inventory/tns/ventas/${encodeURIComponent(codigoArticulo)}/${params ? `?${params}` : ''}`,
+        tnsNotasInventario: (params?: string) =>
+            `${base()}/api/v1/inventory/tns/notas-inventario/${params ? `?${params}` : ''}`,
+        tnsNotasInventarioMaterial: (codigoArticulo: string, params?: string) =>
+            `${base()}/api/v1/inventory/tns/notas-inventario/${encodeURIComponent(codigoArticulo)}/${params ? `?${params}` : ''}`,
     },
     satellites: {
         list: (params?: string) => `${base()}/api/v1/satellites/${params ? `?${params}` : ""}`,
         create: () => `${base()}/api/v1/satellites/`,
         detail: (id: string) => `${base()}/api/v1/satellites/${id}/`,
+        uploadSupport: () => `${base()}/api/v1/satellites/upload-support/`,
         tnsPedidosCompra: (params?: string) =>
             `${base()}/api/v1/orders/tns/pedidos-compra/${params ? `?${params}` : ''}`,
     },
@@ -104,6 +109,28 @@ export const endpoints = {
     },
     dashboard: {
         stats: () => `${base()}/api/v1/dashboard/`,
+    },
+    reports: {
+        orders: (params?: string) =>
+            `${base()}/api/v1/reports/ordenes/${params ? `?${params}` : ""}`,
+        sales: (params?: string) =>
+            `${base()}/api/v1/reports/ventas/${params ? `?${params}` : ""}`,
+        profitability: (params?: string) =>
+            `${base()}/api/v1/reports/rentabilidad/${params ? `?${params}` : ""}`,
+        productivity: (params?: string) =>
+            `${base()}/api/v1/reports/eficiencia/${params ? `?${params}` : ""}`,
+        quotes: (params?: string) =>
+            `${base()}/api/v1/reports/cotizaciones/${params ? `?${params}` : ""}`,
+        inventory: (params?: string) =>
+            `${base()}/api/v1/reports/inventario/${params ? `?${params}` : ""}`,
+        purchases: (params?: string) =>
+            `${base()}/api/v1/reports/compras/${params ? `?${params}` : ""}`,
+        satellites: (params?: string) =>
+            `${base()}/api/v1/reports/satelites/${params ? `?${params}` : ""}`,
+        deliveries: (params?: string) =>
+            `${base()}/api/v1/reports/entregas/${params ? `?${params}` : ""}`,
+        clients: (params?: string) =>
+            `${base()}/api/v1/reports/clientes/${params ? `?${params}` : ""}`,
     },
     productos: {
         list: () => `${base()}/api/v1/products/productos/`,
