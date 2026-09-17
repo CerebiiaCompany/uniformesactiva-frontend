@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { http, HttpError } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
+import { isDispatchStageKey } from "@/lib/dispatch-module";
 
 export interface KanbanEtapa {
   id: string;
@@ -22,6 +23,20 @@ export const DEFAULT_KANBAN_ETAPAS: KanbanEtapa[] = [
   { id: "stage-dispatch", key: "dispatch", label: "Para Despacho", color_class: "dispatch", orden: 6, is_system: true, activo: true },
 ];
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isPersistedKanbanEtapaId(id: string | null | undefined): boolean {
+  return UUID_RE.test(String(id || "").trim());
+}
+
+/** Deja «Para Despacho» siempre al final sin cambiar keys. */
+export function pinDispatchStageLast<T extends { key: string }>(list: T[]): T[] {
+  const movable = list.filter((e) => !isDispatchStageKey(e.key));
+  const fixed = list.filter((e) => isDispatchStageKey(e.key));
+  return [...movable, ...fixed];
+}
+
 function resolveError(err: unknown, fallback: string) {
   if (err instanceof HttpError && err.message?.trim()) return err.message;
   if (err instanceof Error && err.message?.trim()) return err.message;
@@ -38,14 +53,13 @@ export function useKanbanEtapas() {
     setError(null);
     try {
       const data = await http<KanbanEtapa[]>(endpoints.orders.kanbanEtapas());
-      let list = Array.isArray(data) && data.length > 0 ? data : DEFAULT_KANBAN_ETAPAS;
-      const existingKeys = new Set(list.map((e) => e.key.toLowerCase()));
-      const missingDefaults = DEFAULT_KANBAN_ETAPAS.filter(
-        (def) => !existingKeys.has(def.key.toLowerCase())
-      );
-      if (missingDefaults.length > 0) {
-        list = [...list, ...missingDefaults].sort((a, b) => a.orden - b.orden);
-      }
+      // Solo usar defaults locales si la API no devolvió nada (evitar IDs fake en reorder)
+      const list =
+        Array.isArray(data) && data.length > 0
+          ? pinDispatchStageLast(
+              [...data].sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0))
+            ).map((e, i) => ({ ...e, orden: i }))
+          : DEFAULT_KANBAN_ETAPAS;
       setEtapas(list);
       return list;
     } catch (err) {
@@ -59,13 +73,35 @@ export function useKanbanEtapas() {
   }, []);
 
   const createEtapa = useCallback(
-    async (payload: { label: string; color_class?: string; key?: string }) => {
+    async (payload: {
+      label: string;
+      color_class?: string;
+      key?: string;
+      orden?: number;
+      insert_before_key?: string;
+      insert_after_key?: string;
+    }) => {
       try {
         const created = await http<KanbanEtapa>(endpoints.orders.kanbanEtapas(), {
           method: "POST",
           body: JSON.stringify(payload),
         });
-        setEtapas((prev) => [...prev, created].sort((a, b) => a.orden - b.orden));
+        // Refrescar lista completa para respetar orden normalizado en BD
+        const refreshed = await http<KanbanEtapa[]>(endpoints.orders.kanbanEtapas());
+        if (Array.isArray(refreshed) && refreshed.length) {
+          setEtapas(
+            pinDispatchStageLast(
+              [...refreshed].sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0))
+            ).map((e, i) => ({ ...e, orden: i }))
+          );
+        } else {
+          setEtapas((prev) =>
+            pinDispatchStageLast([...prev, created]).map((e, i) => ({
+              ...e,
+              orden: i,
+            }))
+          );
+        }
         return { etapa: created, errorMessage: null as string | null };
       } catch (err) {
         return {
@@ -82,6 +118,13 @@ export function useKanbanEtapas() {
       etapaId: string,
       payload: { label?: string; color_class?: string; orden?: number }
     ) => {
+      if (!isPersistedKanbanEtapaId(etapaId)) {
+        return {
+          etapa: null,
+          errorMessage:
+            "El tablero aún no está sincronizado. Recarga e inténtalo de nuevo.",
+        };
+      }
       try {
         const updated = await http<KanbanEtapa>(
           endpoints.orders.kanbanEtapa(etapaId),
@@ -91,9 +134,9 @@ export function useKanbanEtapas() {
           }
         );
         setEtapas((prev) =>
-          prev
-            .map((e) => (e.id === etapaId ? updated : e))
-            .sort((a, b) => a.orden - b.orden)
+          pinDispatchStageLast(
+            prev.map((e) => (e.id === etapaId ? updated : e))
+          ).map((e, i) => ({ ...e, orden: i }))
         );
         return { etapa: updated, errorMessage: null as string | null };
       } catch (err) {
@@ -107,9 +150,21 @@ export function useKanbanEtapas() {
   );
 
   const deleteEtapa = useCallback(async (etapaId: string) => {
+    if (!isPersistedKanbanEtapaId(etapaId)) {
+      return {
+        ok: false,
+        errorMessage:
+          "El tablero aún no está sincronizado. Recarga e inténtalo de nuevo.",
+      };
+    }
     try {
       await http(endpoints.orders.kanbanEtapa(etapaId), { method: "DELETE" });
-      setEtapas((prev) => prev.filter((e) => e.id !== etapaId));
+      setEtapas((prev) =>
+        pinDispatchStageLast(prev.filter((e) => e.id !== etapaId)).map((e, i) => ({
+          ...e,
+          orden: i,
+        }))
+      );
       return { ok: true, errorMessage: null as string | null };
     } catch (err) {
       return {
@@ -121,12 +176,25 @@ export function useKanbanEtapas() {
 
   const reorderEtapas = useCallback(
     async (ordered: { id: string; orden: number }[]) => {
+      const items = ordered.filter((item) => isPersistedKanbanEtapaId(item.id));
+      if (!items.length) {
+        return {
+          ok: false,
+          errorMessage:
+            "No hay tableros válidos para reordenar. Recarga el Kanban e inténtalo de nuevo.",
+        };
+      }
       try {
         const data = await http<KanbanEtapa[]>(endpoints.orders.kanbanEtapasReorder(), {
           method: "PATCH",
-          body: JSON.stringify({ items: ordered }),
+          body: JSON.stringify({ items }),
         });
-        setEtapas(Array.isArray(data) ? data : []);
+        const list = Array.isArray(data)
+          ? pinDispatchStageLast(
+              [...data].sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0))
+            ).map((e, i) => ({ ...e, orden: i }))
+          : [];
+        setEtapas(list);
         return { ok: true, errorMessage: null as string | null };
       } catch (err) {
         return {

@@ -231,22 +231,34 @@ export function getCapaActionsForStage(
 ): CapaActionCode[] {
   if (!stageKey) return [];
   // Si la capa está explícitamente en el mapa, respetar lo configurado
-  // (incluye [] = ninguna acción permitida).
+  // (incluye [] = ninguna acción — desactivado a propósito por admin).
   if (map && Object.prototype.hasOwnProperty.call(map, stageKey)) {
     const configured = map[stageKey] || [];
     return Array.isArray(configured) ? ([...configured] as CapaActionCode[]) : [];
   }
-  if (!map || Object.keys(map).length === 0) {
-    // Sin matriz de rol cargada: las capas asignadas al usuario son visibles.
-    if (!adminAssignedStageKeys || adminAssignedStageKeys.includes(stageKey)) {
-      return [...DEFAULT_CAPA_ACTIONS];
+  // Tablero nuevo / aún no en el rol: todas las acciones activas por defecto
+  // (Satélite, Producción y Diseño ven todos los tableros hasta que admin desactive).
+  void adminAssignedStageKeys;
+  return [...DEFAULT_CAPA_ACTIONS];
+}
+
+/**
+ * Completa capas faltantes con todas las acciones activas.
+ * No pisa capas ya configuradas (ni siquiera las vacías []).
+ */
+export function ensureCapaActionsForAllStages(
+  map: CapaActionsMap | null | undefined,
+  stageKeys: string[]
+): CapaActionsMap {
+  const next: CapaActionsMap = { ...(map || {}) };
+  for (const key of stageKeys) {
+    const stageKey = String(key || "").trim();
+    if (!stageKey) continue;
+    if (!Object.prototype.hasOwnProperty.call(next, stageKey)) {
+      next[stageKey] = [...DEFAULT_CAPA_ACTIONS];
     }
-    return [];
   }
-  if (adminAssignedStageKeys?.includes(stageKey)) {
-    return [...DEFAULT_CAPA_ACTIONS];
-  }
-  return [];
+  return next;
 }
 
 export function capaHasAction(
