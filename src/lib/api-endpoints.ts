@@ -82,9 +82,11 @@ export const endpoints = {
             `${base()}/api/v1/orders/tns/pedidos-compra/${params ? `?${params}` : ''}`,
     },
     lineas: {
-        list: () => `${base()}/api/v1/products/lineas/`,
+        list: (params?: string) =>
+            `${base()}/api/v1/products/lineas/${params ? `?${params}` : ""}`,
         detail: (id: string) => `${base()}/api/v1/products/lineas/${id}/`,
-        productos: (lineId: string) => `${base()}/api/v1/products/lineas/${lineId}/productos/`,
+        productos: (lineId: string, params?: string) =>
+            `${base()}/api/v1/products/lineas/${lineId}/productos/${params ? `?${params}` : ""}`,
     },
     orders: {
         list: () => `${base()}/api/v1/orders/`,

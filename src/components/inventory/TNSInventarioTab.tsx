@@ -931,7 +931,9 @@ export function TNSInventarioTab() {
         }
       })
       .catch((err) => {
-        console.error("Error al cargar historial de compras del material TNS:", err);
+        if (!(err instanceof TypeError)) {
+          console.error("Error al cargar historial de compras del material TNS:", err);
+        }
       })
       .finally(() => {
         if (isMounted) {
@@ -947,7 +949,13 @@ export function TNSInventarioTab() {
         }
       })
       .catch((err) => {
-        console.error("Error al cargar historial de ventas del material TNS:", err);
+        // Red caída / API reiniciando: no spamear consola (Failed to fetch / ERR_EMPTY_RESPONSE)
+        if (!(err instanceof TypeError)) {
+          console.error("Error al cargar historial de ventas del material TNS:", err);
+        }
+        if (isMounted) {
+          setVentasHistorialData(null);
+        }
       })
       .finally(() => {
         if (isMounted) {
@@ -2228,6 +2236,9 @@ export function TNSInventarioTab() {
             <DialogTitle className="text-base mt-2 font-semibold text-foreground">
               {selectedItemDetail && parseTNSDescription(selectedItemDetail.prod_Dist_Desc).name}
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Detalle del material TNS, stock, compras, ventas y movimientos.
+            </DialogDescription>
 
             {/* Pestañas de Navegación dentro del Modal */}
             <div className="flex items-center gap-1.5 pt-3 overflow-x-auto">

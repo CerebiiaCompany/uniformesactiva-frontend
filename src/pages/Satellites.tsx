@@ -91,6 +91,7 @@ import {
   summarizeSatelliteOrders,
   SATELLITE_WORK_STATUS_OPTIONS,
   workStatusLabel,
+  isSatelliteWorkStatusFinal,
   type SatelliteDashboardCard,
   type SatelliteOrderDetail,
   type SatelliteUserRef,
@@ -183,12 +184,14 @@ export default function Satellites() {
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deletingSatellite, setDeletingSatellite] = useState<SatelliteDashboardCard | null>(null);
-  const [detailPagoFilter, setDetailPagoFilter] = useState<"todos" | "pending" | "paid">("todos");
+  const [detailPagoFilter, setDetailPagoFilter] = useState<"todos" | "pending" | "paid">("pending");
   const [showDetailFilters, setShowDetailFilters] = useState(false);
   const [confirmDetail, setConfirmDetail] = useState<SatelliteOrderDetail | null>(null);
   const [confirmWorkStatus, setConfirmWorkStatus] = useState<SatelliteWorkStatus>("enviado");
   const [confirmObservations, setConfirmObservations] = useState("");
   const [confirmAgreedCost, setConfirmAgreedCost] = useState("");
+  /** Cantidad faltante por línea de prenda (id -> string numérico) */
+  const [confirmMissingQty, setConfirmMissingQty] = useState<Record<string, string>>({});
   const [savingConfirm, setSavingConfirm] = useState(false);
 
   // Estados para autocompletar satélite desde TNS
@@ -408,7 +411,8 @@ export default function Satellites() {
 
   const openConfirmDialog = (detail: SatelliteOrderDetail) => {
     setConfirmDetail(detail);
-    setConfirmWorkStatus(detail.workStatus || "enviado");
+    const current = detail.workStatus || "enviado";
+    setConfirmWorkStatus(current);
     setConfirmObservations(detail.observations || "");
     setConfirmAgreedCost(
       detail.agreedCost != null && Number.isFinite(detail.agreedCost)
@@ -417,6 +421,17 @@ export default function Satellites() {
           ? String(detail.cost)
           : ""
     );
+    const missingMap: Record<string, string> = {};
+    for (const line of detail.garmentLines || []) {
+      const prev = (detail.missingItems || []).find(
+        (m) =>
+          (m.id && m.id === line.id) ||
+          (m.name === line.name && (m.size || "") === (line.size || ""))
+      );
+      missingMap[line.id] = prev && prev.missing > 0 ? String(prev.missing) : "";
+    }
+    // Faltantes huérfanos (sin línea actual) se conservan vía observations; no se editan aquí
+    setConfirmMissingQty(missingMap);
   };
 
   const saveConfirmWork = async () => {
@@ -424,6 +439,40 @@ export default function Satellites() {
     const agreedRaw = confirmAgreedCost.trim();
     const agreedCost =
       agreedRaw !== "" && Number.isFinite(Number(agreedRaw)) ? Number(agreedRaw) : null;
+
+    const missingItems =
+      confirmWorkStatus === "recibido_faltantes"
+        ? (confirmDetail.garmentLines || [])
+            .map((line) => {
+              const missing = Number(confirmMissingQty[line.id] || 0);
+              if (!Number.isFinite(missing) || missing <= 0) return null;
+              return {
+                id: line.id,
+                name: line.name,
+                size: line.size,
+                expected: line.expected,
+                missing: Math.min(missing, line.expected || missing),
+              };
+            })
+            .filter(
+              (row): row is {
+                id: string;
+                name: string;
+                size: string | undefined;
+                expected: number;
+                missing: number;
+              } => row != null
+            )
+        : [];
+
+    if (
+      confirmWorkStatus === "recibido_faltantes" &&
+      missingItems.length === 0 &&
+      !(confirmObservations || "").trim()
+    ) {
+      toast.error("Indica qué prendas faltan o deja una observación.");
+      return;
+    }
 
     setSavingConfirm(true);
     try {
@@ -435,6 +484,7 @@ export default function Satellites() {
       const hasSupport =
         Boolean(prev.support_document_url || confirmDetail.supportDocumentUrl) ||
         Boolean(prev.support_document_path);
+      const isFinalNow = isSatelliteWorkStatusFinal(confirmWorkStatus);
       // Recibido completo NO marca pagado: solo el documento soporte liquida la deuda.
       const settlementEntry = {
         ...prev,
@@ -443,7 +493,10 @@ export default function Satellites() {
         work_status: confirmWorkStatus,
         observations: confirmObservations.trim(),
         agreed_cost: agreedCost,
-        confirmed_at: new Date().toISOString(),
+        confirmed_at: isFinalNow
+          ? prev.confirmed_at || new Date().toISOString()
+          : null,
+        missing_items: missingItems,
         support_document_url: prev.support_document_url || confirmDetail.supportDocumentUrl || null,
         support_document_name: prev.support_document_name || confirmDetail.supportDocumentName || null,
         support_document_path: prev.support_document_path || null,
@@ -1230,7 +1283,7 @@ export default function Satellites() {
             type="button"
             onClick={() => {
               setSelectedId(null);
-              setDetailPagoFilter("todos");
+              setDetailPagoFilter("pending");
               setShowDetailFilters(false);
             }}
             className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
@@ -1409,7 +1462,7 @@ export default function Satellites() {
               if (!open) setConfirmDetail(null);
             }}
           >
-            <DialogContent className="max-w-md">
+            <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>
                   Confirmar trabajo — {confirmDetail?.orderCode || ""}
@@ -1429,6 +1482,7 @@ export default function Satellites() {
                   <Select
                     value={confirmWorkStatus}
                     onValueChange={(v) => setConfirmWorkStatus(v as SatelliteWorkStatus)}
+                    disabled={savingConfirm}
                   >
                     <SelectTrigger className="h-10 rounded-lg border-red-500 focus:ring-red-500">
                       <SelectValue />
@@ -1442,9 +1496,61 @@ export default function Satellites() {
                     </SelectContent>
                   </Select>
                   <p className="text-[11px] text-muted-foreground">
-                    Confirma al satélite si el trabajo llegó completo o con faltantes.
+                    Por defecto «Enviado (en trabajo)». Solo cambia a Listo / Con faltantes
+                    cuando confirmes la recepción. Puedes corregirlo después si hace falta.
                   </p>
                 </div>
+
+                {confirmWorkStatus === "recibido_faltantes" ? (
+                  <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                    <Label className="text-xs font-medium text-amber-950">
+                      Prendas con faltantes
+                    </Label>
+                    <p className="text-[11px] text-amber-900/80">
+                      Indica cuántas unidades faltan por prenda/talla.
+                    </p>
+                    {(confirmDetail?.garmentLines || []).length === 0 ? (
+                      <p className="text-xs text-muted-foreground">
+                        No hay desglose de prendas. Describe el faltante en observaciones.
+                      </p>
+                    ) : (
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {(confirmDetail?.garmentLines || []).map((line) => (
+                          <div
+                            key={line.id}
+                            className="flex items-center justify-between gap-2 rounded-md bg-background/80 px-2 py-1.5 border"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-medium truncate">{line.name}</p>
+                              <p className="text-[10px] text-muted-foreground">
+                                {line.size ? `Talla ${line.size} · ` : ""}
+                                Esperadas: {line.expected}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <Label className="text-[10px] text-muted-foreground">Faltan</Label>
+                              <Input
+                                type="number"
+                                min={0}
+                                max={line.expected || undefined}
+                                step="1"
+                                value={confirmMissingQty[line.id] ?? ""}
+                                onChange={(e) =>
+                                  setConfirmMissingQty((prev) => ({
+                                    ...prev,
+                                    [line.id]: e.target.value,
+                                  }))
+                                }
+                                className="h-8 w-16 text-xs"
+                                disabled={savingConfirm}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
 
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium">Observaciones</Label>
@@ -1453,6 +1559,7 @@ export default function Satellites() {
                     onChange={(e) => setConfirmObservations(e.target.value)}
                     placeholder="Notas de verificación, calidad, tiempos..."
                     className="min-h-[88px] text-sm resize-none rounded-lg"
+                    disabled={savingConfirm}
                   />
                 </div>
 
@@ -1465,6 +1572,7 @@ export default function Satellites() {
                     value={confirmAgreedCost}
                     onChange={(e) => setConfirmAgreedCost(e.target.value)}
                     className="h-10 rounded-lg"
+                    disabled={savingConfirm}
                   />
                 </div>
               </div>
@@ -1657,7 +1765,11 @@ export default function Satellites() {
                         key={card.id}
                         card={card}
                         selected={selectedId === card.id}
-                        onSelect={() => setSelectedId(card.id)}
+                        onSelect={() => {
+                          setSelectedId(card.id);
+                          setDetailPagoFilter("pending");
+                          setShowDetailFilters(false);
+                        }}
                         canDelete={canDeleteSatellite(card)}
                         deleting={isDeletingSatellite && deletingSatellite?.id === card.id}
                         onDelete={() => requestDeleteSatellite(card)}
@@ -1695,7 +1807,7 @@ export default function Satellites() {
                         selected={selectedId === card.id}
                         onSelect={() => {
                           setSelectedId(card.id);
-                          setDetailPagoFilter("todos");
+                          setDetailPagoFilter("pending");
                           setShowDetailFilters(false);
                         }}
                         canDelete={false}
@@ -2228,7 +2340,7 @@ function SatelliteOrderCard({
   const workBadge =
     detail.workStatus === "recibido_completo"
       ? {
-        label: "Recibido completo",
+        label: "Listo (Recibido completo)",
         className: "bg-emerald-100 text-emerald-800",
       }
       : detail.workStatus === "recibido_faltantes"
@@ -2237,7 +2349,7 @@ function SatelliteOrderCard({
           className: "bg-amber-100 text-amber-900",
         }
         : {
-          label: "Enviado",
+          label: "Enviado (en trabajo)",
           className: "bg-sky-100 text-sky-800",
         };
 
@@ -2289,6 +2401,18 @@ function SatelliteOrderCard({
             {detail.observations ? (
               <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2">
                 Obs.: {detail.observations}
+              </p>
+            ) : null}
+            {detail.workStatus === "recibido_faltantes" &&
+            (detail.missingItems || []).length > 0 ? (
+              <p className="text-[11px] text-amber-800 mt-1 line-clamp-2">
+                Faltantes:{" "}
+                {(detail.missingItems || [])
+                  .map(
+                    (m) =>
+                      `${m.name}${m.size ? ` ${m.size}` : ""} (−${m.missing})`
+                  )
+                  .join(" · ")}
               </p>
             ) : null}
           </div>

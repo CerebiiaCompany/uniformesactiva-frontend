@@ -10,6 +10,16 @@ export type SatelliteWorkStatus =
     | "recibido_completo"
     | "recibido_faltantes";
 
+/** Prenda/talla marcada con faltante por el administrador al confirmar recepción. */
+export type SatelliteMissingItem = {
+    id?: string;
+    name: string;
+    size?: string;
+    expected?: number;
+    missing: number;
+    note?: string;
+};
+
 export type SatelliteSettlement = {
     status: "pending" | "paid";
     amount?: number;
@@ -19,6 +29,8 @@ export type SatelliteSettlement = {
     observations?: string;
     agreed_cost?: number | null;
     confirmed_at?: string | null;
+    /** Prendas/tallas con faltantes (marcadas por admin) */
+    missing_items?: SatelliteMissingItem[];
     /** Comprobante / documento soporte de pago */
     support_document_url?: string | null;
     support_document_name?: string | null;

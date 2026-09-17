@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 import { formatCurrency } from "@/lib/format-number";
 import { cn } from "@/lib/utils";
+import { RealCostsPanel } from "@/components/reports/RealCostsPanel";
+import { StatisticsPanel } from "@/components/reports/StatisticsPanel";
 import { getClientsReport, getDeliveriesReport, getInventoryReport, getOrdersReport, getProductivityReport, getProfitabilityReport, getPurchasesReport, getQuotesReport, getSalesReport, getSatellitesReport } from "@/services/reportsService";
 import type { ReportCardDefinition } from "@/types/reports";
 
@@ -453,13 +455,11 @@ export default function Reports() {
       <Tabs defaultValue="informes" className="space-y-5">
         <TabsList>
           <TabsTrigger value="informes">Informes</TabsTrigger>
-          <TabsTrigger value="costos" disabled>
+          <TabsTrigger value="costos">
             <DollarSign className="h-4 w-4 mr-1.5" />
             Costos reales
           </TabsTrigger>
-          <TabsTrigger value="estadisticas" disabled>
-            Estadísticas
-          </TabsTrigger>
+          <TabsTrigger value="estadisticas">Estadísticas</TabsTrigger>
         </TabsList>
 
         <TabsContent value="informes" className="space-y-4">
@@ -492,16 +492,12 @@ export default function Reports() {
           </div>
         </TabsContent>
 
-        <TabsContent value="costos">
-          <Card>
-            <CardContent className="py-10 text-center text-sm text-muted-foreground">
-              Módulo de costos reales en reportes — próximamente. Puedes usar{" "}
-              <Link to="/costing" className="text-red-600 hover:underline">
-                Costos
-              </Link>{" "}
-              mientras tanto.
-            </CardContent>
-          </Card>
+        <TabsContent value="costos" className="space-y-4">
+          <RealCostsPanel />
+        </TabsContent>
+
+        <TabsContent value="estadisticas" className="space-y-4">
+          <StatisticsPanel />
         </TabsContent>
       </Tabs>
     </AppLayout>

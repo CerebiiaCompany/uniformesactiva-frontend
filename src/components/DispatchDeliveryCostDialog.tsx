@@ -81,7 +81,8 @@ export function DispatchDeliveryCostDialog({
                 {productName ? ` · ${productName}` : ""}
               </>
             ) : null}
-            . El valor se suma en el desglose de <strong>Despacho y domicilios</strong>.
+            . El valor se guarda como <strong>Despacho a cliente</strong> en el desglose
+            de <strong>Despacho y domicilios</strong>.
           </DialogDescription>
         </DialogHeader>
 
