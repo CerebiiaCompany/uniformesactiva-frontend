@@ -3,13 +3,13 @@ import { useSearchParams } from "react-router-dom";
 import { AppLayout } from "@/components/AppLayout";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useOrders } from "@/hooks/useOrders";
-import { useKanbanEtapas } from "@/hooks/useKanbanEtapas";
+import { useKanbanEtapas, pinDispatchStageLast } from "@/hooks/useKanbanEtapas";
 import { type ProductionOrder } from "@/data/mockData";
 import { User, Calendar, Package, ArrowLeft, ChevronRight, History, Clock, X, Plus, Pencil, Trash2, GripVertical, Check, Loader2, Boxes, Scissors, DollarSign, Factory, ImagePlus, Paperclip, FileText, UserPlus, MessageSquare, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { resolveFactoryCardInfo, groupOrderItemsForFactory } from "@/lib/order-fields";
+import { resolveFactoryCardInfo, groupOrderItemsForFactory, isOrderPastDue } from "@/lib/order-fields";
 import { FactoryVariantBreakdown } from "@/components/FactoryVariantBreakdown";
 import { KanbanStageChip } from "@/components/KanbanStageChip";
 import { KanbanCardEditDialog, cardFormFromProductionOrder, type KanbanCardFormValues } from "@/components/KanbanCardEditDialog";
@@ -1350,7 +1350,7 @@ export default function Production() {
   useEffect(() => {
     if (!etapas.length) return;
     setStages(
-      etapas.map((e) => ({
+      pinDispatchStageLast(etapas).map((e) => ({
         id: e.id,
         key: e.key,
         label: e.label,
@@ -1386,8 +1386,10 @@ export default function Production() {
           0,
           Math.floor((now - new Date(lastEntered).getTime()) / 86400000)
         );
-        const due = o.fecha_estimada_entrega ? new Date(o.fecha_estimada_entrega).getTime() : null;
-        const isDelayed = due != null ? due < now : daysInStage >= 7;
+        const isDelayed =
+          o.fecha_estimada_entrega != null && String(o.fecha_estimada_entrega).trim()
+            ? isOrderPastDue(o.fecha_estimada_entrega, new Date(now))
+            : daysInStage >= 7;
 
         const baseCard: ProductionOrder = {
           id: `PO-${o.id}`,
@@ -2029,29 +2031,59 @@ export default function Production() {
     }
   };
 
-  const handleColDragStart = (e: React.DragEvent, key: string) => { setDragType("column"); setDraggedColKey(key); e.dataTransfer.effectAllowed = "move"; };
+  const handleColDragStart = (e: React.DragEvent, key: string) => {
+    if (isDispatchStageKey(key)) {
+      e.preventDefault();
+      return;
+    }
+    setDragType("column");
+    setDraggedColKey(key);
+    e.dataTransfer.effectAllowed = "move";
+  };
   const handleColDropOnCol = async (targetKey: string) => {
     if (dragType !== "column" || !draggedColKey || draggedColKey === targetKey) {
       setDraggedColKey(null);
       setDragType(null);
       return;
     }
+    // «Para Despacho» no se mueve ni admite que otra capa quede después de él
+    if (isDispatchStageKey(draggedColKey)) {
+      setDraggedColKey(null);
+      setDragType(null);
+      toast({
+        title: "Tablero fijo",
+        description: "«Para Despacho» no se puede reordenar; siempre queda al final.",
+      });
+      return;
+    }
+
     const prevStages = stages;
     const fromIdx = prevStages.findIndex((s) => s.key === draggedColKey);
-    const toIdx = prevStages.findIndex((s) => s.key === targetKey);
+    let toIdx = prevStages.findIndex((s) => s.key === targetKey);
     if (fromIdx < 0 || toIdx < 0) {
       setDraggedColKey(null);
       setDragType(null);
       return;
     }
+
+    // Si sueltan sobre despacho, insertar justo antes de él
+    if (isDispatchStageKey(targetKey)) {
+      toIdx = prevStages.findIndex((s) => isDispatchStageKey(s.key));
+      if (toIdx < 0) toIdx = prevStages.length;
+      else if (fromIdx < toIdx) toIdx = toIdx - 1;
+    }
+
     const next = [...prevStages];
     const [moved] = next.splice(fromIdx, 1);
     next.splice(toIdx, 0, moved);
-    setStages(next);
+    const normalized = pinDispatchStageLast(next);
+    setStages(normalized);
     setDraggedColKey(null);
     setDragType(null);
 
-    const result = await reorderEtapas(next.map((s, i) => ({ id: s.id, orden: i })));
+    const result = await reorderEtapas(
+      normalized.map((s, i) => ({ id: s.id, orden: i }))
+    );
     if (!result.ok) {
       setStages(prevStages);
       toast({
@@ -2092,6 +2124,14 @@ export default function Production() {
     }
   };
   const deleteCol = async (key: string) => {
+    if (isDispatchStageKey(key)) {
+      toast({
+        variant: "destructive",
+        title: "Tablero fijo",
+        description: "«Para Despacho» no se puede eliminar.",
+      });
+      return;
+    }
     if (stages.length <= 1) return;
     const stage = stages.find((s) => s.key === key);
     if (!stage) return;
@@ -2100,7 +2140,7 @@ export default function Production() {
     const prevOrders = prodOrders;
 
     setProdOrders((prev) => prev.map((o) => o.stage === key ? { ...o, stage: fallback.key as ProductionOrder["stage"] } : o));
-    setStages((prev) => prev.filter((s) => s.key !== key));
+    setStages((prev) => pinDispatchStageLast(prev.filter((s) => s.key !== key)));
 
     const result = await deleteEtapa(stage.id);
     if (!result.ok) {
@@ -2133,9 +2173,12 @@ export default function Production() {
     const nextTheme =
       CUSTOM_STAGE_THEMES.find((t) => !used.has(t.id)) ||
       CUSTOM_STAGE_THEMES[stages.length % CUSTOM_STAGE_THEMES.length];
+    // Insertar antes de «Para Despacho» (queda al final de las capas móviles)
+    const dispatchKey = stages.find((s) => isDispatchStageKey(s.key))?.key;
     const result = await createEtapa({
       label: "Nueva etapa",
       color_class: nextTheme.id,
+      ...(dispatchKey ? { insert_before_key: dispatchKey } : {}),
     });
     setSavingBoard(false);
     if (!result.etapa) {
@@ -2713,16 +2756,37 @@ export default function Production() {
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
             {activeOrders.map((order) => {
               const factory = resolveFactoryCardInfo(order);
+              const cardsOfOrder = prodOrders.filter((c) => c.orderId === order.id);
+              const isDelayed =
+                isOrderPastDue(order.fecha_estimada_entrega) ||
+                (!order.fecha_estimada_entrega &&
+                  cardsOfOrder.some((c) => c.isDelayed || (c.daysInStage ?? 0) >= 7));
               return (
               <button
                 key={order.id}
                 onClick={() => setSelectedOrderId(order.id)}
-                className="h-full text-left bg-card border border-border rounded-xl p-3.5 hover:shadow-lg hover:border-primary/30 transition-all duration-200 group flex flex-col"
+                title={isDelayed ? "Pedido demorado (fecha de entrega vencida)" : undefined}
+                className={cn(
+                  "h-full text-left border rounded-xl p-3.5 hover:shadow-lg transition-all duration-200 group flex flex-col",
+                  isDelayed
+                    ? "bg-red-50/90 border-red-200/80 hover:border-red-300 dark:bg-red-950/35 dark:border-red-900/55 dark:hover:border-red-800/70"
+                    : "bg-card border-border hover:border-primary/30"
+                )}
               >
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <div className="flex items-start gap-2.5 min-w-0">
-                    <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                      <Package className="h-4 w-4 text-primary" />
+                    <div
+                      className={cn(
+                        "h-9 w-9 rounded-lg flex items-center justify-center shrink-0",
+                        isDelayed ? "bg-red-100/90 dark:bg-red-900/40" : "bg-primary/10"
+                      )}
+                    >
+                      <Package
+                        className={cn(
+                          "h-4 w-4",
+                          isDelayed ? "text-red-700 dark:text-red-300" : "text-primary"
+                        )}
+                      />
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -2730,6 +2794,11 @@ export default function Production() {
                           ORD-{order.id.slice(0, 3)}
                         </span>
                         <StatusBadge status={order.estado} />
+                        {isDelayed ? (
+                          <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800 dark:bg-red-900/50 dark:text-red-200">
+                            Demorada
+                          </span>
+                        ) : null}
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5 truncate">
                         {order.cliente_nombre}
@@ -2906,9 +2975,14 @@ export default function Production() {
                 >
                   <div className="flex items-center gap-1.5 flex-1 min-w-0">
                     <button
-                      draggable={!isEditing && canManageBoard}
+                      draggable={!isEditing && canManageBoard && !isDispatchStageKey(stage.key)}
+                      title={
+                        isDispatchStageKey(stage.key)
+                          ? "«Para Despacho» es fijo y no se puede reordenar"
+                          : "Arrastrar para reordenar tablero"
+                      }
                       onDragStart={(e) => {
-                        if (!canManageBoard) {
+                        if (!canManageBoard || isDispatchStageKey(stage.key)) {
                           e.preventDefault();
                           return;
                         }
@@ -2916,7 +2990,8 @@ export default function Production() {
                       }}
                       className={cn(
                         "cursor-grab text-muted-foreground hover:text-foreground shrink-0",
-                        !canManageBoard && "cursor-default opacity-40"
+                        (!canManageBoard || isDispatchStageKey(stage.key)) &&
+                          "cursor-default opacity-40"
                       )}
                     >
                       <GripVertical className="h-4 w-4" />
@@ -2959,6 +3034,12 @@ export default function Production() {
                       <button
                         onClick={() => deleteCol(stage.key)}
                         className="p-1 rounded hover:bg-destructive/10"
+                        disabled={isDispatchStageKey(stage.key)}
+                        title={
+                          isDispatchStageKey(stage.key)
+                            ? "«Para Despacho» no se puede eliminar"
+                            : "Eliminar tablero"
+                        }
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -3001,9 +3082,12 @@ export default function Production() {
                       draggable={canOperate && !needsAssign}
                     onDragStart={(e) => handleCardDragStart(e, order.id)}
                     className={cn(
-                      "bg-card rounded-lg border border-border p-3 hover:shadow-md transition-shadow relative group/card",
+                      "rounded-lg border p-3 hover:shadow-md transition-shadow relative group/card",
                       canOperate && !needsAssign ? "cursor-grab" : "cursor-default opacity-90",
-                      needsAssign && canManageBoard && "ring-1 ring-amber-300/80"
+                      needsAssign && canManageBoard && "ring-1 ring-amber-300/80",
+                      order.isDelayed
+                        ? "bg-red-50/90 border-red-200/80 dark:bg-red-950/35 dark:border-red-900/55"
+                        : "bg-card border-border"
                     )}
                   >
                     {(canEditCard || canInventoryCard || canManageBoard || canViewStageSummary) && (

@@ -7,6 +7,22 @@ export function formatOrderShortId(orderId: string | null | undefined): string {
     return `ORD-${raw.slice(0, 3).toUpperCase()}`;
 }
 
+/**
+ * Pedido demorado: la fecha estimada de entrega ya pasó (comparación por día local).
+ * Sin fecha, no se marca demorado desde este helper.
+ */
+export function isOrderPastDue(
+    fechaEstimadaEntrega: string | null | undefined,
+    now: Date = new Date()
+): boolean {
+    if (!fechaEstimadaEntrega) return false;
+    const due = new Date(fechaEstimadaEntrega);
+    if (Number.isNaN(due.getTime())) return false;
+    const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate()).getTime();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    return dueDay < today;
+}
+
 export const LOGO_POSITION_OPTIONS = [
     { id: "logo_manga_derecha", label: "Mng. Der" },
     { id: "logo_manga_izquierda", label: "Mng. Izq" },

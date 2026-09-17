@@ -14,6 +14,7 @@ export type NotificationType =
   | "inventory_exit"
   | "order_ready_for_dispatch"
   | "order_delivered"
+  | "order_delayed"
   | string;
 
 export interface AppNotification {

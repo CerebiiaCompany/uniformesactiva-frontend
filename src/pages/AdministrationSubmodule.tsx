@@ -57,6 +57,7 @@ import {
   toggleAllCapaActionsForStage,
   isCapaRowFullySelected,
   getCapaActionsForStage,
+  ensureCapaActionsForAllStages,
   CAPA_KANBAN_ACTIONS,
   notifyKanbanEtapasUpdated,
   KANBAN_ETAPAS_UPDATED_EVENT,
@@ -426,12 +427,12 @@ export default function AdministrationSubmodule() {
       }
       const data = await response.json();
       let list = Array.isArray(data) && data.length > 0 ? data : DEFAULT_KANBAN_ETAPAS;
-      const existingKeys = new Set(list.map((e: any) => e.key?.toLowerCase()));
-      const missingDefaults = DEFAULT_KANBAN_ETAPAS.filter(
-        (def) => !existingKeys.has(def.key.toLowerCase())
-      );
-      if (missingDefaults.length > 0) {
-        list = [...list, ...missingDefaults].sort((a: any, b: any) => (a.orden ?? 0) - (b.orden ?? 0));
+      // No mezclar IDs fake (stage-*) con etapas reales de BD
+      if (Array.isArray(data) && data.length > 0) {
+        list = [...data].sort(
+          (a: { orden?: number }, b: { orden?: number }) =>
+            (a.orden ?? 0) - (b.orden ?? 0)
+        );
       }
       setKanbanCapas(
         list
@@ -670,13 +671,18 @@ export default function AdministrationSubmodule() {
       setMatrix(newMatrix);
       if (data.capa_actions || data.kanban_capas_permissions) {
         const backendCapas = data.capa_actions || data.kanban_capas_permissions;
-        setCapaActions(backendCapas);
+        const stageKeys = kanbanCapas.map((c) => c.key);
+        const merged = ensureCapaActionsForAllStages(backendCapas, stageKeys);
+        setCapaActions(merged);
         const role = rolesList.find((r) => r.id === selectedRole);
         if (role?.name && isKanbanOperatorRole(role.name)) {
-          saveCapaActionsForRole(role.name, backendCapas, role.id);
+          saveCapaActionsForRole(role.name, merged, role.id);
         }
       } else {
-        setCapaActions({});
+        // Sin mapa guardado: todas las capas activas por defecto
+        setCapaActions(
+          ensureCapaActionsForAllStages({}, kanbanCapas.map((c) => c.key))
+        );
       }
     } catch (error: any) {
       if (error instanceof UnauthorizedError) return;
@@ -691,12 +697,29 @@ export default function AdministrationSubmodule() {
     }
   };
 
+  // Al actualizar capas Kanban (crear/reordenar en Fábrica), activar por defecto
+  // las acciones de tableros nuevos en el rol seleccionado.
+  useEffect(() => {
+    if (!showKanbanCapaPermissions || kanbanCapas.length === 0) return;
+    setCapaActions((prev) =>
+      ensureCapaActionsForAllStages(
+        prev,
+        kanbanCapas.map((c) => c.key)
+      )
+    );
+  }, [kanbanCapas, showKanbanCapaPermissions]);
+
   const handleSelectRole = (roleId: string) => {
     setSelectedRole(roleId);
     const role = rolesList.find((r) => r.id === roleId);
     if (role) {
       const saved = getCapaActionsForRole(role.name) || getCapaActionsForRole(role.id);
-      setCapaActions(saved);
+      setCapaActions(
+        ensureCapaActionsForAllStages(
+          saved,
+          kanbanCapas.map((c) => c.key)
+        )
+      );
     }
     fetchCapas();
   };
@@ -731,8 +754,12 @@ export default function AdministrationSubmodule() {
       permissions: formattedPermissions,
     };
     if (isKanbanRole) {
-      payload.capa_actions = capaActions;
-      payload.kanban_capas_permissions = capaActions;
+      const mergedCapas = ensureCapaActionsForAllStages(
+        capaActions,
+        kanbanCapas.map((c) => c.key)
+      );
+      payload.capa_actions = mergedCapas;
+      payload.kanban_capas_permissions = mergedCapas;
     }
 
     try {
