@@ -11,6 +11,7 @@ import {
   ChevronUp,
   ClipboardList,
   DollarSign,
+  Eye,
   Factory,
   History,
   Loader2,
@@ -65,8 +66,9 @@ import {
   workStatusLabel,
   type SatelliteUserPanelData,
 } from "@/lib/satellite-user-dashboard";
-import { matchesSatelliteTns } from "@/lib/satellite-dashboard";
+import { matchesSatelliteTns, type SatelliteOrderDetail } from "@/lib/satellite-dashboard";
 import { getPedidosCompra } from "@/services/tnsService";
+import { MissingItemsDetailDialog } from "@/components/MissingItemsDetailDialog";
 
 async function fetchAllOrders(): Promise<Order[]> {
   const all: Order[] = [];
@@ -100,6 +102,11 @@ export function SatelliteUserDashboard() {
   const [updatingTerminado, setUpdatingTerminado] = useState<string | null>(null);
   const [historyPeriod, setHistoryPeriod] = useState(currentMonthKey);
   const [historyPayment, setHistoryPayment] = useState<HistoryPaymentFilter>("todos");
+  const [ordersPaymentFilter, setOrdersPaymentFilter] =
+    useState<HistoryPaymentFilter>("pending");
+  const [faltantesDetail, setFaltantesDetail] = useState<SatelliteOrderDetail | null>(
+    null
+  );
   const [laborConfirmDialog, setLaborConfirmDialog] = useState<{
     open: boolean;
     order: any;
@@ -152,17 +159,24 @@ export function SatelliteUserDashboard() {
       const isAlreadyAdded = Boolean(prevStagesDone[stageKeyCompleted]);
       const totalLaborAmount = isAlreadyAdded ? prevAmount : prevAmount + laborAmount;
 
+      const prevStatus = String(prevOrderSettlement.work_status || "");
+      const alreadyFinal =
+        prevStatus === "recibido_completo" || prevStatus === "recibido_faltantes";
+
       const updatedSettlement = {
         ...prevOrderSettlement,
         status: prevOrderSettlement.status || "pending",
-        work_status: "recibido_completo" as const,
+        // Terminar capa ≠ recepción confirmada por admin: sigue «Enviado»
+        work_status: alreadyFinal ? prevStatus : ("enviado" as const),
         amount: totalLaborAmount,
         agreed_cost: totalLaborAmount,
         stages_done: {
           ...prevStagesDone,
           [stageKeyCompleted]: laborAmount,
         },
-        confirmed_at: new Date().toISOString(),
+        confirmed_at: alreadyFinal
+          ? prevOrderSettlement.confirmed_at || null
+          : null,
       };
 
       const nextSettlements = {
@@ -338,6 +352,12 @@ export function SatelliteUserDashboard() {
     );
   }, [panel?.orderHistory, historyPeriod, historyPayment]);
 
+  const filteredPaymentOrders = useMemo(() => {
+    return (panel?.orders || []).filter((order) =>
+      matchesHistoryPayment(order.paymentStatus, ordersPaymentFilter)
+    );
+  }, [panel?.orders, ordersPaymentFilter]);
+
   if (loading && !panel) {
     return (
       <AppLayout title="Mi panel satélite" subtitle="Resumen de tus pedidos asignados">
@@ -473,18 +493,49 @@ export function SatelliteUserDashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg font-semibold tracking-tight">
-                Estado de pagos por pedido
-              </CardTitle>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <CardTitle className="text-lg font-semibold tracking-tight">
+                    Estado de pagos por pedido
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Por defecto solo se muestran pedidos por pagar.
+                  </p>
+                </div>
+                <div className="space-y-1 min-w-[160px]">
+                  <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Estado de pago
+                  </Label>
+                  <Select
+                    value={ordersPaymentFilter}
+                    onValueChange={(v) =>
+                      setOrdersPaymentFilter(v as HistoryPaymentFilter)
+                    }
+                  >
+                    <SelectTrigger className="h-9 bg-background">
+                      <SelectValue placeholder="Estado de pago" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pending">Por pagar</SelectItem>
+                      <SelectItem value="paid">Pagadas</SelectItem>
+                      <SelectItem value="todos">Todas</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               {data.orders.length === 0 ? (
                 <p className="px-6 py-8 text-sm text-muted-foreground">
                   Aún no tienes pedidos asignados.
                 </p>
+              ) : filteredPaymentOrders.length === 0 ? (
+                <p className="px-6 py-8 text-sm text-muted-foreground">
+                  No hay pedidos para el estado de pago seleccionado.
+                </p>
               ) : (
                 <div className="divide-y divide-border">
-                  {data.orders.map((order) => {
+                  {filteredPaymentOrders.map((order) => {
                     const amount =
                       order.agreedCost != null && Number.isFinite(order.agreedCost)
                         ? order.agreedCost
@@ -514,7 +565,9 @@ export function SatelliteUserDashboard() {
                                       : "bg-sky-100 text-sky-800"
                                 )}
                               >
-                                {workStatusLabel(order.workStatus)}
+                                {order.workStatus === "enviado" || !order.workStatus
+                                  ? "Enviado (en trabajo)"
+                                  : workStatusLabel(order.workStatus)}
                               </span>
                               <span
                                 className={cn(
@@ -539,11 +592,29 @@ export function SatelliteUserDashboard() {
                             <p className="text-sm font-bold tabular-nums text-foreground">
                               {formatMoneyCop(amount)}
                             </p>
-                            <div>
-                              {order.workStatus === "recibido_completo" || order.paymentStatus === "paid" ? (
+                            <div className="flex items-center gap-1.5">
+                              {order.workStatus === "recibido_faltantes" ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setFaltantesDetail(order)}
+                                  className="h-7 w-7 p-0 border-amber-300 text-amber-800 hover:bg-amber-50"
+                                  title="Ver detalle de faltantes"
+                                >
+                                  <Eye className="h-3.5 w-3.5" />
+                                  <span className="sr-only">Ver faltantes</span>
+                                </Button>
+                              ) : null}
+                              {order.workStatus === "recibido_completo" ? (
                                 <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-md border border-emerald-300">
                                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
                                   Listo
+                                </span>
+                              ) : order.workStatus === "recibido_faltantes" ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-900 bg-amber-100 px-2.5 py-0.5 rounded-md border border-amber-300">
+                                  <PackageX className="h-3.5 w-3.5" />
+                                  Faltantes
                                 </span>
                               ) : (
                                 <Button
@@ -777,11 +848,33 @@ export function SatelliteUserDashboard() {
                           <p className="text-base font-semibold tabular-nums">
                             {formatMoneyCop(item.totalLabor)}
                           </p>
-                          <div className="pt-0.5">
-                            {item.workStatus === "recibido_completo" || item.paymentStatus === "paid" ? (
+                          <div className="pt-0.5 flex items-center justify-end gap-1.5">
+                            {item.workStatus === "recibido_faltantes" ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  const full =
+                                    data.orders.find((o) => o.orderId === item.orderId) ||
+                                    null;
+                                  setFaltantesDetail(full);
+                                }}
+                                className="h-7 w-7 p-0 border-amber-300 text-amber-800 hover:bg-amber-50"
+                                title="Ver detalle de faltantes"
+                              >
+                                <Eye className="h-3.5 w-3.5" />
+                              </Button>
+                            ) : null}
+                            {item.workStatus === "recibido_completo" ? (
                               <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-300">
                                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
                                 Listo
+                              </span>
+                            ) : item.workStatus === "recibido_faltantes" ? (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-900 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">
+                                <PackageX className="h-3.5 w-3.5" />
+                                Faltantes
                               </span>
                             ) : (
                               <Button
@@ -1022,6 +1115,12 @@ export function SatelliteUserDashboard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <MissingItemsDetailDialog
+        open={Boolean(faltantesDetail)}
+        order={faltantesDetail}
+        onClose={() => setFaltantesDetail(null)}
+      />
     </AppLayout>
   );
 }

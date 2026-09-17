@@ -305,7 +305,11 @@ export function useOrders() {
         }
     };
 
-    const updateOrderStatus = async (ordenId: string, nuevoEstado: string, observacion: string | null) => {
+    const updateOrderStatus = async (
+        ordenId: string,
+        nuevoEstado: string,
+        observacion: string | null
+    ): Promise<{ success: boolean; errorMessage: string | null }> => {
         setLoading(true);
         setError(null);
         try {
@@ -317,10 +321,11 @@ export function useOrders() {
             if (nuevoEstado === "in_production" || nuevoEstado === "delivered") {
                 notifyOrderRealCostUpdated(ordenId);
             }
-            return true;
+            return { success: true, errorMessage: null };
         } catch (err: unknown) {
-            setError(resolveHttpErrorMessage(err, "Error al actualizar estado"));
-            return false;
+            const message = resolveHttpErrorMessage(err, "Error al actualizar estado");
+            setError(message);
+            return { success: false, errorMessage: message };
         } finally {
             setLoading(false);
         }

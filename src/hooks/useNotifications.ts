@@ -11,6 +11,9 @@ export type NotificationType =
   | "kanban_stage"
   | "labor_rate"
   | "order_payment"
+  | "inventory_exit"
+  | "order_ready_for_dispatch"
+  | "order_delivered"
   | string;
 
 export interface AppNotification {
@@ -60,10 +63,12 @@ export function useNotifications(enabled: boolean) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const pingTimerRef = useRef<number | null>(null);
-  const backoffRef = useRef(1000);
+  const backoffRef = useRef(2000);
+  /** Evita reintentos WS mientras el API HTTP no responde. */
+  const apiHealthyRef = useRef(false);
 
   const fetchNotifications = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!enabledRef.current) return;
+    if (!enabledRef.current) return false;
     if (!opts?.silent) setLoading(true);
     setError(null);
     try {
@@ -72,8 +77,11 @@ export function useNotifications(enabled: boolean) {
       );
       setItems(Array.isArray(data.items) ? data.items : []);
       setUnreadCount(Number(data.unread_count) || 0);
+      apiHealthyRef.current = true;
+      return true;
     } catch (err) {
-      if (err instanceof UnauthorizedError) return;
+      apiHealthyRef.current = false;
+      if (err instanceof UnauthorizedError) return false;
       // Backend caído / red: no ensuciar UI ni consola en silent poll
       if (!opts?.silent) {
         setError(
@@ -84,6 +92,7 @@ export function useNotifications(enabled: boolean) {
               : "Error al cargar notificaciones"
         );
       }
+      return false;
     } finally {
       if (!opts?.silent) setLoading(false);
     }
@@ -138,6 +147,7 @@ export function useNotifications(enabled: boolean) {
       setItems([]);
       setUnreadCount(0);
       setWsConnected(false);
+      apiHealthyRef.current = false;
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -154,7 +164,6 @@ export function useNotifications(enabled: boolean) {
     }
 
     let cancelled = false;
-    void fetchNotifications();
 
     const clearPing = () => {
       if (pingTimerRef.current) {
@@ -167,14 +176,14 @@ export function useNotifications(enabled: boolean) {
       if (cancelled || !enabledRef.current) return;
       if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
       const delay = backoffRef.current;
-      // Backoff más agresivo para no spamear consola cuando el API está caído
-      backoffRef.current = Math.min(Math.max(delay, 2000) * 2, 60_000);
+      // Backoff largo para no spamear Network/consola cuando el API está caído o reiniciando
+      backoffRef.current = Math.min(Math.max(delay, 3000) * 2, 120_000);
       reconnectTimerRef.current = window.setTimeout(() => {
-        connectWs();
+        void connectWs();
       }, delay);
     };
 
-    const connectWs = () => {
+    const connectWs = async () => {
       if (cancelled || !enabledRef.current) return;
       const token = getStoredAccessToken();
       if (!token || isAccessTokenExpired(token)) {
@@ -183,77 +192,93 @@ export function useNotifications(enabled: boolean) {
         return;
       }
 
-      // Sondeo HTTP barato: si el API no responde, no abrir WS (evita ERR_CONNECTION_REFUSED en consola)
-      void (async () => {
-        try {
-          await http<NotificationsResponse>(
-            endpoints.notifications.list("limit=1"),
-            { method: "GET" }
-          );
-        } catch {
-          if (cancelled) return;
+      // Sin sondeo HTTP extra (limit=1): reutiliza el fetch inicial / focus.
+      // Solo abre WS si el API respondió OK recientemente.
+      if (!apiHealthyRef.current) {
+        const ok = await fetchNotifications({ silent: true });
+        if (cancelled) return;
+        if (!ok) {
           setWsConnected(false);
           scheduleReconnect();
           return;
         }
-        if (cancelled || !enabledRef.current) return;
+      }
 
+      try {
+        if (wsRef.current) {
+          wsRef.current.onclose = null;
+          wsRef.current.close();
+        }
+      } catch {
+        // ignore
+      }
+
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(buildNotificationsWsUrl(token));
+      } catch {
+        setWsConnected(false);
+        scheduleReconnect();
+        return;
+      }
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (cancelled) return;
+        backoffRef.current = 3000;
+        setWsConnected(true);
+        clearPing();
+        pingTimerRef.current = window.setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "ping" }));
+          }
+        }, 25_000);
+      };
+
+      ws.onmessage = (event) => {
         try {
-          if (wsRef.current) {
-            wsRef.current.onclose = null;
-            wsRef.current.close();
+          const data = JSON.parse(String(event.data)) as WsIncoming;
+          if (data?.type === "notification") {
+            applyPush(data);
           }
         } catch {
-          // ignore
+          // ignore malformed
         }
+      };
 
-        const ws = new WebSocket(buildNotificationsWsUrl(token));
-        wsRef.current = ws;
+      ws.onerror = () => {
+        // onclose reconecta
+      };
 
-        ws.onopen = () => {
-          if (cancelled) return;
-          backoffRef.current = 2000;
-          setWsConnected(true);
-          clearPing();
-          pingTimerRef.current = window.setInterval(() => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: "ping" }));
-            }
-          }, 25_000);
-        };
-
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(String(event.data)) as WsIncoming;
-            if (data?.type === "notification") {
-              applyPush(data);
-            }
-          } catch {
-            // ignore malformed
-          }
-        };
-
-        ws.onerror = () => {
-          // onclose reconecta
-        };
-
-        ws.onclose = () => {
-          setWsConnected(false);
-          clearPing();
-          if (wsRef.current === ws) wsRef.current = null;
-          scheduleReconnect();
-        };
-      })();
+      ws.onclose = () => {
+        setWsConnected(false);
+        clearPing();
+        if (wsRef.current === ws) wsRef.current = null;
+        // Tras corte WS, exigir un fetch OK antes de reabrir (evita ERR_EMPTY_RESPONSE en loop)
+        apiHealthyRef.current = false;
+        scheduleReconnect();
+      };
     };
 
-    connectWs();
+    void (async () => {
+      const ok = await fetchNotifications();
+      if (cancelled) return;
+      if (ok) {
+        void connectWs();
+      } else {
+        scheduleReconnect();
+      }
+    })();
 
     const onFocus = () => {
-      void fetchNotifications({ silent: true });
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        backoffRef.current = 2000;
-        connectWs();
-      }
+      void (async () => {
+        const ok = await fetchNotifications({ silent: true });
+        if (!ok) return;
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+          backoffRef.current = 3000;
+          void connectWs();
+        }
+      })();
     };
     window.addEventListener("focus", onFocus);
 

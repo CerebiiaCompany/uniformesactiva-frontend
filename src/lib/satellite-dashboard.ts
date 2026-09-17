@@ -1,6 +1,6 @@
 import type { ProductionOrder } from "@/data/mockData";
 import type { Order } from "@/hooks/useOrders";
-import type { SatelliteSettlement, SatelliteWorkStatus } from "@/hooks/useSatellites";
+import type { SatelliteMissingItem, SatelliteSettlement, SatelliteWorkStatus } from "@/hooks/useSatellites";
 import { parseStageKeys } from "@/lib/production-capa-permissions";
 import { computeRealCostFromCards } from "@/lib/order-real-cost";
 import type { PedidoCompra, DetallePedidoCompra } from "@/types/tns";
@@ -85,6 +85,13 @@ export type SatelliteOrderStageWork = {
   updatedAt?: string | null;
 };
 
+export type SatelliteOrderGarmentLine = {
+  id: string;
+  name: string;
+  size?: string;
+  expected: number;
+};
+
 export type SatelliteOrderDetail = {
   orderId: string;
   orderCode: string;
@@ -108,6 +115,10 @@ export type SatelliteOrderDetail = {
   confirmedAt: string | null;
   /** Capas del Kanban donde este satélite/taller intervino */
   stagesWorked: SatelliteOrderStageWork[];
+  /** Líneas de prenda/talla del pedido (para marcar faltantes) */
+  garmentLines: SatelliteOrderGarmentLine[];
+  /** Faltantes registrados por el administrador */
+  missingItems: SatelliteMissingItem[];
   /** Origen: local o tns */
   source?: "local" | "tns";
   supportDocumentUrl?: string | null;
@@ -123,10 +134,100 @@ export const SATELLITE_WORK_STATUS_OPTIONS: {
   { value: "recibido_faltantes", label: "Recibido — con faltantes" },
 ];
 
+/** Estados terminales: cierran el proceso del pedido con el satélite. */
+export function isSatelliteWorkStatusFinal(
+  status?: SatelliteWorkStatus | string | null
+): boolean {
+  return status === "recibido_completo" || status === "recibido_faltantes";
+}
+
 export function workStatusLabel(status: SatelliteWorkStatus): string {
   return (
-    SATELLITE_WORK_STATUS_OPTIONS.find((o) => o.value === status)?.label || status || "Enviado"
+    SATELLITE_WORK_STATUS_OPTIONS.find((o) => o.value === status)?.label || status || "Enviado (en trabajo)"
   );
+}
+
+/** Extrae prendas/tallas del pedido (o variantes Kanban) para marcar faltantes. */
+export function extractOrderGarmentLines(
+  order?: Order | null,
+  cards: ProductionOrder[] = []
+): SatelliteOrderGarmentLine[] {
+  const lines: SatelliteOrderGarmentLine[] = [];
+  const seen = new Set<string>();
+
+  const push = (name: string, size: string | undefined, expected: number, keyHint: string) => {
+    const n = (name || "").trim() || "Prenda";
+    const s = (size || "").trim();
+    const qty = Number(expected) || 0;
+    if (qty <= 0) return;
+    const id = `${keyHint}|${n}|${s || "-"}`;
+    if (seen.has(id)) {
+      const existing = lines.find((l) => l.id === id);
+      if (existing) existing.expected += qty;
+      return;
+    }
+    seen.add(id);
+    lines.push({ id, name: n, size: s || undefined, expected: qty });
+  };
+
+  for (const it of order?.items || []) {
+    const name = String(it.subproducto_nombre || it.producto_nombre || order?.producto_nombre || "Prenda").trim();
+    const size = String(it.talla_nombre || (it as { talla?: string }).talla || "").trim();
+    push(name, size, Number(it.cantidad) || 0, String(it.subproducto_id || it.producto_id || name));
+  }
+
+  if (lines.length > 0) return lines;
+
+  const primary =
+    cards.find((c) => c?.variants && c.variants.length > 0) || cards[0];
+  if (primary?.variants?.length) {
+    for (const v of primary.variants) {
+      const name = String(
+        (v as { productName?: string; name?: string }).productName ||
+          (v as { name?: string }).name ||
+          primary.title ||
+          primary.items ||
+          "Prenda"
+      ).trim();
+      if (v.tallas?.length) {
+        for (const t of v.tallas) {
+          push(name, t.nombre, Number(t.cantidad) || 0, `${name}-${t.nombre}`);
+        }
+      } else {
+        push(name, v.size, Number(v.quantity) || 0, `${name}-${v.size || "u"}`);
+      }
+    }
+  }
+
+  if (lines.length === 0) {
+    const qty = cards.reduce((max, c) => Math.max(max, Number(c?.quantity) || 0), 0);
+    const name = String(primary?.title || primary?.items || order?.producto_nombre || "Pedido").trim();
+    if (qty > 0) push(name, undefined, qty, "pedido");
+  }
+
+  return lines;
+}
+
+export function normalizeMissingItems(raw: unknown): SatelliteMissingItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SatelliteMissingItem[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const missing = Number(row.missing);
+    if (!Number.isFinite(missing) || missing <= 0) continue;
+    const name = String(row.name || "").trim();
+    if (!name) continue;
+    out.push({
+      id: row.id != null ? String(row.id) : undefined,
+      name,
+      size: row.size != null ? String(row.size) : undefined,
+      expected: row.expected != null ? Number(row.expected) || undefined : undefined,
+      missing,
+      note: row.note != null ? String(row.note) : undefined,
+    });
+  }
+  return out;
 }
 
 function normalizeText(str: string): string {
@@ -1043,6 +1144,8 @@ export function buildSatelliteOrderDetails(params: {
       agreedCost: agreedFromSettlement,
       confirmedAt: settlement?.confirmed_at || null,
       stagesWorked,
+      garmentLines: extractOrderGarmentLines(row.order, row.cards),
+      missingItems: normalizeMissingItems(settlement?.missing_items),
       source: "local",
       supportDocumentUrl: settlement?.support_document_url || null,
       supportDocumentName: settlement?.support_document_name || null,
@@ -1154,6 +1257,12 @@ export function buildSatelliteOrderDetails(params: {
         agreedCost: totalAmount,
         confirmedAt: getPedidoFecha(p) || null,
         stagesWorked,
+        garmentLines: Array.from(groupedItems.values()).map((it) => ({
+          id: it.code,
+          name: it.name || it.code,
+          expected: it.qty,
+        })),
+        missingItems: normalizeMissingItems(settlement?.missing_items),
         source: "tns",
         supportDocumentUrl: settlement?.support_document_url || null,
         supportDocumentName: settlement?.support_document_name || null,

@@ -31,6 +31,8 @@ import {
 } from "@/lib/dispatch-module";
 import {
   appendClientDispatchShippingCost,
+  getOrderRealCostFromOrder,
+  mergeShippingLines,
   normalizeRealCostBreakdown,
   notifyOrderRealCostUpdated,
   ORDER_REAL_COST_EVENT,
@@ -222,7 +224,13 @@ export default function Despacho() {
       byId.set(`PO-${order.id}`, order);
     }
 
-    const fromOrders = orders.flatMap(collectShipmentsFromOrder);
+    const fromOrders = orders.flatMap((order) => {
+      try {
+        return collectShipmentsFromOrder(order);
+      } catch {
+        return [];
+      }
+    });
     const fromSats = collectShipmentsFromSatellites(satellites || [], byId);
     const merged = [...fromOrders, ...fromSats];
 
@@ -280,7 +288,28 @@ export default function Despacho() {
     setMarkingId(order.id);
     try {
       if (payload.amount > 0) {
-        const previous = normalizeRealCostBreakdown(order.id, order.costo_real_desglose);
+        // Mezclar Kanban (domicilios) + desglose BD para no pisar ida/vuelta al sumar despacho
+        const persisted = normalizeRealCostBreakdown(
+          order.id,
+          order.costo_real_desglose
+        );
+        const fromOrder = getOrderRealCostFromOrder(order);
+        const previousBase = fromOrder || persisted || null;
+        const previous = previousBase
+          ? {
+              ...previousBase,
+              shippingLines: mergeShippingLines(
+                fromOrder?.shippingLines ?? previousBase.shippingLines,
+                persisted?.shippingLines
+              ),
+            }
+          : null;
+        if (previous) {
+          previous.shipping = (previous.shippingLines || []).reduce(
+            (s, l) => s + (Number(l.amount) || 0),
+            0
+          );
+        }
         const breakdown = appendClientDispatchShippingCost(
           order.id,
           previous,
@@ -300,18 +329,20 @@ export default function Despacho() {
         notifyOrderRealCostUpdated(order.id);
       }
 
-      const ok = await updateOrderStatus(
+      const statusResult = await updateOrderStatus(
         order.id,
         "delivered",
         payload.amount > 0
           ? `Despacho confirmado. Costo de despacho: $${formatCurrency(payload.amount)}`
           : "Despacho confirmado desde módulo Despacho"
       );
-      if (!ok) {
+      if (!statusResult.success) {
         toast({
           variant: "destructive",
           title: "No se pudo marcar entregado",
-          description: "Revisa el estado del pedido e inténtalo de nuevo.",
+          description:
+            statusResult.errorMessage ||
+            "Revisa el estado del pedido e inténtalo de nuevo.",
         });
         return;
       }

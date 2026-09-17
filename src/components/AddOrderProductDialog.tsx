@@ -245,12 +245,29 @@ export function AddOrderProductDialog({
     const [loadingProducts, setLoadingProducts] = useState(false);
     const [loadingVariants, setLoadingVariants] = useState(false);
     const [loadingSummary, setLoadingSummary] = useState(false);
+    /** Líneas con al menos un producto que tenga variantes (evita estados vacíos confusos). */
+    const [sellableLines, setSellableLines] = useState<ProductLine[]>([]);
+    const [loadingSellableLines, setLoadingSellableLines] = useState(false);
     /** Evita que los efectos en cascada limpien la hidratación de edición */
     const editHydrateRef = useRef<OrderProductEntry | null>(null);
     const skipVariantResetRef = useRef(false);
     const skipSizeResetRef = useRef(false);
     const skipGeneroAutoRef = useRef(false);
     const userEditedIngresoRef = useRef(false);
+
+    const selectableLines = useMemo(() => {
+        const byId = new Map<string, ProductLine>();
+        for (const line of sellableLines) byId.set(line.id, line);
+        // En edición / producto bloqueado, asegurar que la línea actual siga visible
+        const ensureId = editEntry?.line_id || selectedLineId;
+        if (ensureId && !byId.has(ensureId)) {
+            const fromProp = lines.find((l) => l.id === ensureId);
+            if (fromProp) byId.set(fromProp.id, fromProp);
+        }
+        return Array.from(byId.values());
+    }, [sellableLines, lines, editEntry?.line_id, selectedLineId]);
+
+    const linesBusy = loadingLines || loadingSellableLines;
 
     const resetForm = () => {
         setSelectedLineId("");
@@ -273,7 +290,35 @@ export function AddOrderProductDialog({
         skipSizeResetRef.current = false;
         skipGeneroAutoRef.current = false;
         userEditedIngresoRef.current = false;
+        setSellableLines([]);
     };
+
+    useEffect(() => {
+        if (!open) return;
+        let cancelled = false;
+        const loadSellableLines = async () => {
+            setLoadingSellableLines(true);
+            try {
+                const data = await http<ProductLine[]>(
+                    endpoints.lineas.list("ready_for_sale=1")
+                );
+                if (!cancelled) setSellableLines(Array.isArray(data) ? data : []);
+            } catch {
+                // Fallback: líneas con products_count > 0 (sin filtro de variantes)
+                if (!cancelled) {
+                    setSellableLines(
+                        (lines || []).filter((l) => (Number(l.products_count) || 0) > 0)
+                    );
+                }
+            } finally {
+                if (!cancelled) setLoadingSellableLines(false);
+            }
+        };
+        void loadSellableLines();
+        return () => {
+            cancelled = true;
+        };
+    }, [open, lines]);
 
     useEffect(() => {
         if (!open) {
@@ -378,8 +423,27 @@ export function AddOrderProductDialog({
         const loadProducts = async () => {
             setLoadingProducts(true);
             try {
-                const data = await http<LineProduct[]>(endpoints.lineas.productos(selectedLineId));
-                setProducts(data || []);
+                // Solo productos con variantes configuradas (salvo edición del producto actual)
+                const data = await http<LineProduct[]>(
+                    endpoints.lineas.productos(selectedLineId, "with_variants=1")
+                );
+                let list = Array.isArray(data) ? data : [];
+                if (
+                    hydrate?.producto_id &&
+                    hydrate.line_id === selectedLineId &&
+                    !list.some((p) => p.id === hydrate.producto_id)
+                ) {
+                    try {
+                        const all = await http<LineProduct[]>(
+                            endpoints.lineas.productos(selectedLineId)
+                        );
+                        const missing = (all || []).find((p) => p.id === hydrate.producto_id);
+                        if (missing) list = [...list, missing];
+                    } catch {
+                        /* ignore */
+                    }
+                }
+                setProducts(list);
                 if (hydrate?.producto_id) {
                     setSelectedProductId(hydrate.producto_id);
                 } else if (!lockedProductId) {
@@ -813,7 +877,7 @@ export function AddOrderProductDialog({
                     </div>
                 </div>
 
-                {loadingLines ? (
+                {linesBusy ? (
                     <div className="flex justify-center py-14">
                         <Loader2 className="h-6 w-6 animate-spin text-primary" />
                     </div>
@@ -831,19 +895,32 @@ export function AddOrderProductDialog({
                                             setSelectedProductId("");
                                             setSelectedVariantId("");
                                         }}
-                                        disabled={Boolean(lockedProductId)}
+                                        disabled={Boolean(lockedProductId) || linesBusy}
                                     >
                                         <SelectTrigger className="h-10">
-                                            <SelectValue placeholder="Selecciona línea..." />
+                                            <SelectValue
+                                                placeholder={
+                                                    linesBusy
+                                                        ? "Cargando líneas..."
+                                                        : selectableLines.length === 0
+                                                          ? "Sin líneas con productos listos"
+                                                          : "Selecciona línea..."
+                                                }
+                                            />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            {lines.map((line) => (
+                                            {selectableLines.map((line) => (
                                                 <SelectItem key={line.id} value={line.id}>
                                                     {line.code} — {line.name}
                                                 </SelectItem>
                                             ))}
                                         </SelectContent>
                                     </Select>
+                                    {!linesBusy && selectableLines.length === 0 ? (
+                                        <p className="text-[11px] text-muted-foreground">
+                                            Solo se listan líneas con productos que tengan variantes configuradas.
+                                        </p>
+                                    ) : null}
                                 </div>
                                 <div className="space-y-1.5">
                                     <Label className="text-xs font-medium">Producto</Label>
@@ -858,7 +935,15 @@ export function AddOrderProductDialog({
                                     >
                                         <SelectTrigger className="h-10">
                                             <SelectValue
-                                                placeholder={loadingProducts ? "Cargando..." : "Selecciona producto..."}
+                                                placeholder={
+                                                    loadingProducts
+                                                        ? "Cargando..."
+                                                        : !selectedLineId
+                                                          ? "Primero selecciona una línea"
+                                                          : products.length === 0
+                                                            ? "Sin productos con variantes"
+                                                            : "Selecciona producto..."
+                                                }
                                             />
                                         </SelectTrigger>
                                         <SelectContent>
@@ -869,6 +954,11 @@ export function AddOrderProductDialog({
                                             ))}
                                         </SelectContent>
                                     </Select>
+                                    {selectedLineId && !loadingProducts && products.length === 0 ? (
+                                        <p className="text-[11px] text-muted-foreground">
+                                            Esta línea no tiene productos con variantes configuradas.
+                                        </p>
+                                    ) : null}
                                 </div>
                             </div>
 
@@ -885,7 +975,15 @@ export function AddOrderProductDialog({
                                     >
                                         <SelectTrigger className="h-10">
                                             <SelectValue
-                                                placeholder={loadingVariants ? "Cargando..." : "Selecciona variante..."}
+                                                placeholder={
+                                                    loadingVariants
+                                                        ? "Cargando..."
+                                                        : !selectedProductId
+                                                          ? "Primero selecciona un producto"
+                                                          : variants.length === 0
+                                                            ? "Sin variantes configuradas"
+                                                            : "Selecciona variante..."
+                                                }
                                             />
                                         </SelectTrigger>
                                         <SelectContent>
