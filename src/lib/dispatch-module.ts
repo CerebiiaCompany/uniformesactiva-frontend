@@ -164,96 +164,105 @@ function isDomicilioShippingLine(line: RealCostLine): boolean {
 
 /** Domicilios / envíos registrados en costo real y tarjetas Kanban. */
 export function collectShipmentsFromOrder(order: Order): DispatchShipmentRow[] {
-  const rows: DispatchShipmentRow[] = [];
-  const shortId = `ORD-${order.id.slice(0, 3).toUpperCase()}`;
-  const seenKeys = new Set<string>();
+  try {
+    if (!order?.id) return [];
 
-  const pushRow = (row: DispatchShipmentRow) => {
-    const key = `${row.orderId}|${row.counterpart}|${row.amount}|${row.direction}|${row.source}`;
-    if (seenKeys.has(key)) return;
-    seenKeys.add(key);
-    rows.push(row);
-  };
+    const rows: DispatchShipmentRow[] = [];
+    const shortId = `ORD-${String(order.id).slice(0, 3).toUpperCase()}`;
+    const seenKeys = new Set<string>();
 
-  for (const card of cardsFromOrder(order)) {
-    const meta = card.shippingMeta;
-    // Columna Costo = solo domicilio (shippingCost / shippingMeta), nunca satelliteCost
-    const amount = Number(
-      meta?.kind === "satellite_roundtrip"
-        ? meta.amount
-        : meta?.amount ?? card.shippingCost
-    );
-    if (!(amount > 0)) continue;
+    const pushRow = (row: DispatchShipmentRow) => {
+      const key = `${row.orderId}|${row.counterpart}|${row.amount}|${row.direction}|${row.source}`;
+      if (seenKeys.has(key)) return;
+      seenKeys.add(key);
+      rows.push(row);
+    };
 
-    const satName =
-      meta?.satelliteName ||
-      card.satelliteAssignee ||
-      card.satelliteName ||
-      "Satélite";
-    const isRoundTrip =
-      meta?.kind === "satellite_roundtrip" ||
-      (Boolean(card.satelliteAssigneeId) && Boolean(card.shippingCost));
-    const dir: DispatchShipmentDirection = isRoundTrip
-      ? "ida_vuelta_satelite"
-      : card.satelliteAssigneeId
-        ? "hacia_satelite"
-        : "otro";
+    for (const card of cardsFromOrder(order)) {
+      if (!card) continue;
+      const meta = card.shippingMeta;
+      // Columna Costo = solo domicilio (shippingCost / shippingMeta), nunca satelliteCost
+      const amount = Number(
+        meta?.kind === "satellite_roundtrip"
+          ? meta.amount
+          : meta?.amount ?? card.shippingCost
+      );
+      if (!(amount > 0)) continue;
 
-    pushRow({
-      id: `card-ship-${order.id}-${card.id}`,
-      orderId: order.id,
-      shortId,
-      customerName: order.cliente_nombre,
-      direction: dir,
-      directionLabel: directionLabel(dir),
-      counterpart: satName,
-      address: "",
-      amount,
-      stageLabel: isRoundTrip
-        ? "Domicilio ida y vuelta"
-        : card.stage || "—",
-      updatedAt: meta?.registeredAt || null,
-      source: "kanban",
-    });
-  }
+      const satName =
+        meta?.satelliteName ||
+        card.satelliteAssignee ||
+        card.satelliteName ||
+        "Satélite";
+      const isRoundTrip =
+        meta?.kind === "satellite_roundtrip" ||
+        (Boolean(card.satelliteAssigneeId) && Boolean(card.shippingCost));
+      const dir: DispatchShipmentDirection = isRoundTrip
+        ? "ida_vuelta_satelite"
+        : card.satelliteAssigneeId
+          ? "hacia_satelite"
+          : "otro";
 
-  const breakdown = normalizeRealCostBreakdown(order.id, order.costo_real_desglose);
-  const shippingLines: RealCostLine[] = (breakdown.shippingLines || []).filter(
-    isDomicilioShippingLine
-  );
-
-  for (const line of shippingLines) {
-    const label = String(line.label || "Envío / domicilio");
-    const amount = Number(line.amount) || 0;
-    if (!(amount > 0)) continue;
-
-    // Evitar duplicar el domicilio ya tomado desde shippingMeta/shippingCost de la tarjeta
-    if (/ida y vuelta|domicilio/i.test(label) && rows.some((r) => r.source === "kanban")) {
-      continue;
+      pushRow({
+        id: `card-ship-${order.id}-${card.id}`,
+        orderId: order.id,
+        shortId,
+        customerName: order.cliente_nombre,
+        direction: dir,
+        directionLabel: directionLabel(dir),
+        counterpart: satName,
+        address: "",
+        amount,
+        stageLabel: isRoundTrip
+          ? "Domicilio ida y vuelta"
+          : card.stage || "—",
+        updatedAt: meta?.registeredAt || null,
+        source: "kanban",
+      });
     }
-    const dir = inferDirection(`${label} ${line.userName || ""} ${line.stageLabel || ""}`);
-    // Despacho a cliente desde módulo Despacho
-    const direction =
-      /costo de despacho|entrega cliente|despacho a cliente/i.test(label)
-        ? ("a_cliente" as const)
-        : dir;
-    pushRow({
-      id: `ship-${order.id}-${label}-${amount}-${line.updatedAt || "na"}`,
-      orderId: order.id,
-      shortId,
-      customerName: order.cliente_nombre,
-      direction,
-      directionLabel: directionLabel(direction),
-      counterpart: line.userName || order.cliente_nombre || "—",
-      address: "",
-      amount,
-      stageLabel: line.stageLabel || line.stage || label || "—",
-      updatedAt: line.updatedAt || null,
-      source: "costo_real",
-    });
-  }
 
-  return rows;
+    // costo_real_desglose ausente/vacío → normalizeRealCostBreakdown retorna null
+    const breakdown = normalizeRealCostBreakdown(order.id, order.costo_real_desglose);
+    const shippingLines: RealCostLine[] = (breakdown?.shippingLines ?? []).filter(
+      isDomicilioShippingLine
+    );
+
+    for (const line of shippingLines) {
+      const label = String(line.label || "Envío / domicilio");
+      const amount = Number(line.amount) || 0;
+      if (!(amount > 0)) continue;
+
+      // Evitar duplicar el domicilio ya tomado desde shippingMeta/shippingCost de la tarjeta
+      if (/ida y vuelta|domicilio/i.test(label) && rows.some((r) => r.source === "kanban")) {
+        continue;
+      }
+      const dir = inferDirection(`${label} ${line.userName || ""} ${line.stageLabel || ""}`);
+      // Despacho a cliente desde módulo Despacho
+      const direction =
+        /costo de despacho|entrega cliente|despacho a cliente/i.test(label)
+          ? ("a_cliente" as const)
+          : dir;
+      pushRow({
+        id: `ship-${order.id}-${label}-${amount}-${line.updatedAt || "na"}`,
+        orderId: order.id,
+        shortId,
+        customerName: order.cliente_nombre,
+        direction,
+        directionLabel: directionLabel(direction),
+        counterpart: line.userName || order.cliente_nombre || "—",
+        address: "",
+        amount,
+        stageLabel: line.stageLabel || line.stage || label || "—",
+        updatedAt: line.updatedAt || null,
+        source: "costo_real",
+      });
+    }
+
+    return rows;
+  } catch {
+    // Una orden corrupta no debe tumbar el módulo Despacho (pantalla blanca).
+    return [];
+  }
 }
 
 /** Movimientos satélite (enviado / recibido) como domicilios logísticos. */

@@ -13,14 +13,46 @@ function normalizeRoleName(raw: unknown): string {
   return "";
 }
 
+function stripAccents(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 function roleLooksAdmin(raw: unknown): boolean {
-  const lower = normalizeRoleName(raw).toLowerCase();
+  const lower = stripAccents(normalizeRoleName(raw));
   if (!lower) return false;
   return (
     lower.includes("administrador") ||
     lower.includes("administracion") ||
     lower === "admin" ||
     lower === "superadmin"
+  );
+}
+
+function roleLooksNotificationAudience(raw: unknown): boolean {
+  const lower = stripAccents(normalizeRoleName(raw));
+  if (!lower) return false;
+  return (
+    lower.includes("administrador") ||
+    lower.includes("administracion") ||
+    lower === "admin" ||
+    lower === "superadmin" ||
+    lower.includes("comercial") ||
+    lower.includes("inventario") ||
+    lower.includes("despacho")
+  );
+}
+
+function areaLooksNotificationAudience(areaRaw: unknown): boolean {
+  const area = stripAccents(String(areaRaw || ""));
+  if (!area) return false;
+  return (
+    area.includes("administracion") ||
+    area.includes("comercial") ||
+    area.includes("inventario") ||
+    area.includes("despacho")
   );
 }
 
@@ -50,6 +82,39 @@ export function isAdminUser(): boolean {
       if (decoded?.is_superuser) return true;
       const roles = Array.isArray(decoded?.roles) ? decoded.roles : [];
       return roles.some(roleLooksAdmin);
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+/**
+ * Áreas con campana de notificaciones:
+ * Administración, Comercial, Inventario y Despacho.
+ */
+export function canReceiveNotifications(): boolean {
+  try {
+    const raw = localStorage.getItem("user");
+    if (raw) {
+      const user = JSON.parse(raw);
+      if (user?.is_superuser) return true;
+      if (areaLooksNotificationAudience(user?.area)) return true;
+      const roles = Array.isArray(user?.roles) ? user.roles : [];
+      if (roles.some(roleLooksNotificationAudience)) return true;
+    }
+
+    const token = localStorage.getItem("token");
+    if (token) {
+      const decoded = jwtDecode<{
+        roles?: unknown[];
+        area?: string;
+        is_superuser?: boolean;
+      }>(token);
+      if (decoded?.is_superuser) return true;
+      if (areaLooksNotificationAudience(decoded?.area)) return true;
+      const roles = Array.isArray(decoded?.roles) ? decoded.roles : [];
+      return roles.some(roleLooksNotificationAudience);
     }
   } catch {
     return false;

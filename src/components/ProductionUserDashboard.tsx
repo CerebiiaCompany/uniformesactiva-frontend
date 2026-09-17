@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ChevronUp,
   ClipboardList,
+  Eye,
   Factory,
   History,
   Loader2,
@@ -47,9 +48,11 @@ import {
   buildProductionUserPanel,
   formatMoneyCop,
   readStoredProductionUser,
+  type ProductionOrderDetail,
   type ProductionUserPanelData,
 } from "@/lib/production-user-dashboard";
 import { mergeProductionUserFromApi } from "@/lib/production-capa-permissions";
+import { MissingItemsDetailDialog } from "@/components/MissingItemsDetailDialog";
 
 async function fetchAllOrders(): Promise<Order[]> {
   const all: Order[] = [];
@@ -88,6 +91,11 @@ export function ProductionUserDashboard() {
   const [expandedOrders, setExpandedOrders] = useState<Record<string, boolean>>({});
   const [historyPeriod, setHistoryPeriod] = useState(currentMonthKey);
   const [historyPayment, setHistoryPayment] = useState<HistoryPaymentFilter>("todos");
+  const [ordersPaymentFilter, setOrdersPaymentFilter] =
+    useState<HistoryPaymentFilter>("pending");
+  const [faltantesDetail, setFaltantesDetail] = useState<ProductionOrderDetail | null>(
+    null
+  );
 
   const toggleOrderDetails = (orderId: string) => {
     setExpandedOrders((prev) => ({ ...prev, [orderId]: !prev[orderId] }));
@@ -148,6 +156,12 @@ export function ProductionUserDashboard() {
         matchesHistoryPayment(item.paymentStatus, historyPayment)
     );
   }, [panel?.orderHistory, historyPeriod, historyPayment]);
+
+  const filteredPaymentOrders = useMemo(() => {
+    return (panel?.orders || []).filter((order) =>
+      matchesHistoryPayment(order.paymentStatus, ordersPaymentFilter)
+    );
+  }, [panel?.orders, ordersPaymentFilter]);
 
   if (loading && !panel) {
     return (
@@ -257,21 +271,50 @@ export function ProductionUserDashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg font-semibold tracking-tight">
-                Estado de pagos por capas del pedido
-              </CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Mano de obra registrada en cada capa donde trabajaste.
-              </p>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <CardTitle className="text-lg font-semibold tracking-tight">
+                    Estado de pagos por capas del pedido
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Mano de obra registrada en cada capa donde trabajaste. Por defecto
+                    solo se muestran pedidos por pagar.
+                  </p>
+                </div>
+                <div className="space-y-1 min-w-[160px]">
+                  <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Estado de pago
+                  </Label>
+                  <Select
+                    value={ordersPaymentFilter}
+                    onValueChange={(v) =>
+                      setOrdersPaymentFilter(v as HistoryPaymentFilter)
+                    }
+                  >
+                    <SelectTrigger className="h-9 bg-background">
+                      <SelectValue placeholder="Estado de pago" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pending">Por pagar</SelectItem>
+                      <SelectItem value="paid">Pagadas</SelectItem>
+                      <SelectItem value="todos">Todas</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               {data.orders.length === 0 ? (
                 <p className="px-6 py-8 text-sm text-muted-foreground">
                   Aún no tienes pedidos asignados.
                 </p>
+              ) : filteredPaymentOrders.length === 0 ? (
+                <p className="px-6 py-8 text-sm text-muted-foreground">
+                  No hay pedidos para el estado de pago seleccionado.
+                </p>
               ) : (
                 <div className="divide-y divide-border">
-                  {data.orders.map((order) => (
+                  {filteredPaymentOrders.map((order) => (
                     <div key={order.orderId} className="px-6 py-3 space-y-2.5">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -308,13 +351,31 @@ export function ProductionUserDashboard() {
                                 ? "Pagado"
                                 : "Por pagar"}
                             </span>
+                            {order.workStatus === "recibido_faltantes" ? (
+                              <span className="inline-flex rounded-full bg-amber-100 text-amber-900 px-2 py-0.5 text-[10px] font-medium">
+                                Con faltantes
+                              </span>
+                            ) : null}
                           </div>
                         </div>
-                        <div className="text-right shrink-0">
+                        <div className="text-right shrink-0 flex flex-col items-end gap-1.5">
                           <p className="text-sm tabular-nums">
                             {formatMoneyCop(order.cost)}
                           </p>
                           <p className="text-[10px] text-muted-foreground">MO total</p>
+                          {order.workStatus === "recibido_faltantes" ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setFaltantesDetail(order)}
+                              className="h-7 w-7 p-0 border-amber-300 text-amber-800 hover:bg-amber-50"
+                              title="Ver detalle de faltantes"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              <span className="sr-only">Ver faltantes</span>
+                            </Button>
+                          ) : null}
                         </div>
                       </div>
 
@@ -717,6 +778,12 @@ export function ProductionUserDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      <MissingItemsDetailDialog
+        open={Boolean(faltantesDetail)}
+        order={faltantesDetail}
+        onClose={() => setFaltantesDetail(null)}
+      />
     </AppLayout>
   );
 }

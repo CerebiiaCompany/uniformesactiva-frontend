@@ -1,7 +1,12 @@
 import type { Order } from "@/hooks/useOrders";
 import type { ProductionOrder } from "@/data/mockData";
-import type { SatelliteSettlement } from "@/hooks/useSatellites";
-import { formatMoneyCop } from "@/lib/satellite-dashboard";
+import type { SatelliteMissingItem, SatelliteSettlement, SatelliteWorkStatus } from "@/hooks/useSatellites";
+import {
+  extractOrderGarmentLines,
+  formatMoneyCop,
+  normalizeMissingItems,
+  type SatelliteOrderGarmentLine,
+} from "@/lib/satellite-dashboard";
 import { parseStageKeys, cardAssignedToOperatorOnAllowedStage, type ProductionSession } from "@/lib/production-capa-permissions";
 
 export type StoredProductionUser = {
@@ -83,6 +88,10 @@ export type ProductionOrderDetail = {
   /** Desglose de MO y pago por cada capa del pedido */
   stagePayments: ProductionStagePayment[];
   cardIds: string[];
+  workStatus?: SatelliteWorkStatus;
+  observations?: string;
+  garmentLines?: SatelliteOrderGarmentLine[];
+  missingItems?: SatelliteMissingItem[];
   supportDocumentUrl?: string | null;
   supportDocumentName?: string | null;
 };
@@ -655,6 +664,10 @@ export function buildProductionOrderDetails(params: {
       paymentStatus,
       stagePayments,
       cardIds,
+      workStatus: settlement?.work_status || undefined,
+      observations: settlement?.observations || "",
+      garmentLines: extractOrderGarmentLines(row.order, row.cards),
+      missingItems: normalizeMissingItems(settlement?.missing_items),
       supportDocumentUrl: settlement?.support_document_url || null,
       supportDocumentName: settlement?.support_document_name || null,
     });

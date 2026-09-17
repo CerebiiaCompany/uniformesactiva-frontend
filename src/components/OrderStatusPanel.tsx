@@ -47,11 +47,11 @@ export function OrderStatusPanel({ order, open, onOpenChange, onStatusChange }: 
     if (!nextStatus) return;
 
     setLoading(true);
-    const success = await updateOrderStatus(order.id, nextStatus, observacion || null);
+    const result = await updateOrderStatus(order.id, nextStatus, observacion || null);
     // Liberar el botón de inmediato (el refresco de lista/TNS va en background)
     setLoading(false);
 
-    if (success) {
+    if (result.success) {
       setObservacion("");
       setIsConfirming(false);
       onOpenChange(false);
@@ -61,7 +61,10 @@ export function OrderStatusPanel({ order, open, onOpenChange, onStatusChange }: 
     } else {
       toast({
         title: "Error al cambiar el estado",
-        description: ordersError || "No se pudo actualizar el estado de la orden.",
+        description:
+          result.errorMessage ||
+          ordersError ||
+          "No se pudo actualizar el estado de la orden.",
         variant: "destructive",
       });
     }

@@ -30,6 +30,8 @@ import {
   cardHasKanbanMaterialRequests,
   reconcileOrphanLiveMaterials,
   cardHasAssigneeForStage,
+  upsertStageCostLedger,
+  syncLaborFromAllStagesIntoLedger,
 } from "@/lib/order-real-cost";
 import { isDispatchStageKey } from "@/lib/dispatch-module";
 import {
@@ -314,6 +316,8 @@ export default function Production() {
   /** Últimas tarjetas por orden (evita que un PATCH viejo pise shippingCost/shippingMeta). */
   const latestCardsByOrderRef = useRef<Record<string, ProductionOrder[]>>({});
   const persistChainRef = useRef<Record<string, Promise<void>>>({});
+  /** Contador de persistencias Kanban en vuelo por orden (evita que fetchOrders pise el ledger). */
+  const persistInFlightRef = useRef<Record<string, number>>({});
   const [stages, setStages] = useState<Stage[]>([]);
   const [savingBoard, setSavingBoard] = useState(false);
   const [savingCard, setSavingCard] = useState(false);
@@ -349,6 +353,9 @@ export default function Production() {
     { id: string; name: string; stageKeys: string[] }[]
   >([]);
   const [satelliteUsers, setSatelliteUsers] = useState<
+    { id: string; name: string; stageKeys: string[]; satelliteId?: string }[]
+  >([]);
+  const [dispatchUsers, setDispatchUsers] = useState<
     { id: string; name: string; stageKeys: string[] }[]
   >([]);
   const [assignOpenFor, setAssignOpenFor] = useState<string | null>(null);
@@ -446,6 +453,60 @@ export default function Production() {
         )
       );
 
+      // Deja el pedido en «Enviado (en trabajo)» en el módulo Satélites
+      // para que no se confunda con ya recibido.
+      try {
+        const satUser = await http<{
+          satellite_id?: string | null;
+          settlements?: Record<string, unknown>;
+        }>(endpoints.users.detail(satelliteUserId));
+        const workshopId = String(satUser?.satellite_id || "").trim();
+        if (workshopId) {
+          const workshop = await http<{
+            settlements?: Record<string, Record<string, unknown>>;
+          }>(endpoints.satellites.detail(workshopId));
+          const prevSettlements = workshop?.settlements || {};
+          const rawOrderId = String(card.orderId).replace(/^PO-/, "");
+          const cardId = card.id || `PO-${rawOrderId}`;
+          const prev =
+            prevSettlements[rawOrderId] ||
+            prevSettlements[card.orderId] ||
+            prevSettlements[cardId] ||
+            {};
+          const prevStatus = String(prev.work_status || "");
+          const alreadyFinal =
+            prevStatus === "recibido_completo" || prevStatus === "recibido_faltantes";
+          if (!alreadyFinal) {
+            const settlementEntry = {
+              ...prev,
+              status: (prev.status as string) === "paid" ? "paid" : "pending",
+              work_status: "enviado",
+              amount: Number(prev.amount || prev.agreed_cost || 0) || 0,
+              agreed_cost:
+                prev.agreed_cost != null
+                  ? Number(prev.agreed_cost)
+                  : Number(prev.amount || 0) || null,
+              confirmed_at: prev.confirmed_at || null,
+            };
+            const nextSettlements = {
+              ...prevSettlements,
+              [rawOrderId]: settlementEntry,
+              [card.orderId]: settlementEntry,
+              [cardId]: settlementEntry,
+            };
+            await http(endpoints.satellites.detail(workshopId), {
+              method: "PATCH",
+              body: JSON.stringify({
+                settlements: nextSettlements,
+                payment_status: "pendiente",
+              }),
+            });
+          }
+        }
+      } catch {
+        /* no bloquear el domicilio si falla el settlement inicial */
+      }
+
       roundtripOpenRef.current = false;
       setRoundtripDialog({
         open: false,
@@ -472,8 +533,15 @@ export default function Production() {
   };
 
   const openAssignModal = (card: ProductionOrder, currentStageKey: string) => {
-    const initialType = card.satelliteAssigneeId ? "satellite" : "production";
-    const initialUserId = card.satelliteAssigneeId || card.assigneeId || "";
+    const isDispatch = isDispatchStageKey(currentStageKey);
+    const initialType = isDispatch
+      ? "production"
+      : card.satelliteAssigneeId
+        ? "satellite"
+        : "production";
+    const initialUserId = isDispatch
+      ? card.assigneeId || ""
+      : card.satelliteAssigneeId || card.assigneeId || "";
 
     setAssignModal({
       open: true,
@@ -664,7 +732,8 @@ export default function Production() {
     };
 
     const isCurrentStage = card.stage === stageKey;
-    const patch: Partial<ProductionOrder> = {
+    const patchedCard: ProductionOrder = {
+      ...card,
       stageLaborConfig,
       stageAssignees,
       ...(isCurrentStage
@@ -673,6 +742,22 @@ export default function Production() {
             laborCostPerUnit: data.enabled && data.perUnit != null ? data.perUnit : null,
           }
         : {}),
+    };
+    const stageLabelsMap = Object.fromEntries(
+      stages.map((s) => [s.key, s.label] as const)
+    );
+    const baseLedger = upsertStageCostLedger(
+      patchedCard,
+      patchedCard.stage,
+      stageLabelsMap[patchedCard.stage] || patchedCard.stage
+    );
+    const patch: Partial<ProductionOrder> = {
+      ...patchedCard,
+      costLedger: syncLaborFromAllStagesIntoLedger(
+        patchedCard,
+        baseLedger,
+        stageLabelsMap
+      ),
     };
 
     if (card.orderId) {
@@ -790,17 +875,22 @@ export default function Production() {
             const isAlreadyAdded = Boolean(prevStagesDone[stageKeyCompleted]);
             const totalAccumAmount = isAlreadyAdded ? prevAmount : prevAmount + amount;
 
+            const prevStatus = String(prevOrder.work_status || "");
+            const alreadyFinal =
+              prevStatus === "recibido_completo" || prevStatus === "recibido_faltantes";
+
             const settlementPayload = {
               ...prevOrder,
               status: prevOrder.status || "pending",
-              work_status: "recibido_completo",
+              // Terminar capa en Kanban no confirma recepción; solo el admin en Satélites.
+              work_status: alreadyFinal ? prevStatus : "enviado",
               amount: totalAccumAmount,
               agreed_cost: totalAccumAmount,
               stages_done: {
                 ...prevStagesDone,
                 [stageKeyCompleted]: amount,
               },
-              confirmed_at: new Date().toISOString(),
+              confirmed_at: alreadyFinal ? prevOrder.confirmed_at || null : null,
             };
 
             const nextSettlements = {
@@ -833,17 +923,22 @@ export default function Production() {
           const isAlreadyAdded = Boolean(prevStagesDone[stageKeyCompleted]);
           const totalAccumAmount = isAlreadyAdded ? prevAmount : prevAmount + amount;
 
+          const prevStatus = String(prevOrder.work_status || "");
+          const alreadyFinal =
+            prevStatus === "recibido_completo" || prevStatus === "recibido_faltantes";
+
           const settlementPayload = {
             ...prevOrder,
             status: prevOrder.status || "pending",
-            work_status: "recibido_completo",
+            // Terminar capa ≠ recepción confirmada por admin.
+            work_status: alreadyFinal ? prevStatus : "enviado",
             amount: totalAccumAmount,
             agreed_cost: totalAccumAmount,
             stages_done: {
               ...prevStagesDone,
               [stageKeyCompleted]: amount,
             },
-            confirmed_at: new Date().toISOString(),
+            confirmed_at: alreadyFinal ? prevOrder.confirmed_at || null : null,
           };
 
           const nextSettlements = {
@@ -869,11 +964,95 @@ export default function Production() {
       const prevLabel = stages.find((s) => s.key === currentStage)?.label || currentStage;
       const nextLabel = stages.find((s) => s.key === nextStage)?.label || nextStage;
       const now = new Date().toISOString();
-      const frozenCosts = freezeStageCostsOnMove(workingOrder, currentStage, prevLabel);
 
+      // Snapshot MO: prioriza tarifa viva; si no, conserva stageLaborConfig ya guardada
+      const prevCfg = workingOrder.stageLaborConfig?.[currentStage];
+      const livePerUnit =
+        workingOrder.laborCostPerUnit != null &&
+        Number.isFinite(Number(workingOrder.laborCostPerUnit))
+          ? Number(workingOrder.laborCostPerUnit)
+          : null;
+      const cfgPerUnit =
+        prevCfg?.perUnit != null && Number.isFinite(Number(prevCfg.perUnit))
+          ? Number(prevCfg.perUnit)
+          : null;
+      const stageLaborConfig = {
+        ...(workingOrder.stageLaborConfig || {}),
+        [currentStage]: {
+          enabled:
+            Boolean(workingOrder.laborCostEnabled) ||
+            Boolean(prevCfg?.enabled) ||
+            (livePerUnit != null && livePerUnit > 0) ||
+            (cfgPerUnit != null && cfgPerUnit > 0),
+          perUnit: livePerUnit != null ? livePerUnit : cfgPerUnit,
+        },
+      };
+
+      // Asegurar responsable de la capa saliente en stageAssignees (auditoría + desglose)
+      const stageAssignees = { ...(workingOrder.stageAssignees || {}) };
+      if (
+        !stageAssignees[currentStage] &&
+        !stageAssignees[`${currentStage}__satellite`] &&
+        !stageAssignees[`${currentStage}__production`]
+      ) {
+        if (
+          workingOrder.satelliteAssigneeId &&
+          workingOrder.satelliteAssignee &&
+          workingOrder.satelliteAssignee !== "Sin asignar"
+        ) {
+          stageAssignees[`${currentStage}__satellite`] = {
+            userId: workingOrder.satelliteAssigneeId,
+            name: workingOrder.satelliteAssignee,
+            kind: "satellite",
+          };
+        } else if (
+          workingOrder.assigneeId &&
+          workingOrder.assignee &&
+          workingOrder.assignee !== "Sin asignar"
+        ) {
+          stageAssignees[currentStage] = {
+            userId: workingOrder.assigneeId,
+            name: workingOrder.assignee,
+            kind: "production",
+          };
+        }
+      }
+
+      const cardForFreeze = {
+        ...workingOrder,
+        stageLaborConfig,
+        stageAssignees,
+      };
+      const frozenCosts = freezeStageCostsOnMove(
+        cardForFreeze,
+        currentStage,
+        prevLabel
+      );
+
+      const stageLabelsMap = Object.fromEntries(
+        stages.map((s) => [s.key, s.label] as const)
+      );
+      const frozenLedger = syncLaborFromAllStagesIntoLedger(
+        {
+          ...cardForFreeze,
+          ...frozenCosts,
+          stage: nextStage as ProductionOrder["stage"],
+          assigneeId: null,
+          satelliteAssigneeId: null,
+        },
+        frozenCosts.costLedger || [],
+        stageLabelsMap
+      );
+
+      const nextLabor = stageLaborConfig[nextStage];
       const movedPatch = {
         ...frozenCosts,
-        stageAssignees: workingOrder.stageAssignees,
+        costLedger: frozenLedger,
+        stageAssignees,
+        stageLaborConfig,
+        laborCostEnabled: nextLabor ? Boolean(nextLabor.enabled) : false,
+        laborCostPerUnit:
+          nextLabor && nextLabor.perUnit != null ? Number(nextLabor.perUnit) : null,
         stage: nextStage as ProductionOrder["stage"],
         daysInStage: 0,
         assignee: "Sin asignar",
@@ -887,8 +1066,8 @@ export default function Production() {
       };
 
       if (targetOrderId && workingOrder.id) {
-        // 1) Persistir costos congelados + stageAssignees (auditoría de capa)
-        commitOrderCards(targetOrderId, (cards) =>
+        // 1) Persistir costos congelados ANTES de refrescar (evita que fetchOrders pise el ledger)
+        await commitOrderCards(targetOrderId, (cards) =>
           cards.map((o) => (o.id !== workingOrder.id ? o : { ...o, ...movedPatch }))
         );
         // 2) Avanzar etapa (BE exige que la capa saliente tuviera asignado)
@@ -912,7 +1091,7 @@ export default function Production() {
           : `Trabajo de «${prevLabel}» finalizado. El pedido avanzó a la fase de «${nextLabel}» (Sin asignar) y se sumaron ${new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(amount)} a POR PAGAR.`,
       });
 
-      await fetchOrders();
+      await fetchOrders({ estado: "in_production" });
     } catch (err: any) {
       toast({
         title: "Error",
@@ -968,6 +1147,8 @@ export default function Production() {
           first_name?: string;
           last_name?: string;
           username?: string;
+          area?: string;
+          satellite_id?: string | null;
           production_stage_key?: string;
           production_stage_keys?: string[];
         }) => ({
@@ -981,26 +1162,71 @@ export default function Production() {
               ? u.production_stage_keys
               : u.production_stage_key
           ),
+          satelliteId: u.satellite_id ? String(u.satellite_id) : undefined,
+          area: String(u.area || ""),
         });
 
         const roleMatch = (roles: unknown[], needle: string) =>
           roles.some((r) => {
-            const s = String(r);
-            return s === needle || s.includes(needle);
+            let raw = "";
+            if (typeof r === "string") raw = r;
+            else if (r && typeof r === "object" && "name" in (r as object)) {
+              raw = String((r as { name?: string }).name || "");
+            } else raw = String(r || "");
+            const m = raw.match(/name=['"]([^'"]+)['"]/);
+            if (m?.[1]) raw = m[1];
+            const s = raw
+              .toLowerCase()
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, "");
+            const n = needle
+              .toLowerCase()
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, "");
+            return Boolean(s) && (s === n || s.includes(n));
           });
+
+        const areaLooks = (area: string, needle: string) => {
+          const a = area
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "");
+          const n = needle
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "");
+          return Boolean(a) && a.includes(n);
+        };
 
         const prod: typeof productionUsers = [];
         const sat: typeof satelliteUsers = [];
+        const dispatch: typeof dispatchUsers = [];
 
         for (const u of list) {
           const roles = Array.isArray(u.roles) ? u.roles : [];
           const active = !u.status || String(u.status).toLowerCase() === "active";
           if (!active) continue;
-          if (roleMatch(roles, "Producción")) prod.push(mapUser(u));
-          if (roleMatch(roles, "Satélite")) sat.push(mapUser(u));
+          const mapped = mapUser(u);
+          const userArea = String(u.area || "");
+          const isProd = roleMatch(roles, "Produccion") || roleMatch(roles, "Producción");
+          const isSat = roleMatch(roles, "Satelite") || roleMatch(roles, "Satélite");
+          const isDispatch =
+            roleMatch(roles, "Despacho") || areaLooks(userArea, "Despacho");
+
+          if (isProd && !isSat) prod.push(mapped);
+          if (isSat) sat.push(mapped);
+          // Para Despacho: solo rol/área despacho, sin producción ni satélite
+          if (isDispatch && !isProd && !isSat) {
+            dispatch.push({
+              id: mapped.id,
+              name: mapped.name,
+              stageKeys: mapped.stageKeys,
+            });
+          }
         }
         setProductionUsers(prod);
         setSatelliteUsers(sat);
+        setDispatchUsers(dispatch);
       } catch {
         // sin usuarios el select quedará vacío
       }
@@ -1333,10 +1559,32 @@ export default function Production() {
       stages.forEach((s) => {
         labels[s.key] = s.label;
       });
-      setProdOrders(
-        transformed.map((c) => reconcileOrphanLiveMaterials(c, labels))
-      );
-      // No pisar el ref mientras el modal de domicilio está abierto (aún no persistido)
+      setProdOrders((prev) => {
+        const reconciled = transformed.map((c) =>
+          reconcileOrphanLiveMaterials(c, labels)
+        );
+        const pendingOrderIds = new Set(
+          Object.entries(persistInFlightRef.current)
+            .filter(([, n]) => (n || 0) > 0)
+            .map(([id]) => id)
+        );
+        if (!pendingOrderIds.size) return reconciled;
+
+        const localByOrder = new Map<string, ProductionOrder[]>();
+        for (const c of prev) {
+          if (!c.orderId || !pendingOrderIds.has(c.orderId)) continue;
+          const list = localByOrder.get(c.orderId) || [];
+          list.push(c);
+          localByOrder.set(c.orderId, list);
+        }
+        if (!localByOrder.size) return reconciled;
+
+        const others = reconciled.filter(
+          (c) => !c.orderId || !localByOrder.has(c.orderId)
+        );
+        return [...others, ...[...localByOrder.values()].flat()];
+      });
+      // No pisar el ref mientras hay persistencia en vuelo o modal de domicilio abierto
       if (!roundtripOpenRef.current) {
         const byOrder: Record<string, ProductionOrder[]> = {};
         for (const c of transformed) {
@@ -1345,10 +1593,15 @@ export default function Production() {
             reconcileOrphanLiveMaterials(c, labels)
           );
         }
-        latestCardsByOrderRef.current = {
-          ...latestCardsByOrderRef.current,
-          ...byOrder,
-        };
+        const nextRef = { ...latestCardsByOrderRef.current };
+        for (const [orderId, serverCards] of Object.entries(byOrder)) {
+          if ((persistInFlightRef.current[orderId] || 0) > 0) {
+            // Conservar tarjetas locales (con costLedger recién congelado)
+            continue;
+          }
+          nextRef[orderId] = serverCards;
+        }
+        latestCardsByOrderRef.current = nextRef;
       }
     }
   }, [rawOrders]);
@@ -1379,23 +1632,33 @@ export default function Production() {
       rawOrders.find((o) => o.id === orderId)?.costo_real_desglose
     );
 
+    persistInFlightRef.current[orderId] =
+      (persistInFlightRef.current[orderId] || 0) + 1;
+
     const runPersist = async () => {
-      const cardsToSave =
-        latestCardsByOrderRef.current[orderId] || withLedger;
-      const breakdown = await computeFullRealCostFromOrder(orderId, cardsToSave, {
-        estado: "in_production",
-        previousBreakdown,
-      });
-      const result = await updateKanbanTarjetas(orderId, cardsToSave, breakdown);
-      if (result.errorMessage) {
-        toast({
-          variant: "destructive",
-          title: "No se pudo guardar en el servidor",
-          description: result.errorMessage,
+      try {
+        const cardsToSave =
+          latestCardsByOrderRef.current[orderId] || withLedger;
+        const breakdown = await computeFullRealCostFromOrder(orderId, cardsToSave, {
+          estado: "in_production",
+          previousBreakdown,
         });
-        throw new Error(result.errorMessage);
+        const result = await updateKanbanTarjetas(orderId, cardsToSave, breakdown);
+        if (result.errorMessage) {
+          toast({
+            variant: "destructive",
+            title: "No se pudo guardar en el servidor",
+            description: result.errorMessage,
+          });
+          throw new Error(result.errorMessage);
+        }
+        notifyOrderRealCostUpdated(orderId);
+      } finally {
+        persistInFlightRef.current[orderId] = Math.max(
+          0,
+          (persistInFlightRef.current[orderId] || 1) - 1
+        );
       }
-      notifyOrderRealCostUpdated(orderId);
     };
 
     const prevChain = persistChainRef.current[orderId] || Promise.resolve();
@@ -1618,28 +1881,87 @@ export default function Production() {
       // Congela costos de la capa saliente (atribuidos al usuario actual) y limpia campos vivos
       const prevLabel =
         stages.find((s) => s.key === previousStage)?.label || previousStage;
-      const frozenCosts = freezeStageCostsOnMove(card, previousStage, prevLabel);
 
+      const prevCfg = card.stageLaborConfig?.[previousStage];
+      const livePerUnit =
+        card.laborCostPerUnit != null && Number.isFinite(Number(card.laborCostPerUnit))
+          ? Number(card.laborCostPerUnit)
+          : null;
+      const cfgPerUnit =
+        prevCfg?.perUnit != null && Number.isFinite(Number(prevCfg.perUnit))
+          ? Number(prevCfg.perUnit)
+          : null;
       const stageLaborConfig = {
         ...(card.stageLaborConfig || {}),
         ...(previousStage
           ? {
               [previousStage]: {
-                enabled: Boolean(card.laborCostEnabled),
-                perUnit: card.laborCostPerUnit != null ? Number(card.laborCostPerUnit) : null,
+                enabled:
+                  Boolean(card.laborCostEnabled) ||
+                  Boolean(prevCfg?.enabled) ||
+                  (livePerUnit != null && livePerUnit > 0) ||
+                  (cfgPerUnit != null && cfgPerUnit > 0),
+                perUnit: livePerUnit != null ? livePerUnit : cfgPerUnit,
               },
             }
           : {}),
       };
 
+      const stageAssignees = { ...(card.stageAssignees || {}) };
+      if (
+        previousStage &&
+        !stageAssignees[previousStage] &&
+        !stageAssignees[`${previousStage}__satellite`] &&
+        !stageAssignees[`${previousStage}__production`]
+      ) {
+        if (card.satelliteAssigneeId && card.satelliteAssignee && card.satelliteAssignee !== "Sin asignar") {
+          stageAssignees[`${previousStage}__satellite`] = {
+            userId: card.satelliteAssigneeId,
+            name: card.satelliteAssignee,
+            kind: "satellite",
+          };
+        } else if (card.assigneeId && card.assignee && card.assignee !== "Sin asignar") {
+          stageAssignees[previousStage] = {
+            userId: card.assigneeId,
+            name: card.assignee,
+            kind: "production",
+          };
+        }
+      }
+
+      const cardForFreeze = { ...card, stageLaborConfig, stageAssignees };
+      const frozenCosts = freezeStageCostsOnMove(
+        cardForFreeze,
+        previousStage,
+        prevLabel
+      );
+      const stageLabelsMap = Object.fromEntries(
+        stages.map((s) => [s.key, s.label] as const)
+      );
+      const frozenLedger = syncLaborFromAllStagesIntoLedger(
+        {
+          ...cardForFreeze,
+          ...frozenCosts,
+          stage: targetStage as ProductionOrder["stage"],
+          assigneeId: null,
+          satelliteAssigneeId: null,
+        },
+        frozenCosts.costLedger || [],
+        stageLabelsMap
+      );
+
       const targetLaborConfig = targetStage ? stageLaborConfig[targetStage] : undefined;
       const targetLaborEnabled = targetLaborConfig ? Boolean(targetLaborConfig.enabled) : false;
       const targetLaborPerUnit =
-        targetLaborConfig && targetLaborConfig.perUnit != null ? Number(targetLaborConfig.perUnit) : null;
+        targetLaborConfig && targetLaborConfig.perUnit != null
+          ? Number(targetLaborConfig.perUnit)
+          : null;
 
       // Al cambiar de capa se limpia Producción y Satélite: el admin reasigna
       const movedPatch = {
         ...frozenCosts,
+        costLedger: frozenLedger,
+        stageAssignees,
         stage: targetStage as ProductionOrder["stage"],
         daysInStage: 0,
         assignee: "Sin asignar",
@@ -1656,7 +1978,7 @@ export default function Production() {
       };
 
       if (orderId) {
-        commitOrderCards(orderId, (cards) =>
+        await commitOrderCards(orderId, (cards) =>
           cards.map((o) => (o.id !== movedCardId ? o : { ...o, ...movedPatch }))
         );
         void updateKanbanAssignment(orderId, {
@@ -1830,9 +2152,22 @@ export default function Production() {
   };
 
   const usersForStage = (stageKey: string) =>
-    productionUsers.filter((u) => u.stageKeys.includes(stageKey));
+    isDispatchStageKey(stageKey)
+      ? dispatchUsers
+      : productionUsers.filter((u) => u.stageKeys.includes(stageKey));
   const satelliteUsersForStage = (stageKey: string) =>
-    satelliteUsers.filter((u) => u.stageKeys.includes(stageKey));
+    isDispatchStageKey(stageKey)
+      ? []
+      : satelliteUsers.filter((u) => u.stageKeys.includes(stageKey));
+
+  const assignModalIsDispatch =
+    assignModal.selectedStages.length > 0 &&
+    assignModal.selectedStages.every((k) => isDispatchStageKey(k));
+  const assignModalUserList = assignModalIsDispatch
+    ? dispatchUsers
+    : assignModal.assigneeType === "production"
+      ? productionUsers
+      : satelliteUsers;
 
   const assignCardToUser = async (
     card: ProductionOrder,
@@ -2794,7 +3129,7 @@ export default function Production() {
                       <span className="truncate min-w-0">
                         <User className="h-3 w-3 inline" />{" "}
                         {hasProductionAssignee
-                          ? `Producción · ${order.assignee}`
+                          ? `${isDispatchStageKey(stage.key) ? "Despacho" : "Producción"} · ${order.assignee}`
                           : hasSatelliteAssignee
                             ? `Satélite · ${order.satelliteAssignee}`
                             : "Sin asignar"}
@@ -3220,7 +3555,9 @@ export default function Production() {
               Asignación Multicapa — ORD-{assignModal.card?.orderId?.slice(0, 3)}
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
-              Selecciona las capas a asignar y elige el usuario o taller satélite responsable. Puedes seleccionar múltiples capas para asignar a la misma persona.
+              {assignModalIsDispatch
+                ? "En la capa Para Despacho solo puedes asignar usuarios del rol Despacho."
+                : "Selecciona las capas a asignar y elige el usuario o taller satélite responsable. Puedes seleccionar múltiples capas para asignar a la misma persona."}
             </DialogDescription>
           </DialogHeader>
 
@@ -3245,9 +3582,27 @@ export default function Production() {
                           return !isPast && isReq;
                         })
                         .map((s) => s.key);
+                      // Si la capa actual es despacho, no mezclar con otras
+                      const onlyDispatch = validStages.filter((k) =>
+                        isDispatchStageKey(k)
+                      );
+                      const withoutDispatch = validStages.filter(
+                        (k) => !isDispatchStageKey(k)
+                      );
+                      const nextStages =
+                        assignModal.card?.stage &&
+                        isDispatchStageKey(assignModal.card.stage)
+                          ? onlyDispatch.length
+                            ? onlyDispatch
+                            : [assignModal.card.stage]
+                          : withoutDispatch;
                       setAssignModal((prev) => ({
                         ...prev,
-                        selectedStages: validStages,
+                        selectedStages: nextStages,
+                        assigneeType: nextStages.every(isDispatchStageKey)
+                          ? "production"
+                          : prev.assigneeType,
+                        selectedUserId: "",
                       }));
                     }}
                     className="text-primary hover:underline font-medium"
@@ -3335,10 +3690,30 @@ export default function Production() {
                           checked={isChecked}
                           onCheckedChange={(checked) => {
                             setAssignModal((prev) => {
-                              const set = new Set(prev.selectedStages);
-                              if (checked) set.add(stage.key);
-                              else set.delete(stage.key);
-                              return { ...prev, selectedStages: Array.from(set) };
+                              if (checked) {
+                                // Despacho no se mezcla con otras capas ni con satélite
+                                if (isDispatchStageKey(stage.key)) {
+                                  return {
+                                    ...prev,
+                                    selectedStages: [stage.key],
+                                    assigneeType: "production",
+                                    selectedUserId: "",
+                                  };
+                                }
+                                const next = prev.selectedStages
+                                  .filter((k) => !isDispatchStageKey(k))
+                                  .concat(stage.key);
+                                return {
+                                  ...prev,
+                                  selectedStages: Array.from(new Set(next)),
+                                };
+                              }
+                              return {
+                                ...prev,
+                                selectedStages: prev.selectedStages.filter(
+                                  (k) => k !== stage.key
+                                ),
+                              };
                             });
                           }}
                         />
@@ -3356,54 +3731,68 @@ export default function Production() {
               <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 block">
                 Tipo de Responsable
               </Label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setAssignModal((prev) => ({
-                      ...prev,
-                      assigneeType: "production",
-                      selectedUserId: "",
-                    }))
-                  }
-                  className={cn(
-                    "flex items-center justify-center gap-2 p-2.5 rounded-lg border text-xs font-medium transition-all",
-                    assignModal.assigneeType === "production"
-                      ? "bg-primary text-primary-foreground border-primary shadow-xs"
-                      : "bg-card text-muted-foreground border-border hover:bg-muted"
-                  )}
-                >
+              {assignModalIsDispatch ? (
+                <div className="flex items-center justify-center gap-2 p-2.5 rounded-lg border text-xs font-medium bg-primary text-primary-foreground border-primary shadow-xs">
                   <User className="h-4 w-4" />
-                  Usuario Producción
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setAssignModal((prev) => ({
-                      ...prev,
-                      assigneeType: "satellite",
-                      selectedUserId: "",
-                    }))
-                  }
-                  className={cn(
-                    "flex items-center justify-center gap-2 p-2.5 rounded-lg border text-xs font-medium transition-all",
-                    assignModal.assigneeType === "satellite"
-                      ? "bg-red-600 text-white border-red-600 shadow-xs"
-                      : "bg-card text-muted-foreground border-border hover:bg-muted"
-                  )}
-                >
-                  <Factory className="h-4 w-4" />
-                  Taller Satélite
-                </button>
-              </div>
+                  Usuario Despacho
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAssignModal((prev) => ({
+                        ...prev,
+                        assigneeType: "production",
+                        selectedUserId: "",
+                      }))
+                    }
+                    className={cn(
+                      "flex items-center justify-center gap-2 p-2.5 rounded-lg border text-xs font-medium transition-all",
+                      assignModal.assigneeType === "production"
+                        ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                        : "bg-card text-muted-foreground border-border hover:bg-muted"
+                    )}
+                  >
+                    <User className="h-4 w-4" />
+                    Usuario Producción
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAssignModal((prev) => ({
+                        ...prev,
+                        assigneeType: "satellite",
+                        selectedUserId: "",
+                      }))
+                    }
+                    className={cn(
+                      "flex items-center justify-center gap-2 p-2.5 rounded-lg border text-xs font-medium transition-all",
+                      assignModal.assigneeType === "satellite"
+                        ? "bg-red-600 text-white border-red-600 shadow-xs"
+                        : "bg-card text-muted-foreground border-border hover:bg-muted"
+                    )}
+                  >
+                    <Factory className="h-4 w-4" />
+                    Taller Satélite
+                  </button>
+                </div>
+              )}
+              {assignModalIsDispatch ? (
+                <p className="text-[11px] text-muted-foreground mt-1.5">
+                  En «Para Despacho» solo se pueden asignar usuarios del rol Despacho.
+                </p>
+              ) : null}
             </div>
 
             {/* 3. Dropdown de Selección de Persona / Taller */}
             <div>
               <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 block">
-                {assignModal.assigneeType === "production"
-                  ? "Seleccionar Usuario de Producción"
-                  : "Seleccionar Taller o Usuario Satélite"}
+                {assignModalIsDispatch
+                  ? "Seleccionar Usuario de Despacho"
+                  : assignModal.assigneeType === "production"
+                    ? "Seleccionar Usuario de Producción"
+                    : "Seleccionar Taller o Usuario Satélite"}
               </Label>
 
               <Select
@@ -3415,33 +3804,28 @@ export default function Production() {
                 <SelectTrigger className="h-10 text-xs">
                   <SelectValue
                     placeholder={
-                      assignModal.assigneeType === "production"
-                        ? "Selecciona usuario de producción..."
-                        : "Selecciona taller o usuario satélite..."
+                      assignModalIsDispatch
+                        ? "Selecciona usuario de despacho..."
+                        : assignModal.assigneeType === "production"
+                          ? "Selecciona usuario de producción..."
+                          : "Selecciona taller o usuario satélite..."
                     }
                   />
                 </SelectTrigger>
                 <SelectContent>
-                  {assignModal.assigneeType === "production" ? (
-                    productionUsers.length === 0 ? (
-                      <SelectItem value="none" disabled>
-                        No hay usuarios de producción disponibles
-                      </SelectItem>
-                    ) : (
-                      productionUsers.map((u) => (
-                        <SelectItem key={u.id} value={u.id}>
-                          {u.name}
-                        </SelectItem>
-                      ))
-                    )
-                  ) : satelliteUsers.length === 0 ? (
+                  {assignModalUserList.length === 0 ? (
                     <SelectItem value="none" disabled>
-                      No hay usuarios satélite disponibles
+                      {assignModalIsDispatch
+                        ? "No hay usuarios de despacho disponibles"
+                        : assignModal.assigneeType === "production"
+                          ? "No hay usuarios de producción disponibles"
+                          : "No hay usuarios satélite disponibles"}
                     </SelectItem>
                   ) : (
-                    satelliteUsers.map((u) => (
+                    assignModalUserList.map((u) => (
                       <SelectItem key={u.id} value={u.id}>
-                        {u.name} {u.satelliteId ? "· (Taller)" : ""}
+                        {u.name}
+                        {"satelliteId" in u && u.satelliteId ? " · (Taller)" : ""}
                       </SelectItem>
                     ))
                   )}
@@ -3476,9 +3860,7 @@ export default function Production() {
                 !assignModal.selectedUserId
               }
               onClick={() => {
-                const isProd = assignModal.assigneeType === "production";
-                const userList = isProd ? productionUsers : satelliteUsers;
-                const foundUser = userList.find(
+                const foundUser = assignModalUserList.find(
                   (u) => u.id === assignModal.selectedUserId
                 );
                 if (!foundUser || !assignModal.card) return;
@@ -3488,7 +3870,7 @@ export default function Production() {
                   assignModal.selectedStages,
                   foundUser.id,
                   foundUser.name,
-                  assignModal.assigneeType
+                  assignModalIsDispatch ? "production" : assignModal.assigneeType
                 );
               }}
               className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold gap-1.5"
