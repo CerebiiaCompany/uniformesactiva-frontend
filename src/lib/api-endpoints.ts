@@ -156,6 +156,9 @@ export const endpoints = {
         detail: (id: string) => `${base()}/api/v1/users/${id}/`,
         me: () => `${base()}/api/v1/users/me/`,
     },
+    company: {
+        profile: () => `${base()}/api/v1/company/`,
+    },
     notifications: {
         list: (params?: string) =>
             `${base()}/api/v1/notifications/${params ? `?${params}` : ""}`,
