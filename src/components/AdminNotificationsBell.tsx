@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { isAdminUser } from "@/lib/auth-roles";
+import { canReceiveNotifications } from "@/lib/auth-roles";
 import {
   useNotifications,
   type AppNotification,
@@ -28,10 +28,10 @@ function relativeTime(iso: string): string {
 export function AdminNotificationsBell() {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(() => isAdminUser());
+  const [allowed, setAllowed] = useState(() => canReceiveNotifications());
 
   useEffect(() => {
-    const sync = () => setIsAdmin(isAdminUser());
+    const sync = () => setAllowed(canReceiveNotifications());
     sync();
     window.addEventListener("storage", sync);
     window.addEventListener("local-session-update", sync);
@@ -48,9 +48,9 @@ export function AdminNotificationsBell() {
     deleteNotification,
     clearAllNotifications,
     fetchNotifications,
-  } = useNotifications(isAdmin);
+  } = useNotifications(allowed);
 
-  if (!isAdmin) return null;
+  if (!allowed) return null;
 
   const handleClick = async (n: AppNotification) => {
     await deleteNotification(n.id);
@@ -134,9 +134,22 @@ export function AdminNotificationsBell() {
                         <span className="mt-1.5 h-1.5 w-1.5 shrink-0" />
                       )}
                       <div className="min-w-0 flex-1">
-                        <p className="text-[12px] font-medium text-foreground truncate">
-                          {n.title}
-                        </p>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="text-[12px] font-medium text-foreground truncate">
+                            {n.title}
+                          </p>
+                          {n.type === "inventory_exit" ? (
+                            n.meta?.is_informative || n.meta?.scope === "informativa_kanban" ? (
+                              <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide bg-amber-50 text-amber-700 border border-amber-200">
+                                Informativa
+                              </span>
+                            ) : (
+                              <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide bg-red-50 text-red-700 border border-red-200">
+                                Real TNS
+                              </span>
+                            )
+                          ) : null}
+                        </div>
                         <p className="text-[12px] text-muted-foreground leading-snug mt-0.5 line-clamp-3">
                           {n.message}
                         </p>

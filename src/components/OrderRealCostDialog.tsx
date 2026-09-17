@@ -18,6 +18,7 @@ import {
   getKanbanStageSoftPanelClass,
   getKanbanStageSoftTextClass,
   getKanbanStageTheme,
+  resolveKanbanStageKey,
 } from "@/lib/kanban-stage-theme";
 import {
   computeOrderEstimatedLaborCost,
@@ -43,6 +44,70 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { toast } from "sonner";
+import {
+  DEFAULT_KANBAN_ETAPAS,
+  useKanbanEtapas,
+  type KanbanEtapa,
+} from "@/hooks/useKanbanEtapas";
+
+/** Títulos en español por clave de capa (fallback si aún no cargan las etapas). */
+const STAGE_TITLE_ES: Record<string, string> = {
+  design: "Diseño",
+  cutting: "Corte",
+  sewing: "Confección",
+  embroidery: "Bordado",
+  printing: "Estampado",
+  quality: "Calidad",
+  dispatch: "Para Despacho",
+};
+
+function looksLikeEnglishStageKey(value: string): boolean {
+  const v = value.trim().toLowerCase();
+  return (
+    v === "design" ||
+    v === "cutting" ||
+    v === "sewing" ||
+    v === "embroidery" ||
+    v === "printing" ||
+    v === "quality" ||
+    v === "dispatch"
+  );
+}
+
+function resolveStageTitleEs(
+  line: RealCostLine,
+  etapas: KanbanEtapa[]
+): { key: string; title: string; orden: number } {
+  const rawStage = String(line.stage || "").trim();
+  const rawLabel = String(line.stageLabel || "").trim();
+  const key =
+    resolveKanbanStageKey(rawStage) ||
+    resolveKanbanStageKey(rawLabel) ||
+    rawStage.toLowerCase() ||
+    rawLabel.toLowerCase() ||
+    "other";
+
+  const etapa =
+    etapas.find((e) => e.key.toLowerCase() === key) ||
+    etapas.find((e) => resolveKanbanStageKey(e.label) === key) ||
+    DEFAULT_KANBAN_ETAPAS.find((e) => e.key === key);
+
+  let title = (etapa?.label || "").trim();
+  if (!title) {
+    // Si el label guardado ya está en español, úsalo; si es la key en inglés, traducir
+    if (rawLabel && !looksLikeEnglishStageKey(rawLabel)) title = rawLabel;
+    else if (STAGE_TITLE_ES[key]) title = STAGE_TITLE_ES[key];
+    else if (rawStage && !looksLikeEnglishStageKey(rawStage)) title = rawStage;
+    else title = STAGE_TITLE_ES[key] || rawLabel || rawStage || "Capa";
+  }
+
+  const orden =
+    typeof etapa?.orden === "number"
+      ? etapa.orden
+      : DEFAULT_KANBAN_ETAPAS.find((e) => e.key === key)?.orden ?? 999;
+
+  return { key, title, orden };
+}
 
 type DeliveredMaterialsView = "pedido" | "prenda" | "variante";
 
@@ -258,10 +323,16 @@ function MaterialTable({
   );
 }
 
-function LaborStageCard({ line }: { line: RealCostLine }) {
+function LaborStageCard({
+  line,
+  title,
+}: {
+  line: RealCostLine;
+  title: string;
+}) {
   const stageKey = line.stage || line.stageLabel;
   const theme = getKanbanStageTheme(stageKey);
-  const stageTitle = (line.stageLabel || line.stage || "Capa").trim();
+  const stageTitle = (title || "Capa").trim();
   const personName = (line.userName || "Sin asignar").trim();
 
   return (
@@ -437,6 +508,12 @@ export function OrderRealCostDialog({
 }: OrderRealCostDialogProps) {
   const [estimatedLabor, setEstimatedLabor] = useState<number | null>(null);
   const [loadingLabor, setLoadingLabor] = useState(false);
+  const { etapas, fetchEtapas } = useKanbanEtapas();
+
+  useEffect(() => {
+    if (!open) return;
+    void fetchEtapas();
+  }, [open, fetchEtapas]);
   const [deliveredView, setDeliveredView] = useState<DeliveredMaterialsView>("pedido");
   const [deliveredInfo, setDeliveredInfo] = useState<DeliveredMaterialsInfo | null>(null);
   const [loadingDeliveredInfo, setLoadingDeliveredInfo] = useState(false);
@@ -504,13 +581,22 @@ export function OrderRealCostDialog({
   const savings = estimated - realAccumulated;
   const shortId = orderLabel || `ORD-${orderId.slice(0, 3).toUpperCase()}`;
 
-  const laborKanbanLines = useMemo(
-    () =>
-      [...data.laborLines].filter(
-        (line) => line.category === "labor" || line.category === "mold" || !line.category
-      ),
-    [data.laborLines]
-  );
+  const laborKanbanLines = useMemo(() => {
+    const lines = [...data.laborLines].filter(
+      (line) => line.category === "labor" || line.category === "mold" || !line.category
+    );
+    const enriched = lines.map((line, idx) => {
+      const meta = resolveStageTitleEs(line, etapas);
+      return { line, idx, ...meta };
+    });
+    enriched.sort((a, b) => {
+      if (a.orden !== b.orden) return a.orden - b.orden;
+      const nameA = (a.line.userName || "").localeCompare(b.line.userName || "", "es");
+      if (nameA !== 0) return nameA;
+      return a.idx - b.idx;
+    });
+    return enriched;
+  }, [data.laborLines, etapas]);
 
   const summaryCards = [
     { title: "Materiales entregados", amount: materialsTotal },
@@ -551,12 +637,13 @@ export function OrderRealCostDialog({
           money(Number(line.amount) || 0),
         ]);
       }
-      for (const line of laborKanbanLines) {
+      for (const item of laborKanbanLines) {
+        const line = item.line;
         if (!(Number(line.amount) > 0)) continue;
         detailRows.push([
           line.label || "Mano de obra",
           categoryLabel(line, "Mano de obra"),
-          lineDetail(line),
+          [item.title, line.userName].filter(Boolean).join(" · ") || lineDetail(line),
           money(Number(line.amount) || 0),
         ]);
       }
@@ -740,7 +827,7 @@ export function OrderRealCostDialog({
               </div>
               <p className="text-[11px] text-muted-foreground leading-relaxed">
                 Suma materiales entregados (incluye adicionales del Kanban), mano de obra
-                registrada en el tablero y envíos/domicilios (ida y vuelta a satélite).
+                registrada en el tablero y envíos/domicilios (despacho a cliente e ida/vuelta a satélite).
               </p>
             </div>
             <div className="flex items-center justify-between gap-3 text-sm border-t pt-3">
@@ -810,8 +897,12 @@ export function OrderRealCostDialog({
           >
             {laborKanbanLines.length > 0 ? (
               <div className="flex flex-wrap gap-3 px-2 py-3 justify-center sm:justify-start">
-                {laborKanbanLines.map((line, idx) => (
-                  <LaborStageCard key={`${line.stage}-${line.userId}-${idx}`} line={line} />
+                {laborKanbanLines.map((item) => (
+                  <LaborStageCard
+                    key={`${item.key}-${item.line.userId}-${item.idx}`}
+                    line={item.line}
+                    title={item.title}
+                  />
                 ))}
               </div>
             ) : (
@@ -823,7 +914,7 @@ export function OrderRealCostDialog({
 
           <DetailCard
             title="Despacho y domicilios"
-            subtitle="Costo de despacho al entregar, domicilio ida/vuelta a satélite y otros envíos"
+            subtitle="Despacho a cliente al entregar, domicilio ida/vuelta a satélite y otros envíos"
           >
             {shippingLines.length > 0 ? (
               <div className="divide-y">

@@ -278,6 +278,8 @@ function sanitizeLines(lines: RealCostLine[]): RealCostLine[] {
   const filtered = lines.filter((l) => {
     if (l.userId) return true;
     if (l.category === "satellite" || l.actorKind === "provider") return true;
+    // Despacho a cliente / envíos sin operador asignado (módulo Despacho)
+    if (l.category === "shipping") return true;
     // Materiales del costeo / entregados siempre permanecen en el desglose
     if (l.category === "materials" && l.materialSource === "delivered") return true;
     if (l.category === "materials") {
@@ -291,7 +293,6 @@ function sanitizeLines(lines: RealCostLine[]): RealCostLine[] {
     if (
       l.category === "labor" ||
       l.category === "mold" ||
-      l.category === "shipping" ||
       l.actorKind === "unassigned" ||
       !l.userName ||
       l.userName === "Sin asignar" ||
@@ -368,14 +369,22 @@ export function buildStageCostEntries(
     }
 
     const stageLabor = card.stageLaborConfig?.[stage];
-    const laborEnabled =
-      stageLabor !== undefined
-        ? Boolean(stageLabor.enabled)
-        : false;
-    const laborPerUnit =
-      stageLabor !== undefined && stageLabor.perUnit != null
-        ? Number(stageLabor.perUnit)
-        : 0;
+    let laborEnabled = false;
+    let laborPerUnit = 0;
+    if (stageLabor !== undefined) {
+      laborEnabled = Boolean(stageLabor.enabled);
+      laborPerUnit =
+        stageLabor.perUnit != null && Number.isFinite(Number(stageLabor.perUnit))
+          ? Number(stageLabor.perUnit)
+          : 0;
+    } else if (stage === card.stage) {
+      // Fallback: tarifa viva de la capa actual aún no persistida en stageLaborConfig
+      laborEnabled = Boolean(card.laborCostEnabled);
+      laborPerUnit =
+        card.laborCostPerUnit != null && Number.isFinite(Number(card.laborCostPerUnit))
+          ? Number(card.laborCostPerUnit)
+          : 0;
+    }
 
     if (laborEnabled) {
       const qty = Number(card.quantity) || 0;
@@ -524,6 +533,131 @@ export function upsertStageCostLedger(
     return true;
   });
   return sanitizeCostLedger([...kept, ...next]);
+}
+
+/**
+ * Asegura una línea de MO por cada capa en stageLaborConfig con tarifa activa
+ * y responsable (stageAssignees, asignación viva o ya congelada en el ledger).
+ * El mismo usuario puede cobrar en varias capas; no se borran montos ya congelados.
+ */
+export function syncLaborFromAllStagesIntoLedger(
+  card: ProductionOrder,
+  baseLedger: KanbanCostEntry[],
+  stageLabels?: Record<string, string>
+): KanbanCostEntry[] {
+  const config = card.stageLaborConfig || {};
+  const stageKeys = new Set<string>();
+  for (const key of Object.keys(config)) {
+    if (key) stageKeys.add(key);
+  }
+  if (card.stage) stageKeys.add(card.stage);
+  // Incluir capas que ya tienen MO congelada aunque falte config
+  for (const entry of baseLedger || []) {
+    if (entry?.category === "labor" && entry.stage) stageKeys.add(entry.stage);
+  }
+
+  let ledger = Array.isArray(baseLedger) ? [...baseLedger] : [];
+  const now = new Date().toISOString();
+
+  for (const stageKey of stageKeys) {
+    const cfg = config[stageKey];
+    const isCurrent = stageKey === card.stage;
+    const existingLabor = ledger.filter(
+      (e) => e.category === "labor" && e.stage === stageKey && e.userId
+    );
+
+    let enabled = false;
+    let perUnit = 0;
+    if (cfg !== undefined) {
+      enabled = Boolean(cfg.enabled);
+      perUnit =
+        cfg.perUnit != null && Number.isFinite(Number(cfg.perUnit))
+          ? Number(cfg.perUnit)
+          : 0;
+    } else if (isCurrent) {
+      enabled = Boolean(card.laborCostEnabled);
+      perUnit =
+        card.laborCostPerUnit != null && Number.isFinite(Number(card.laborCostPerUnit))
+          ? Number(card.laborCostPerUnit)
+          : 0;
+    } else if (existingLabor.length > 0) {
+      // Conservar MO ya congelada de capas anteriores
+      continue;
+    } else {
+      continue;
+    }
+
+    let actor = workingAttribution(card, stageKey);
+    if (!isAttributed(actor) && isCurrent) {
+      actor = workingAttribution(card);
+    }
+    if (!isAttributed(actor) && existingLabor[0]) {
+      actor = {
+        userId: existingLabor[0].userId,
+        userName: existingLabor[0].userName,
+        actorKind: existingLabor[0].actorKind,
+      };
+    }
+
+    // Si la tarifa se desactivó explícitamente, quitar MO regenerable de esa capa
+    if (!enabled) {
+      if (cfg !== undefined) {
+        ledger = ledger.filter(
+          (e) => !(e.category === "labor" && e.stage === stageKey)
+        );
+      }
+      continue;
+    }
+
+    // Sin responsable ni historial: no inventar MO, pero no borrar congelado
+    if (!isAttributed(actor)) {
+      continue;
+    }
+
+    const uid = actorKey(actor);
+    ledger = ledger.filter((e) => {
+      if (e.category !== "labor" || e.stage !== stageKey) return true;
+      const eUid = (e.userId || "na").trim() || "na";
+      return eUid !== uid;
+    });
+
+    const qty = Number(card.quantity) || 0;
+    const amount = money(qty * perUnit);
+    if (!(amount > 0 || perUnit > 0)) {
+      // Si ya había monto congelado y perUnit quedó 0 por error de snapshot, conservar
+      if (existingLabor.some((e) => (Number(e.amount) || 0) > 0)) {
+        for (const keep of existingLabor) {
+          if (((keep.userId || "na").trim() || "na") === uid) {
+            ledger.push(keep);
+          }
+        }
+      }
+      continue;
+    }
+
+    const fingerprint = `labor:${stageKey}:${uid}`;
+    const labelStage =
+      stageLabels?.[stageKey] ||
+      existingLabor[0]?.stageLabel ||
+      stageKey;
+    ledger.push({
+      id: entryId(fingerprint),
+      category: "labor",
+      label: card.items?.trim()
+        ? `MO · ${card.items.trim()} (${qty} × ${perUnit})`
+        : `Mano de obra (${qty} × ${perUnit})`,
+      amount,
+      stage: stageKey,
+      stageLabel: labelStage,
+      userId: actor.userId,
+      userName: actor.userName,
+      actorKind: actor.actorKind,
+      fingerprint,
+      updatedAt: now,
+    });
+  }
+
+  return sanitizeCostLedger(ledger);
 }
 
 export type FrozenWorkingCosts = Pick<
@@ -699,12 +833,21 @@ function legacyLinesFromCard(card: ProductionOrder): {
     }
 
     const stageLabor = card.stageLaborConfig?.[card.stage];
-    const laborEnabled =
-      stageLabor !== undefined ? Boolean(stageLabor.enabled) : false;
-    const perUnit =
-      stageLabor !== undefined && stageLabor.perUnit != null
-        ? Number(stageLabor.perUnit)
-        : 0;
+    let laborEnabled = false;
+    let perUnit = 0;
+    if (stageLabor !== undefined) {
+      laborEnabled = Boolean(stageLabor.enabled);
+      perUnit =
+        stageLabor.perUnit != null && Number.isFinite(Number(stageLabor.perUnit))
+          ? Number(stageLabor.perUnit)
+          : 0;
+    } else {
+      laborEnabled = Boolean(card.laborCostEnabled);
+      perUnit =
+        card.laborCostPerUnit != null && Number.isFinite(Number(card.laborCostPerUnit))
+          ? Number(card.laborCostPerUnit)
+          : 0;
+    }
 
     if (laborEnabled) {
       const qty = Number(card.quantity) || 0;
@@ -793,15 +936,20 @@ export function prepareCardsWithLedger(
 ): ProductionOrder[] {
   return cards.map((c) => {
     const reconciled = reconcileOrphanLiveMaterials(c, stageLabels);
+    const baseLedger = upsertStageCostLedger(
+      {
+        ...reconciled,
+        costLedger: sanitizeCostLedger(reconciled.costLedger || []),
+      },
+      reconciled.stage,
+      stageLabels?.[reconciled.stage] || reconciled.stage
+    );
     return {
       ...reconciled,
-      costLedger: upsertStageCostLedger(
-        {
-          ...reconciled,
-          costLedger: sanitizeCostLedger(reconciled.costLedger || []),
-        },
-        reconciled.stage,
-        stageLabels?.[reconciled.stage] || reconciled.stage
+      costLedger: syncLaborFromAllStagesIntoLedger(
+        reconciled,
+        baseLedger,
+        stageLabels
       ),
     };
   });
@@ -919,8 +1067,12 @@ export function computeRealCostFromCards(
       (cleanedCard.satelliteCost != null && Number(cleanedCard.satelliteCost) > 0) ||
       (cleanedCard.shippingCost != null && Number(cleanedCard.shippingCost) > 0) ||
       (cleanedCard.shippingMeta != null &&
-        Number(cleanedCard.shippingMeta.amount) > 0)
-        ? upsertStageCostLedger(cleanedCard, cleanedCard.stage)
+        Number(cleanedCard.shippingMeta.amount) > 0) ||
+      Object.keys(cleanedCard.stageLaborConfig || {}).length > 0
+        ? syncLaborFromAllStagesIntoLedger(
+            cleanedCard,
+            upsertStageCostLedger(cleanedCard, cleanedCard.stage)
+          )
         : cleanedCard.costLedger || [];
 
     if (effectiveLedger.length > 0) {
@@ -1312,10 +1464,28 @@ export async function computeFullRealCostFromOrder(
   }
 
   const operational = stripKanbanMaterialLines(computeRealCostFromCards(orderId, cards));
+  // Conservar despacho a cliente ya persistido (no vive en tarjetas Kanban)
+  const shippingLines = mergeShippingLines(
+    operational.shippingLines,
+    options?.previousBreakdown?.shippingLines
+  );
+  const shipping = money(
+    shippingLines.length
+      ? shippingLines.reduce((s, l) => s + (Number(l.amount) || 0), 0)
+      : Math.max(
+          operational.shipping || 0,
+          options?.previousBreakdown?.shipping || 0
+        )
+  );
+  const operationalWithShip: OrderRealCostBreakdown = {
+    ...operational,
+    shipping,
+    shippingLines,
+  };
   const previousDelivered = (options?.previousBreakdown?.materialsLines || []).filter(
     (l) => l.materialSource !== "kanban_additional"
   );
-  const seeded = composeMaterialBreakdown(operational, previousDelivered, []);
+  const seeded = composeMaterialBreakdown(operationalWithShip, previousDelivered, []);
 
   try {
     const tnsMaterials = await getTNSOrderRealMaterialCost(orderId);
@@ -1463,11 +1633,11 @@ export function getOrderRealCostFromOrder(order: {
     );
   }
 
-  // Con tarjetas: MO/envíos del Kanban + materiales entregados persistidos + adicionales
-  const shippingLines =
-    operational.shippingLines?.length > 0
-      ? operational.shippingLines
-      : persisted?.shippingLines || [];
+  // Con tarjetas: domicilio satélite del Kanban + despacho a cliente persistido
+  const shippingLines = mergeShippingLines(
+    operational.shippingLines,
+    persisted?.shippingLines
+  );
   const shipping = money(
     shippingLines.length
       ? shippingLines.reduce((s, l) => s + (Number(l.amount) || 0), 0)
@@ -1507,7 +1677,62 @@ export function emptyRealCost(orderId: string): OrderRealCostBreakdown {
   };
 }
 
-const DISPATCH_CLIENT_LABEL = "Costo de despacho (entrega cliente)";
+const DISPATCH_CLIENT_LABEL = "Despacho a cliente";
+
+/** Línea de costo de entrega al cliente (módulo Despacho), no domicilio satélite. */
+export function isClientDispatchShippingLine(line: {
+  label?: string;
+  stage?: string | null;
+  stageLabel?: string | null;
+  detail?: string | null;
+} | null | undefined): boolean {
+  if (!line) return false;
+  const label = String(line.label || "").toLowerCase();
+  const detail = String(line.detail || "").toLowerCase();
+
+  // Domicilio ida/vuelta a satélite NUNCA es despacho a cliente
+  // (aunque la tarjeta esté en la columna Para Despacho → stage "dispatch").
+  if (
+    label.includes("ida y vuelta") ||
+    label.includes("domicilio") ||
+    detail.includes("ida y vuelta") ||
+    detail.includes("domicilio ida")
+  ) {
+    return false;
+  }
+
+  return (
+    label.includes("costo de despacho") ||
+    label.includes("despacho (entrega") ||
+    label.includes("despacho a cliente") ||
+    label.includes("entrega cliente") ||
+    detail.includes("marcar entregado") ||
+    detail.includes("desde despacho")
+  );
+}
+
+/** Une envíos del Kanban (domicilio satélite) con el despacho a cliente persistido. */
+export function mergeShippingLines(
+  operational: RealCostLine[] | null | undefined,
+  persisted: RealCostLine[] | null | undefined
+): RealCostLine[] {
+  const fromCards = sanitizeLines(operational || []).filter(
+    (l) => !isClientDispatchShippingLine(l)
+  );
+  // Conservar domicilios que solo viven en BD (p. ej. tarjeta ya sin shippingMeta)
+  const fromPersistedDomicilios = sanitizeLines(persisted || []).filter(
+    (l) => !isClientDispatchShippingLine(l)
+  );
+  const nonClient = sanitizeLines([...fromCards, ...fromPersistedDomicilios]);
+
+  const clientLines = sanitizeLines([
+    ...(operational || []).filter(isClientDispatchShippingLine),
+    ...(persisted || []).filter(isClientDispatchShippingLine),
+  ]);
+  // Una sola línea de despacho a cliente: la más reciente / última
+  const clientLine = clientLines.length ? clientLines[clientLines.length - 1] : null;
+  return sanitizeLines(clientLine ? [...nonClient, clientLine] : nonClient);
+}
 
 /** Agrega/reemplaza el costo de despacho a cliente en el desglose de envíos/domicilios. */
 export function appendClientDispatchShippingCost(
@@ -1518,19 +1743,15 @@ export function appendClientDispatchShippingCost(
 ): OrderRealCostBreakdown {
   const base = previous || emptyRealCost(orderId);
   const cleanAmount = money(amount);
-  const withoutPrev = (base.shippingLines || []).filter((line) => {
-    const label = String(line.label || "").toLowerCase();
-    return !(
-      label.includes("costo de despacho") ||
-      label.includes("despacho (entrega") ||
-      label.includes("despacho a cliente")
-    );
-  });
+  // Conservar domicilios satélite; solo reemplazar la línea de despacho a cliente
+  const domicilios = mergeShippingLines(base.shippingLines, null).filter(
+    (line) => !isClientDispatchShippingLine(line)
+  );
 
   const shippingLines =
     cleanAmount > 0
       ? [
-          ...withoutPrev,
+          ...domicilios,
           {
             label: DISPATCH_CLIENT_LABEL,
             detail: "Registro desde Despacho al marcar entregado",
@@ -1541,7 +1762,7 @@ export function appendClientDispatchShippingCost(
             updatedAt: registeredAt,
           },
         ]
-      : withoutPrev;
+      : domicilios;
 
   const shipping = money(shippingLines.reduce((s, l) => s + (Number(l.amount) || 0), 0));
   const materials = money(base.materials);
