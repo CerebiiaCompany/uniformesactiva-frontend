@@ -10,6 +10,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
+import { ClienteCombobox } from "@/components/ClienteCombobox";
 import { Label } from "@/components/ui/label";
 import { useGetClients, type Client } from "@/hooks/useGetClients";
 
@@ -107,25 +108,16 @@ export default function QuoteForm({ initialData, onSubmit, onCancel }: Props) {
 
     return (
         <form onSubmit={handleSubmit} className="space-y-4 overflow-y-auto max-h-[70vh] pr-2">
-            {/* Cliente - Selector */}
+            {/* Cliente - Selector con búsqueda */}
             <div className="space-y-2">
                 <Label htmlFor="clientId">Cliente</Label>
-                <Select
+                <ClienteCombobox
                     value={values.clientId}
+                    clients={clients}
                     onValueChange={handleClientChange}
                     disabled={loadingClients}
-                >
-                    <SelectTrigger id="clientId">
-                        <SelectValue placeholder={loadingClients ? "Cargando clientes..." : "Seleccionar cliente"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {clients.map((client) => (
-                            <SelectItem key={client.id} value={client.id}>
-                                {client.name} ({client.nit})
-                            </SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
+                    placeholder={loadingClients ? "Cargando clientes..." : "Buscar o seleccionar cliente..."}
+                />
                 {values.customerName && (
                     <p className="text-xs text-muted-foreground mt-1">
                         Cliente seleccionado: <span className="font-medium">{values.customerName}</span>

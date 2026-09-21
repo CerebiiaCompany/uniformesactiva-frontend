@@ -138,6 +138,16 @@ export function AdminNotificationsBell() {
                           <p className="text-[12px] font-medium text-foreground truncate">
                             {n.title}
                           </p>
+                          {n.type === "mold_request" ? (
+                            <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide bg-amber-50 text-amber-800 border border-amber-200">
+                              Moldería
+                            </span>
+                          ) : null}
+                          {n.type === "order_in_production" ? (
+                            <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide bg-sky-50 text-sky-800 border border-sky-200">
+                              Fábrica
+                            </span>
+                          ) : null}
                           {n.type === "inventory_exit" ? (
                             n.meta?.is_informative || n.meta?.scope === "informativa_kanban" ? (
                               <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide bg-amber-50 text-amber-700 border border-amber-200">
