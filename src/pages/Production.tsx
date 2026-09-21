@@ -1,15 +1,45 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AppLayout } from "@/components/AppLayout";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useOrders } from "@/hooks/useOrders";
 import { useKanbanEtapas, pinDispatchStageLast } from "@/hooks/useKanbanEtapas";
 import { type ProductionOrder } from "@/data/mockData";
-import { User, Calendar, Package, ArrowLeft, ChevronRight, History, Clock, X, Plus, Pencil, Trash2, GripVertical, Check, Loader2, Boxes, Scissors, DollarSign, Factory, ImagePlus, Paperclip, FileText, UserPlus, MessageSquare, CheckCircle2 } from "lucide-react";
+import {
+  User,
+  Calendar,
+  Package,
+  ArrowLeft,
+  ChevronRight,
+  History,
+  Clock,
+  X,
+  Plus,
+  Pencil,
+  Trash2,
+  GripVertical,
+  Check,
+  Loader2,
+  Boxes,
+  Scissors,
+  DollarSign,
+  Factory,
+  ImagePlus,
+  Paperclip,
+  FileText,
+  UserPlus,
+  MessageSquare,
+  CheckCircle2,
+  Download,
+  AlertTriangle,
+  Search,
+  Filter,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { resolveFactoryCardInfo, groupOrderItemsForFactory, isOrderPastDue } from "@/lib/order-fields";
+import { printReportDocument } from "@/lib/report-print";
 import { FactoryVariantBreakdown } from "@/components/FactoryVariantBreakdown";
 import { KanbanStageChip } from "@/components/KanbanStageChip";
 import { KanbanCardEditDialog, cardFormFromProductionOrder, type KanbanCardFormValues } from "@/components/KanbanCardEditDialog";
@@ -302,6 +332,9 @@ export default function Production() {
   const highlightHandledRef = useRef<string | null>(null);
   const { orders: rawOrders, loading: ordersLoading, fetchOrders, updateOrderStage, fetchEtapaLogs, updateKanbanAssignment, updateKanbanTarjetas } = useOrders();
   const [productionListReady, setProductionListReady] = useState(false);
+  const [factoryFilter, setFactoryFilter] = useState<"todos" | "nuevo" | "atencion" | "demorados">("todos");
+  const [factorySearch, setFactorySearch] = useState("");
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const {
     etapas,
     loading: loadingEtapas,
@@ -1088,7 +1121,7 @@ export default function Production() {
           ? `Capa «${prevLabel}» marcada. El pedido queda disponible en Despacho → Pedidos listos${
               nextStage !== currentStage ? ` y avanzó a «${nextLabel}»` : ""
             }.`
-          : `Trabajo de «${prevLabel}» finalizado. El pedido avanzó a la fase de «${nextLabel}» (Sin asignar) y se sumaron ${new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(amount)} a POR PAGAR.`,
+          : `Trabajo de «${prevLabel}» finalizado. El pedido avanzó a la fase de «${nextLabel}» (pendiente por asignar) y se sumaron ${new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(amount)} a POR PAGAR.`,
       });
 
       await fetchOrders({ estado: "in_production" });
@@ -1688,6 +1721,222 @@ export default function Production() {
     return cardAssignedToOperatorOnAllowedStage(prodSession, po);
   });
   const selectedOrder = activeOrders.find((o) => o.id === selectedOrderId);
+
+  const orderCategories = useMemo(() => {
+    const map = new Map<string, "demorado" | "atencion" | "nuevo" | "normal">();
+    const now = Date.now();
+    for (const order of activeOrders) {
+      const cardsOfOrder = prodOrders.filter((c) => c.orderId === order.id);
+      const isDelayed =
+        isOrderPastDue(order.fecha_estimada_entrega) ||
+        (!order.fecha_estimada_entrega &&
+          cardsOfOrder.some((c) => c.isDelayed || (c.daysInStage ?? 0) >= 7));
+
+      if (isDelayed) {
+        map.set(order.id, "demorado");
+        continue;
+      }
+
+      const hasNovedades = cardsOfOrder.some((c) => (c.novedades || []).length > 0);
+      const diffDays = order.fecha_estimada_entrega
+        ? Math.ceil((new Date(order.fecha_estimada_entrega).getTime() - now) / 86400000)
+        : null;
+      const isExpiringSoon = diffDays !== null && diffDays >= 0 && diffDays <= 3;
+      const hasHighDaysInStage = cardsOfOrder.some((c) => (c.daysInStage ?? 0) >= 4);
+
+      if (hasNovedades || isExpiringSoon || hasHighDaysInStage) {
+        map.set(order.id, "atencion");
+        continue;
+      }
+
+      const isRecentCreated = order.fecha_creacion
+        ? now - new Date(order.fecha_creacion).getTime() <= 3 * 86400000
+        : false;
+      const isPendingState =
+        order.estado === "pending" || order.estado === "draft" || order.estado === "design";
+      const isStageInitial = cardsOfOrder.length === 0 || cardsOfOrder.every((c) => (c.daysInStage ?? 0) <= 1);
+
+      if (isPendingState || isRecentCreated || isStageInitial) {
+        map.set(order.id, "nuevo");
+        continue;
+      }
+
+      map.set(order.id, "normal");
+    }
+    return map;
+  }, [activeOrders, prodOrders]);
+
+  const counts = useMemo(() => {
+    let nuevos = 0;
+    let atencion = 0;
+    let demorados = 0;
+    for (const order of activeOrders) {
+      const cat = orderCategories.get(order.id);
+      if (cat === "demorado") demorados++;
+      else if (cat === "atencion") atencion++;
+      else if (cat === "nuevo") nuevos++;
+    }
+    return {
+      todos: activeOrders.length,
+      nuevo: nuevos,
+      atencion,
+      demorados,
+    };
+  }, [activeOrders, orderCategories]);
+
+  const displayedActiveOrders = useMemo(() => {
+    return activeOrders.filter((order) => {
+      const cat = orderCategories.get(order.id);
+      if (factoryFilter === "nuevo" && cat !== "nuevo") return false;
+      if (factoryFilter === "atencion" && cat !== "atencion") return false;
+      if (factoryFilter === "demorados" && cat !== "demorado") return false;
+
+      if (factorySearch.trim()) {
+        const query = factorySearch.toLowerCase().trim();
+        const shortId = `ord-${order.id.slice(0, 3)}`.toLowerCase();
+        const client = (order.cliente_nombre || "").toLowerCase();
+        const items = (order.items || [])
+          .map((i) => `${i.subproducto_nombre || ""} ${i.producto_nombre || ""}`)
+          .join(" ")
+          .toLowerCase();
+        if (!shortId.includes(query) && !client.includes(query) && !items.includes(query)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [activeOrders, factoryFilter, factorySearch, orderCategories]);
+
+  const handleExportFactoryPdf = async () => {
+    if (displayedActiveOrders.length === 0 || isExportingPdf) return;
+    setIsExportingPdf(true);
+    try {
+      const summaryItems: { label: string; value: string }[] = [
+        {
+          label: "Filtro aplicado",
+          value:
+            factoryFilter === "nuevo"
+              ? "Nuevos pedidos"
+              : factoryFilter === "atencion"
+              ? "Requieren atención"
+              : factoryFilter === "demorados"
+              ? "Pedidos demorados"
+              : "Todos los pedidos activos en planta",
+        },
+        {
+          label: "Total órdenes en reporte",
+          value: `${displayedActiveOrders.length} orden${displayedActiveOrders.length === 1 ? "" : "es"}`,
+        },
+      ];
+
+      if (counts.demorados > 0) {
+        summaryItems.push({
+          label: "Órdenes demoradas",
+          value: `${counts.demorados}`,
+        });
+      }
+      if (counts.atencion > 0) {
+        summaryItems.push({
+          label: "Requieren atención",
+          value: `${counts.atencion}`,
+        });
+      }
+
+      let totalPrendas = 0;
+
+      const rows: string[][] = displayedActiveOrders.map((order) => {
+        const cardsOfOrder = prodOrders.filter((c) => c.orderId === order.id);
+        const factory = resolveFactoryCardInfo(order);
+        const cat = orderCategories.get(order.id);
+        const qty = order.items?.reduce((s, i) => s + (Number(i.cantidad) || 0), 0) || 0;
+        totalPrendas += qty;
+
+        const currentStageKey = order.etapa_produccion || cardsOfOrder[0]?.stage || "design";
+        const currentStageLabel = stageLabels[currentStageKey] || stages.find((s) => s.key === currentStageKey)?.label || currentStageKey;
+
+        const bordadoText = factory.hasBordado
+          ? `Sí (${factory.tipoBordado !== "—" ? factory.tipoBordado : "Bordado"})`
+          : "No";
+
+        const estadoLabel =
+          cat === "demorado"
+            ? "Demorada"
+            : cat === "atencion"
+            ? "Atención"
+            : cat === "nuevo"
+            ? "Nuevo"
+            : "En producción";
+
+        const itemsSummary = (order.items || [])
+          .map((i) => `${i.cantidad} ${i.subproducto_nombre || i.producto_nombre || "Prenda"}`)
+          .join(", ") || "Prendas";
+
+        const fechaInicio = order.fecha_creacion
+          ? new Date(order.fecha_creacion).toLocaleDateString("es-CO")
+          : "—";
+
+        const fechaEntrega = order.fecha_estimada_entrega
+          ? new Date(order.fecha_estimada_entrega).toLocaleDateString("es-CO")
+          : "—";
+
+        return [
+          `ORD-${order.id.slice(0, 3).toUpperCase()}`,
+          order.cliente_nombre || "—",
+          itemsSummary,
+          `${qty} uds`,
+          currentStageLabel,
+          bordadoText,
+          estadoLabel,
+          fechaInicio,
+          fechaEntrega,
+        ];
+      });
+
+      await printReportDocument({
+        title:
+          factoryFilter === "demorados"
+            ? "Reporte de Pedidos Demorados en Planta"
+            : "Reporte de Órdenes en Planta (Fábrica)",
+        documentLabel: "Control Operativo de Producción",
+        summary: summaryItems,
+        columns: [
+          { key: "id", label: "ID" },
+          { key: "cliente", label: "Cliente" },
+          { key: "articulos", label: "Artículos" },
+          { key: "cantidad", label: "Cantidad", align: "right" },
+          { key: "etapa", label: "Etapa actual" },
+          { key: "bordado", label: "Bordado" },
+          { key: "alerta", label: "Alerta / Estado" },
+          { key: "inicio", label: "F. Inicio" },
+          { key: "entrega", label: "F. Entrega" },
+        ],
+        rows,
+        totalsRow: [
+          "TOTALES",
+          `${displayedActiveOrders.length} órdenes`,
+          "",
+          `${totalPrendas} uds`,
+          "",
+          "",
+          "",
+          "",
+          "",
+        ],
+        notes: "Reporte generado desde el módulo Operativo (Fábrica) · Uniformes Activa.",
+        signLeft: "Responsable de Planta",
+        signRight: "Control de Calidad / Auditoría",
+      });
+    } catch (err) {
+      toast({
+        title: "No se pudo generar el PDF",
+        description:
+          err instanceof Error ? err.message : "Intenta de nuevo o permite ventanas emergentes.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
 
   useEffect(() => {
     if (!selectedOrderId) return;
@@ -2734,6 +2983,155 @@ export default function Production() {
   if (!selectedOrderId) {
     return (
       <AppLayout title="Operativo" subtitle="Órdenes activas en planta" eyebrow="Operación">
+        {/* Barra superior de filtros y exportación PDF */}
+        <div className="mb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-card p-3 rounded-xl border shadow-sm">
+          {/* Chips / Botones de filtro de estado */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Button
+              type="button"
+              variant={factoryFilter === "todos" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setFactoryFilter("todos")}
+              className={cn(
+                "h-8 text-xs font-medium gap-1.5",
+                factoryFilter === "todos" && "bg-primary text-primary-foreground shadow-sm"
+              )}
+            >
+              Todos
+              <span
+                className={cn(
+                  "px-1.5 py-0.2 rounded-full text-[10px] font-bold",
+                  factoryFilter === "todos"
+                    ? "bg-primary-foreground/20 text-primary-foreground"
+                    : "bg-muted text-muted-foreground"
+                )}
+              >
+                {counts.todos}
+              </span>
+            </Button>
+
+            <Button
+              type="button"
+              variant={factoryFilter === "nuevo" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setFactoryFilter("nuevo")}
+              className={cn(
+                "h-8 text-xs font-medium gap-1.5",
+                factoryFilter === "nuevo" && "bg-sky-600 hover:bg-sky-700 text-white"
+              )}
+            >
+              Nuevos
+              <span
+                className={cn(
+                  "px-1.5 py-0.2 rounded-full text-[10px] font-bold",
+                  factoryFilter === "nuevo"
+                    ? "bg-white/20 text-white"
+                    : "bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300"
+                )}
+              >
+                {counts.nuevo}
+              </span>
+            </Button>
+
+            <Button
+              type="button"
+              variant={factoryFilter === "atencion" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setFactoryFilter("atencion")}
+              className={cn(
+                "h-8 text-xs font-medium gap-1.5",
+                factoryFilter === "atencion" && "bg-amber-600 hover:bg-amber-700 text-white"
+              )}
+            >
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+              Atención
+              <span
+                className={cn(
+                  "px-1.5 py-0.2 rounded-full text-[10px] font-bold",
+                  factoryFilter === "atencion"
+                    ? "bg-white/20 text-white"
+                    : "bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300"
+                )}
+              >
+                {counts.atencion}
+              </span>
+            </Button>
+
+            <Button
+              type="button"
+              variant={factoryFilter === "demorados" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setFactoryFilter("demorados")}
+              className={cn(
+                "h-8 text-xs font-medium gap-1.5",
+                factoryFilter === "demorados" && "bg-red-600 hover:bg-red-700 text-white"
+              )}
+            >
+              <Clock className="h-3.5 w-3.5 text-red-300" />
+              Demorados
+              <span
+                className={cn(
+                  "px-1.5 py-0.2 rounded-full text-[10px] font-bold",
+                  factoryFilter === "demorados"
+                    ? "bg-white/20 text-white"
+                    : "bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300"
+                )}
+              >
+                {counts.demorados}
+              </span>
+            </Button>
+          </div>
+
+          {/* Buscador y Exportar PDF */}
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <div className="relative flex-1 sm:w-56">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <Input
+                type="text"
+                placeholder="Buscar cliente, orden..."
+                value={factorySearch}
+                onChange={(e) => setFactorySearch(e.target.value)}
+                className="h-8 pl-8 pr-7 text-xs bg-muted/30"
+              />
+              {factorySearch ? (
+                <button
+                  type="button"
+                  onClick={() => setFactorySearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleExportFactoryPdf}
+              disabled={isExportingPdf || displayedActiveOrders.length === 0}
+              title={
+                factoryFilter === "demorados"
+                  ? "Descargar reporte PDF de pedidos demorados"
+                  : "Descargar reporte PDF según lo filtrado en fábrica"
+              }
+              className="h-8 text-xs font-medium gap-1.5 shrink-0 bg-background hover:bg-muted"
+            >
+              {isExportingPdf ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Exportando…
+                </>
+              ) : (
+                <>
+                  <Download className="h-3.5 w-3.5" />
+                  {factoryFilter === "demorados" ? "Exportar Demorados (PDF)" : "Exportar PDF"}
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+
         {activeOrders.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/20 px-6 py-16 text-center">
             <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-3">
@@ -2752,24 +3150,64 @@ export default function Production() {
                   : "No hay órdenes activas en planta por ahora."}
             </p>
           </div>
+        ) : displayedActiveOrders.length === 0 ? (
+          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/20 px-6 py-14 text-center">
+            <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-2">
+              <Filter className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <p className="text-sm font-semibold text-foreground">
+              No hay pedidos que coincidan con los filtros
+            </p>
+            <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+              {factorySearch
+                ? `No se encontraron pedidos para «${factorySearch}» con el estado seleccionado.`
+                : "No hay órdenes activas en planta para el estado seleccionado."}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setFactoryFilter("todos");
+                setFactorySearch("");
+              }}
+              className="mt-3 text-xs"
+            >
+              Ver todos los pedidos ({counts.todos})
+            </Button>
+          </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-            {activeOrders.map((order) => {
+            {displayedActiveOrders.map((order) => {
               const factory = resolveFactoryCardInfo(order);
               const cardsOfOrder = prodOrders.filter((c) => c.orderId === order.id);
               const isDelayed =
                 isOrderPastDue(order.fecha_estimada_entrega) ||
                 (!order.fecha_estimada_entrega &&
                   cardsOfOrder.some((c) => c.isDelayed || (c.daysInStage ?? 0) >= 7));
+              const urgency = orderCategories.get(order.id) || (isDelayed ? "demorado" : "normal");
+              const isAttention = urgency === "atencion";
+              const isNew = urgency === "nuevo";
+
               return (
               <button
                 key={order.id}
                 onClick={() => setSelectedOrderId(order.id)}
-                title={isDelayed ? "Pedido demorado (fecha de entrega vencida)" : undefined}
+                title={
+                  isDelayed
+                    ? "Pedido demorado (fecha de entrega vencida o retraso)"
+                    : isAttention
+                    ? "Pedido requiere atención (novedades, entrega próxima o tiempo elevado)"
+                    : isNew
+                    ? "Pedido nuevo en planta"
+                    : undefined
+                }
                 className={cn(
                   "h-full text-left border rounded-xl p-3.5 hover:shadow-lg transition-all duration-200 group flex flex-col",
                   isDelayed
                     ? "bg-red-50/90 border-red-200/80 hover:border-red-300 dark:bg-red-950/35 dark:border-red-900/55 dark:hover:border-red-800/70"
+                    : isAttention
+                    ? "bg-amber-50/70 border-amber-200/80 hover:border-amber-300 dark:bg-amber-950/30 dark:border-amber-900/50 dark:hover:border-amber-800/70"
                     : "bg-card border-border hover:border-primary/30"
                 )}
               >
@@ -2778,15 +3216,14 @@ export default function Production() {
                     <div
                       className={cn(
                         "h-9 w-9 rounded-lg flex items-center justify-center shrink-0",
-                        isDelayed ? "bg-red-100/90 dark:bg-red-900/40" : "bg-primary/10"
+                        isDelayed
+                          ? "bg-red-100/90 dark:bg-red-900/40 text-red-700 dark:text-red-300"
+                          : isAttention
+                          ? "bg-amber-100/90 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300"
+                          : "bg-primary/10 text-primary"
                       )}
                     >
-                      <Package
-                        className={cn(
-                          "h-4 w-4",
-                          isDelayed ? "text-red-700 dark:text-red-300" : "text-primary"
-                        )}
-                      />
+                      <Package className="h-4 w-4" />
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -2795,12 +3232,20 @@ export default function Production() {
                         </span>
                         <StatusBadge status={order.estado} />
                         {isDelayed ? (
-                          <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800 dark:bg-red-900/50 dark:text-red-200">
+                          <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800 dark:bg-red-900/50 dark:text-red-200 border border-red-200">
                             Demorada
+                          </span>
+                        ) : isAttention ? (
+                          <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-900/50 dark:text-amber-200 border border-amber-200">
+                            Atención
+                          </span>
+                        ) : isNew ? (
+                          <span className="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-800 dark:bg-sky-900/50 dark:text-sky-200 border border-sky-200">
+                            Nuevo
                           </span>
                         ) : null}
                       </div>
-                      <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                      <p className="text-xs text-muted-foreground mt-0.5 truncate font-medium">
                         {order.cliente_nombre}
                       </p>
                     </div>

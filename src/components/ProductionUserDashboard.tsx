@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { resolveMediaUrl } from "@/lib/api-base";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -93,6 +94,8 @@ export function ProductionUserDashboard() {
   const [historyPayment, setHistoryPayment] = useState<HistoryPaymentFilter>("todos");
   const [ordersPaymentFilter, setOrdersPaymentFilter] =
     useState<HistoryPaymentFilter>("pending");
+  const [ordersDateFrom, setOrdersDateFrom] = useState<string>("");
+  const [ordersDateTo, setOrdersDateTo] = useState<string>("");
   const [faltantesDetail, setFaltantesDetail] = useState<ProductionOrderDetail | null>(
     null
   );
@@ -158,10 +161,28 @@ export function ProductionUserDashboard() {
   }, [panel?.orderHistory, historyPeriod, historyPayment]);
 
   const filteredPaymentOrders = useMemo(() => {
-    return (panel?.orders || []).filter((order) =>
-      matchesHistoryPayment(order.paymentStatus, ordersPaymentFilter)
-    );
-  }, [panel?.orders, ordersPaymentFilter]);
+    return (panel?.orders || []).filter((order) => {
+      if (!matchesHistoryPayment(order.paymentStatus, ordersPaymentFilter)) {
+        return false;
+      }
+      if (ordersDateFrom || ordersDateTo) {
+        const dates = [
+          order.createdAt?.slice(0, 10),
+          order.dueDate?.slice(0, 10),
+        ].filter(Boolean) as string[];
+        if (dates.length > 0) {
+          if (ordersDateFrom && ordersDateTo) {
+            if (!dates.some((d) => d >= ordersDateFrom && d <= ordersDateTo)) return false;
+          } else if (ordersDateFrom) {
+            if (!dates.some((d) => d >= ordersDateFrom)) return false;
+          } else if (ordersDateTo) {
+            if (!dates.some((d) => d <= ordersDateTo)) return false;
+          }
+        }
+      }
+      return true;
+    });
+  }, [panel?.orders, ordersPaymentFilter, ordersDateFrom, ordersDateTo]);
 
   if (loading && !panel) {
     return (
@@ -281,25 +302,64 @@ export function ProductionUserDashboard() {
                     solo se muestran pedidos por pagar.
                   </p>
                 </div>
-                <div className="space-y-1 min-w-[160px]">
-                  <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                    Estado de pago
-                  </Label>
-                  <Select
-                    value={ordersPaymentFilter}
-                    onValueChange={(v) =>
-                      setOrdersPaymentFilter(v as HistoryPaymentFilter)
-                    }
-                  >
-                    <SelectTrigger className="h-9 bg-background">
-                      <SelectValue placeholder="Estado de pago" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="pending">Por pagar</SelectItem>
-                      <SelectItem value="paid">Pagadas</SelectItem>
-                      <SelectItem value="todos">Todas</SelectItem>
-                    </SelectContent>
-                  </Select>
+                <div className="flex flex-wrap items-end gap-2.5">
+                  <div className="space-y-1 min-w-[130px]">
+                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Estado de pago
+                    </Label>
+                    <Select
+                      value={ordersPaymentFilter}
+                      onValueChange={(v) =>
+                        setOrdersPaymentFilter(v as HistoryPaymentFilter)
+                      }
+                    >
+                      <SelectTrigger className="h-9 bg-background">
+                        <SelectValue placeholder="Estado de pago" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pending">Por pagar</SelectItem>
+                        <SelectItem value="paid">Pagadas</SelectItem>
+                        <SelectItem value="todos">Todas</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1 min-w-[125px]">
+                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Desde
+                    </Label>
+                    <Input
+                      type="date"
+                      className="h-9 bg-background text-xs"
+                      value={ordersDateFrom}
+                      onChange={(e) => setOrdersDateFrom(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1 min-w-[125px]">
+                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Hasta
+                    </Label>
+                    <Input
+                      type="date"
+                      className="h-9 bg-background text-xs"
+                      value={ordersDateTo}
+                      onChange={(e) => setOrdersDateTo(e.target.value)}
+                    />
+                  </div>
+                  {ordersPaymentFilter !== "pending" || ordersDateFrom || ordersDateTo ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-9 text-xs text-muted-foreground hover:text-foreground"
+                      onClick={() => {
+                        setOrdersPaymentFilter("pending");
+                        setOrdersDateFrom("");
+                        setOrdersDateTo("");
+                      }}
+                    >
+                      Limpiar
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             </CardHeader>

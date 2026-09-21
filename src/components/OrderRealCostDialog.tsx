@@ -323,41 +323,79 @@ function MaterialTable({
   );
 }
 
-function LaborStageCard({
-  line,
-  title,
-}: {
-  line: RealCostLine;
+type GroupedLaborStage = {
+  key: string;
+  stageKey: string;
   title: string;
+  orden: number;
+  laborLines: RealCostLine[];
+  moldLines: RealCostLine[];
+  totalAmount: number;
+};
+
+function LaborStageCard({
+  item,
+}: {
+  item: GroupedLaborStage;
 }) {
-  const stageKey = line.stage || line.stageLabel;
+  const stageKey = item.stageKey;
   const theme = getKanbanStageTheme(stageKey);
-  const stageTitle = (title || "Capa").trim();
-  const personName = (line.userName || "Sin asignar").trim();
+  const stageTitle = (item.title || "Capa").trim();
 
   return (
     <div
       className={cn(
-        "rounded-xl border overflow-hidden min-w-[140px] flex-1 max-w-[180px]",
+        "rounded-xl border overflow-hidden min-w-[150px] flex-1 max-w-[200px] flex flex-col justify-between shadow-sm",
         getKanbanStageSoftPanelClass(stageKey)
       )}
     >
-      <div className={cn("h-1.5 w-full", theme?.bar || "bg-muted-foreground/30")} />
-      <div className="px-3 py-3 text-center space-y-1">
-        <p
-          className={cn(
-            "text-xs font-semibold leading-tight",
-            getKanbanStageSoftTextClass(stageKey)
+      <div className={cn("h-1.5 w-full shrink-0", theme?.bar || "bg-muted-foreground/30")} />
+      <div className="px-3 py-3 text-center space-y-2 flex-1 flex flex-col justify-between">
+        <div className="space-y-1">
+          <p
+            className={cn(
+              "text-xs font-semibold leading-tight",
+              getKanbanStageSoftTextClass(stageKey)
+            )}
+          >
+            {stageTitle}
+          </p>
+
+          {item.laborLines.length > 0 ? (
+            item.laborLines.map((line, idx) => (
+              <div key={`labor-${line.userId || idx}`} className="space-y-0.5 pt-0.5">
+                <p className="text-[11px] text-muted-foreground leading-snug break-words">
+                  {(line.userName || "Sin asignar").trim()}
+                </p>
+                <p className="text-sm font-bold tabular-nums text-foreground pt-0.5">
+                  {money(line.amount)}
+                </p>
+              </div>
+            ))
+          ) : (
+            <div className="text-[11px] text-muted-foreground italic py-1">
+              Sin mano de obra directa
+            </div>
           )}
-        >
-          {stageTitle}
-        </p>
-        <p className="text-[11px] text-muted-foreground leading-snug break-words">
-          {personName}
-        </p>
-        <p className="text-sm font-bold tabular-nums text-foreground pt-1">
-          {money(line.amount)}
-        </p>
+        </div>
+
+        {item.moldLines.length > 0 && (
+          <div className="pt-2 mt-1.5 border-t border-border/50 space-y-1 bg-background/50 rounded-lg p-1.5 shadow-[inset_0_1px_2px_rgba(0,0,0,0.03)]">
+            <p className="text-[10px] uppercase font-bold tracking-wider text-amber-800 dark:text-amber-300">
+              Moldería
+            </p>
+            {item.moldLines.map((mold, idx) => (
+              <div key={`mold-${mold.userId || idx}`} className="space-y-0.5">
+                <p className="text-[11px] text-muted-foreground leading-snug break-words">
+                  {(mold.userName || "Sin asignar").trim()}
+                </p>
+                <p className="text-xs font-bold tabular-nums text-foreground">
+                  {money(mold.amount)}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -581,21 +619,46 @@ export function OrderRealCostDialog({
   const savings = estimated - realAccumulated;
   const shortId = orderLabel || `ORD-${orderId.slice(0, 3).toUpperCase()}`;
 
-  const laborKanbanLines = useMemo(() => {
+  const laborKanbanStages = useMemo(() => {
     const lines = [...data.laborLines].filter(
       (line) => line.category === "labor" || line.category === "mold" || !line.category
     );
-    const enriched = lines.map((line, idx) => {
+
+    const groupMap = new Map<string, GroupedLaborStage>();
+
+    for (const line of lines) {
       const meta = resolveStageTitleEs(line, etapas);
-      return { line, idx, ...meta };
-    });
-    enriched.sort((a, b) => {
+      const groupKey = meta.key || "other";
+
+      let group = groupMap.get(groupKey);
+      if (!group) {
+        group = {
+          key: groupKey,
+          stageKey: meta.key,
+          title: meta.title,
+          orden: meta.orden,
+          laborLines: [],
+          moldLines: [],
+          totalAmount: 0,
+        };
+        groupMap.set(groupKey, group);
+      }
+
+      if (line.category === "mold") {
+        group.moldLines.push(line);
+      } else {
+        group.laborLines.push(line);
+      }
+      group.totalAmount += Number(line.amount) || 0;
+    }
+
+    const stageList = Array.from(groupMap.values());
+    stageList.sort((a, b) => {
       if (a.orden !== b.orden) return a.orden - b.orden;
-      const nameA = (a.line.userName || "").localeCompare(b.line.userName || "", "es");
-      if (nameA !== 0) return nameA;
-      return a.idx - b.idx;
+      return a.title.localeCompare(b.title, "es");
     });
-    return enriched;
+
+    return stageList;
   }, [data.laborLines, etapas]);
 
   const summaryCards = [
@@ -637,15 +700,25 @@ export function OrderRealCostDialog({
           money(Number(line.amount) || 0),
         ]);
       }
-      for (const item of laborKanbanLines) {
-        const line = item.line;
-        if (!(Number(line.amount) > 0)) continue;
-        detailRows.push([
-          line.label || "Mano de obra",
-          categoryLabel(line, "Mano de obra"),
-          [item.title, line.userName].filter(Boolean).join(" · ") || lineDetail(line),
-          money(Number(line.amount) || 0),
-        ]);
+      for (const item of laborKanbanStages) {
+        for (const line of item.laborLines) {
+          if (!(Number(line.amount) > 0)) continue;
+          detailRows.push([
+            line.label || "Mano de obra",
+            categoryLabel(line, "Mano de obra"),
+            [item.title, line.userName].filter(Boolean).join(" · ") || lineDetail(line),
+            money(Number(line.amount) || 0),
+          ]);
+        }
+        for (const mold of item.moldLines) {
+          if (!(Number(mold.amount) > 0)) continue;
+          detailRows.push([
+            mold.label || "Moldería",
+            "Moldería",
+            [item.title, "Moldería", mold.userName].filter(Boolean).join(" · ") || lineDetail(mold),
+            money(Number(mold.amount) || 0),
+          ]);
+        }
       }
       for (const line of satelliteLines) {
         detailRows.push([
@@ -895,13 +968,12 @@ export function OrderRealCostDialog({
             title="Costo por mano de obra (Kanban)"
             subtitle="Valor cobrado por capa y responsable en producción"
           >
-            {laborKanbanLines.length > 0 ? (
+            {laborKanbanStages.length > 0 ? (
               <div className="flex flex-wrap gap-3 px-2 py-3 justify-center sm:justify-start">
-                {laborKanbanLines.map((item) => (
+                {laborKanbanStages.map((stageItem) => (
                   <LaborStageCard
-                    key={`${item.key}-${item.line.userId}-${item.idx}`}
-                    line={item.line}
-                    title={item.title}
+                    key={stageItem.key}
+                    item={stageItem}
                   />
                 ))}
               </div>

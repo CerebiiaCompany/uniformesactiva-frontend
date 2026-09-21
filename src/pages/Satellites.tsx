@@ -39,6 +39,7 @@ import {
   CheckCircle2,
   Upload,
   Loader2,
+  Clock,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PedidosCompraTNSTab } from "@/components/satellites/PedidosCompraTNSTab";
@@ -94,6 +95,7 @@ import {
   isSatelliteWorkStatusFinal,
   type SatelliteDashboardCard,
   type SatelliteOrderDetail,
+  type SatellitePendingOrderPreview,
   type SatelliteUserRef,
   type SatelliteWorkshop,
 } from "@/lib/satellite-dashboard";
@@ -185,6 +187,8 @@ export default function Satellites() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deletingSatellite, setDeletingSatellite] = useState<SatelliteDashboardCard | null>(null);
   const [detailPagoFilter, setDetailPagoFilter] = useState<"todos" | "pending" | "paid">("pending");
+  const [detailFechaDesde, setDetailFechaDesde] = useState<string>("");
+  const [detailFechaHasta, setDetailFechaHasta] = useState<string>("");
   const [showDetailFilters, setShowDetailFilters] = useState(false);
   const [confirmDetail, setConfirmDetail] = useState<SatelliteOrderDetail | null>(null);
   const [confirmWorkStatus, setConfirmWorkStatus] = useState<SatelliteWorkStatus>("enviado");
@@ -338,6 +342,19 @@ export default function Satellites() {
 
       const hasTnsMatches = details.some((d) => d.source === "tns");
 
+      const pendingOrders: SatellitePendingOrderPreview[] = details
+        .filter((d) => !isSatelliteWorkStatusFinal(d.workStatus))
+        .map((d) => ({
+          orderId: d.orderId,
+          orderCode: d.orderCode || d.orderId,
+          customerName: d.customerName || "Sin cliente",
+          stageKey: d.stageKey,
+          stageLabel: d.stageLabel,
+          workStatus: d.workStatus,
+          workStatusLabel: workStatusLabel(d.workStatus),
+          quantity: d.quantity,
+        }));
+
       const card: SatelliteDashboardCard = {
         id: `prod-${user.id}`,
         name: user.fullName,
@@ -357,6 +374,7 @@ export default function Satellites() {
         pagado: summary.pagado,
         porPagar: summary.porPagar,
         isTnsSynced: hasTnsMatches,
+        pendingOrders,
       };
       return {
         card,
@@ -400,13 +418,38 @@ export default function Satellites() {
   }, [selectedCard, productionCards, selectedId, orders, stageLabels, selectedWorkshop, tnsPedidos]);
 
   const filteredOrderDetails = useMemo(() => {
-    if (detailPagoFilter === "todos") return selectedOrderDetails;
-    return selectedOrderDetails.filter((d) => d.paymentStatus === detailPagoFilter);
-  }, [selectedOrderDetails, detailPagoFilter]);
+    return selectedOrderDetails.filter((d) => {
+      if (detailPagoFilter !== "todos" && d.paymentStatus !== detailPagoFilter) {
+        return false;
+      }
+      if (detailFechaDesde || detailFechaHasta) {
+        const dates = [
+          d.createdAt?.slice(0, 10),
+          d.dueDate?.slice(0, 10),
+          d.paidAt?.slice(0, 10),
+          d.confirmedAt?.slice(0, 10),
+        ].filter(Boolean) as string[];
+
+        if (dates.length > 0) {
+          if (detailFechaDesde && detailFechaHasta) {
+            const matches = dates.some((dt) => dt >= detailFechaDesde && dt <= detailFechaHasta);
+            if (!matches) return false;
+          } else if (detailFechaDesde) {
+            const matches = dates.some((dt) => dt >= detailFechaDesde);
+            if (!matches) return false;
+          } else if (detailFechaHasta) {
+            const matches = dates.some((dt) => dt <= detailFechaHasta);
+            if (!matches) return false;
+          }
+        }
+      }
+      return true;
+    });
+  }, [selectedOrderDetails, detailPagoFilter, detailFechaDesde, detailFechaHasta]);
 
   const detailSummary = useMemo(
-    () => summarizeSatelliteOrders(selectedOrderDetails),
-    [selectedOrderDetails]
+    () => summarizeSatelliteOrders(filteredOrderDetails),
+    [filteredOrderDetails]
   );
 
   const openConfirmDialog = (detail: SatelliteOrderDetail) => {
@@ -644,6 +687,9 @@ export default function Satellites() {
         ...(selectedCard.settlements || {}),
         [cardId]: supportEntry,
         [rawId]: supportEntry,
+        [`PO-${rawId}`]: supportEntry,
+        [`tns-${rawId}`]: supportEntry,
+        ...((detail.cardIds || []).reduce((acc, cId) => ({ ...acc, [cId]: supportEntry }), {})),
       };
 
       if (selectedCard.id.startsWith("prod-") && selectedCard.userIds[0]) {
@@ -1370,7 +1416,7 @@ export default function Satellites() {
 
           {showDetailFilters ? (
             <div className="rounded-xl border bg-muted/20 px-4 py-3 flex flex-wrap items-end gap-3">
-              <div className="space-y-1 min-w-[160px]">
+              <div className="space-y-1 min-w-[150px]">
                 <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
                   Estado de pago
                 </Label>
@@ -1390,6 +1436,46 @@ export default function Satellites() {
                   </SelectContent>
                 </Select>
               </div>
+
+              <div className="space-y-1 min-w-[140px]">
+                <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  Fecha desde
+                </Label>
+                <Input
+                  type="date"
+                  className="h-9 bg-background text-xs"
+                  value={detailFechaDesde}
+                  onChange={(e) => setDetailFechaDesde(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-1 min-w-[140px]">
+                <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                  Fecha hasta
+                </Label>
+                <Input
+                  type="date"
+                  className="h-9 bg-background text-xs"
+                  value={detailFechaHasta}
+                  onChange={(e) => setDetailFechaHasta(e.target.value)}
+                />
+              </div>
+
+              {detailPagoFilter !== "pending" || detailFechaDesde || detailFechaHasta ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => {
+                    setDetailPagoFilter("pending");
+                    setDetailFechaDesde("");
+                    setDetailFechaHasta("");
+                  }}
+                >
+                  Limpiar filtros
+                </Button>
+              ) : null}
             </div>
           ) : null}
 
@@ -2360,6 +2446,12 @@ function SatelliteOrderCard({
 
   const stages = detail.stagesWorked || [];
   const supportUrl = resolveSupportUrl(detail.supportDocumentUrl);
+  const hasSupportDoc = Boolean(
+    supportUrl ||
+    detail.supportDocumentUrl ||
+    detail.supportDocumentName
+  );
+  const isPaid = detail.paymentStatus === "paid" || hasSupportDoc;
 
   return (
     <div className="rounded-xl border bg-card p-4 shadow-sm space-y-3">
@@ -2381,7 +2473,7 @@ function SatelliteOrderCard({
             >
               {workBadge.label}
             </span>
-            {detail.paymentStatus === "paid" ? (
+            {isPaid ? (
               <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800">
                 Pagado
               </span>
@@ -2591,7 +2683,7 @@ function SatelliteOrderCard({
           <CheckSquare className="h-3.5 w-3.5" />
           Confirmar / Editar
         </Button>
-        {supportUrl ? (
+        {hasSupportDoc ? (
           <>
             <Button
               type="button"
@@ -2601,12 +2693,18 @@ function SatelliteOrderCard({
               asChild
             >
               <a
-                href={supportUrl}
+                href={supportUrl || "#"}
                 target="_blank"
                 rel="noopener noreferrer"
                 title={detail.supportDocumentName || "Abrir documento soporte"}
+                onClick={(e) => {
+                  if (!supportUrl) {
+                    e.preventDefault();
+                    fileInputRef.current?.click();
+                  }
+                }}
               >
-                <CheckCircle2 className="h-3.5 w-3.5" />
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
                 Soporte cargado
               </a>
             </Button>
@@ -2614,7 +2712,7 @@ function SatelliteOrderCard({
               type="button"
               variant="ghost"
               size="sm"
-              className="h-8 text-xs gap-1 text-muted-foreground"
+              className="h-8 text-xs gap-1 text-muted-foreground hover:text-foreground"
               onClick={() => fileInputRef.current?.click()}
               disabled={busy}
               title="Reemplazar documento soporte"
@@ -2726,6 +2824,46 @@ function SatelliteMetricCard({
           <div className="mt-2 flex items-center gap-1.5 text-[11px] text-primary bg-primary/10 rounded-md px-2 py-0.5 w-fit font-medium">
             <span className="h-1.5 w-1.5 rounded-full bg-primary" />
             Sincronizado con TNS
+          </div>
+        ) : null}
+
+        {/* Órdenes pendientes por recibir de este satélite */}
+        {card.pendingOrders && card.pendingOrders.length > 0 ? (
+          <div className="mt-3 space-y-1.5 pt-2.5 border-t border-dashed border-border/80">
+            <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground px-0.5">
+              <span className="flex items-center gap-1.5 font-semibold text-sky-700 dark:text-sky-400">
+                <Clock className="h-3.5 w-3.5" />
+                Pendientes por recibir ({card.pendingOrders.length})
+              </span>
+            </div>
+            <div className="space-y-1.5 max-h-36 overflow-y-auto pr-0.5">
+              {card.pendingOrders.map((ord) => (
+                <div
+                  key={ord.orderId}
+                  className="flex items-center justify-between gap-2 p-2 rounded-lg bg-sky-50/70 dark:bg-sky-950/30 border border-sky-200/70 dark:border-sky-800/40 text-xs"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-foreground truncate">
+                        {ord.orderCode}
+                      </span>
+                      {ord.stageLabel ? (
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-background/80 text-muted-foreground border border-border/60 shrink-0">
+                          {ord.stageLabel}
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground truncate font-medium mt-0.5">
+                      {ord.customerName}
+                    </p>
+                  </div>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 dark:bg-sky-900/60 px-2 py-0.5 text-[10px] font-medium text-sky-800 dark:text-sky-200 shrink-0 border border-sky-300/60 dark:border-sky-700">
+                    <span className="h-1.5 w-1.5 rounded-full bg-sky-500 animate-pulse" />
+                    {ord.workStatusLabel || "Enviado (en trabajo)"}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         ) : null}
 

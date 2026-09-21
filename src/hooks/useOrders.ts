@@ -218,6 +218,36 @@ function resolveHttpErrorMessage(err: unknown, fallback: string): string {
     return fallback;
 }
 
+export async function fetchAllOrdersMatchingFilters(filters: OrderListFilters = {}): Promise<Order[]> {
+    const firstParams = buildOrderQueryParams({
+        ...filters,
+        page: 1,
+        page_size: 100,
+    });
+    const firstRes = await http<OrderListResponse>(`${endpoints.orders.list()}?${firstParams.toString()}`);
+    let all = firstRes.items || [];
+    const total = firstRes.total_count || 0;
+
+    if (total > all.length) {
+        const totalPages = Math.ceil(total / 100);
+        const remainingPromises = [];
+        for (let p = 2; p <= totalPages; p++) {
+            const pParams = buildOrderQueryParams({ ...filters, page: p, page_size: 100 });
+            remainingPromises.push(
+                http<OrderListResponse>(`${endpoints.orders.list()}?${pParams.toString()}`).catch(() => ({
+                    total_count: 0,
+                    items: [],
+                }))
+            );
+        }
+        const results = await Promise.all(remainingPromises);
+        for (const res of results) {
+            all = all.concat(res.items || []);
+        }
+    }
+    return all;
+}
+
 export function useOrders() {
     const [orders, setOrders] = useState<Order[]>([]);
     const [totalCount, setTotalCount] = useState<number>(0);
