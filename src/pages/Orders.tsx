@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Search, FileText, Settings, Loader2, ChevronLeft, ChevronRight, SlidersHorizontal, Eye, Check, X, Pencil, Printer, Package, Calculator } from "lucide-react";
-import { useOrders, Order, OrderListFilters } from "@/hooks/useOrders";
+import { useOrders, Order, OrderListFilters, fetchAllOrdersMatchingFilters } from "@/hooks/useOrders";
+import { printReportDocument } from "@/lib/report-print";
 import { NewOrderDialog } from "@/components/NewOrderDialog";
 import { OrderDetailDialog } from "@/components/OrderDetailDialog";
 import { OrderStatusPanel } from "@/components/OrderStatusPanel";
@@ -106,6 +107,7 @@ export default function Orders() {
   const [searchTerm, setSearchTerm] = useState("");
   const [salePriceDrafts, setSalePriceDrafts] = useState<Record<string, string>>({});
   const [commentsDraft, setCommentsDraft] = useState("");
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
 
   const [filters, setFilters] = useState<OrderListFilters>({
     id: "",
@@ -114,6 +116,8 @@ export default function Orders() {
     cliente_id: "",
     producto_id: "",
     fecha_creacion: "",
+    fecha_desde: "",
+    fecha_hasta: "",
     page: 1,
     page_size: 10,
   });
@@ -401,20 +405,275 @@ export default function Orders() {
     });
   };
 
+  const hasActiveFilters = Boolean(
+    searchTerm ||
+    filters.id ||
+    (filters.estado && filters.estado !== "todos") ||
+    (filters.payment_status && filters.payment_status !== "todos") ||
+    filters.cliente_id ||
+    filters.producto_id ||
+    filters.fecha_creacion ||
+    filters.fecha_desde ||
+    filters.fecha_hasta
+  );
+
+  const handleClearFilters = () => {
+    setSearchTerm("");
+    setFilters({
+      id: "",
+      estado: "todos",
+      payment_status: "todos",
+      cliente_id: "",
+      producto_id: "",
+      fecha_creacion: "",
+      fecha_desde: "",
+      fecha_hasta: "",
+      page: 1,
+      page_size: filters.page_size || 10,
+    });
+  };
+
+  const handleExportPdf = async () => {
+    setIsExportingPdf(true);
+    try {
+      let ordersToExport = filteredOrders;
+
+      if (totalCount > orders.length) {
+        try {
+          const allFetched = await fetchAllOrdersMatchingFilters(filters);
+          const term = searchTerm.toLowerCase().trim();
+          if (term) {
+            ordersToExport = allFetched.filter((order) => {
+              const articles = summarizeOrderArticles(order.items || [], {
+                fallbackColor: order.color,
+                fallbackProduct: order.producto_nombre,
+              }).plainText.toLowerCase();
+              return (
+                order.cliente_nombre?.toLowerCase().includes(term) ||
+                order.producto_nombre?.toLowerCase().includes(term) ||
+                order.id?.toLowerCase().includes(term) ||
+                articles.includes(term) ||
+                (order.items || []).some(
+                  (item) =>
+                    item.subproducto_nombre?.toLowerCase().includes(term) ||
+                    item.talla_nombre?.toLowerCase().includes(term) ||
+                    item.color?.toLowerCase().includes(term)
+                )
+              );
+            });
+          } else {
+            ordersToExport = allFetched;
+          }
+        } catch {
+          ordersToExport = filteredOrders;
+        }
+      }
+
+      if (!ordersToExport.length) {
+        toast({
+          title: "Sin registros para exportar",
+          description: "No se encontraron órdenes con los filtros aplicados.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      let totalCosto = 0;
+      let totalVenta = 0;
+      let totalGanancia = 0;
+      let totalPrendas = 0;
+
+      const rows: string[][] = ordersToExport.map((order) => {
+        const draftRaw = salePriceDrafts[order.id];
+        const profitPreview = getOrderProfitPreview(order, draftRaw);
+        const ganancia = profitPreview.isPreview
+          ? profitPreview.ganancia
+          : Number(order.ganancia || 0);
+        const margenPorcentaje = profitPreview.isPreview
+          ? profitPreview.margenPorcentaje
+          : Number(order.margen_ganancia || 0) * 100;
+
+        const costo = Number(order.costo_total || 0);
+        const venta = Number(order.valor_venta_proyectado || 0);
+        totalCosto += costo;
+        totalVenta += venta;
+        totalGanancia += ganancia;
+
+        const orderItemCount = (order.items || []).reduce(
+          (acc, it) => acc + (Number(it.cantidad) || 0),
+          0
+        );
+        totalPrendas += orderItemCount;
+
+        const factory = resolveFactoryCardInfo(order);
+        const articlesSummary = summarizeOrderArticles(order.items || [], {
+          fallbackColor: order.color,
+          fallbackProduct: order.producto_nombre,
+        }).plainText;
+
+        const realCostObj = realCostByOrder[order.id] || getOrderRealCostFromOrder(order);
+        const realCostVal = realCostObj ? computeRealAccumulatedCost(realCostObj) : 0;
+
+        const estadoLabel =
+          order.estado === "pending"
+            ? "Pendiente"
+            : order.estado === "in_production"
+            ? "En producción"
+            : order.estado === "delivered"
+            ? "Entregado"
+            : order.estado || "—";
+
+        const paymentBadge = resolvePaymentBadge(order);
+        const paymentLabel =
+          paymentBadge === "si" ? "Pagado" : paymentBadge === "parcial" ? "Parcial" : "No pagado";
+
+        return [
+          `ORD-${order.id.slice(0, 3).toUpperCase()}`,
+          order.fecha_creacion
+            ? new Date(order.fecha_creacion).toLocaleDateString("es-CO")
+            : "—",
+          order.cliente_nombre || "—",
+          articlesSummary || "—",
+          `$${formatCurrency(costo)}`,
+          realCostVal > 0 ? `$${formatCurrency(realCostVal)}` : "—",
+          `$${formatCurrency(venta)}`,
+          `$${formatCurrency(ganancia)}`,
+          `${margenPorcentaje.toFixed(1)}%`,
+          estadoLabel,
+          factory.hasBordado ? "Sí" : "No",
+          paymentLabel,
+          order.fecha_estimada_entrega
+            ? new Date(order.fecha_estimada_entrega).toLocaleDateString("es-CO")
+            : "—",
+        ];
+      });
+
+      const margenGlobal = totalVenta > 0 ? ((totalVenta - totalCosto) / totalVenta) * 100 : 0;
+
+      const summaryItems: { label: string; value: string }[] = [
+        { label: "Total órdenes", value: String(ordersToExport.length) },
+        { label: "Total prendas", value: String(totalPrendas) },
+        { label: "Costo estimado total", value: `$${formatCurrency(totalCosto)}` },
+        { label: "Venta proyectada total", value: `$${formatCurrency(totalVenta)}` },
+        { label: "Ganancia total", value: `$${formatCurrency(totalGanancia)}` },
+        { label: "Margen global", value: `${margenGlobal.toFixed(1)}%` },
+      ];
+
+      if (filters.fecha_desde || filters.fecha_hasta) {
+        const desdeText = filters.fecha_desde
+          ? new Date(filters.fecha_desde + "T00:00:00").toLocaleDateString("es-CO")
+          : "Inicio";
+        const hastaText = filters.fecha_hasta
+          ? new Date(filters.fecha_hasta + "T00:00:00").toLocaleDateString("es-CO")
+          : "Hoy";
+        summaryItems.push({
+          label: "Rango de fechas",
+          value: `${desdeText} hasta ${hastaText}`,
+        });
+      }
+
+      if (filters.estado && filters.estado !== "todos") {
+        summaryItems.push({
+          label: "Estado filtrado",
+          value:
+            filters.estado === "pending"
+              ? "Pendiente"
+              : filters.estado === "in_production"
+              ? "En producción"
+              : filters.estado === "delivered"
+              ? "Entregado"
+              : filters.estado,
+        });
+      }
+
+      if (filters.payment_status && filters.payment_status !== "todos") {
+        summaryItems.push({
+          label: "Pago filtrado",
+          value: filters.payment_status === "paid" ? "Pagado" : "No pagado",
+        });
+      }
+
+      await printReportDocument({
+        title: "Reporte de Órdenes",
+        documentLabel: "Gestión centralizada de órdenes",
+        summary: summaryItems,
+        columns: [
+          { key: "id", label: "ID" },
+          { key: "inicio", label: "Inicio" },
+          { key: "cliente", label: "Cliente" },
+          { key: "articulos", label: "Artículos" },
+          { key: "costo", label: "Costo", align: "right" },
+          { key: "costo_real", label: "Costo real", align: "right" },
+          { key: "venta", label: "Venta", align: "right" },
+          { key: "ganancia", label: "Ganancia", align: "right" },
+          { key: "margen", label: "Margen", align: "right" },
+          { key: "estado", label: "Estado" },
+          { key: "bordado", label: "Bordado" },
+          { key: "pago", label: "Pago" },
+          { key: "entrega", label: "Entrega" },
+        ],
+        rows,
+        totalsRow: [
+          "TOTALES",
+          "",
+          "",
+          `${totalPrendas} prendas`,
+          `$${formatCurrency(totalCosto)}`,
+          "",
+          `$${formatCurrency(totalVenta)}`,
+          `$${formatCurrency(totalGanancia)}`,
+          `${margenGlobal.toFixed(1)}%`,
+          "",
+          "",
+          "",
+          "",
+        ],
+        notes: "Reporte generado desde el módulo de Órdenes · Uniformes Activa.",
+        signLeft: "Elaborado por",
+        signRight: "Revisado por",
+      });
+    } catch (err) {
+      toast({
+        title: "No se pudo generar el PDF",
+        description:
+          err instanceof Error ? err.message : "Intenta de nuevo o permite ventanas emergentes.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
   return (
     <AppLayout title="Órdenes" subtitle="Gestión centralizada de órdenes" eyebrow="Comercial">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-3">
           <CardTitle className="text-base font-semibold">Todas las órdenes</CardTitle>
-          <Button size="sm" onClick={() => { setEditOrder(null); setIsNewOrderOpen(true); }}>
-            <Plus className="h-4 w-4 mr-1" /> Nueva orden
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportPdf}
+              disabled={isExportingPdf || loading || filteredOrders.length === 0}
+              title="Exportar órdenes filtradas a PDF"
+            >
+              {isExportingPdf ? (
+                <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+              ) : (
+                <FileText className="h-4 w-4 mr-1.5 text-red-600" />
+              )}
+              Exportar PDF
+            </Button>
+            <Button size="sm" onClick={() => { setEditOrder(null); setIsNewOrderOpen(true); }}>
+              <Plus className="h-4 w-4 mr-1" /> Nueva orden
+            </Button>
+          </div>
         </CardHeader>
 
         <CardContent className="p-0">
           {/* Filtros compactos — mismo patrón que Cotizaciones */}
           <div className="flex flex-nowrap items-end gap-2 p-3 border-b border-border bg-muted/5 overflow-x-auto">
-            <div className="flex-1 min-w-[140px] max-w-[200px] space-y-0.5">
+            <div className="flex-1 min-w-[130px] max-w-[190px] space-y-0.5">
               <Label className="text-xs font-medium text-muted-foreground">Buscar</Label>
               <div className="relative">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -427,7 +686,7 @@ export default function Orders() {
               </div>
             </div>
 
-            <div className="shrink-0 w-[130px] space-y-0.5">
+            <div className="shrink-0 w-[125px] space-y-0.5">
               <Label className="text-xs font-medium text-muted-foreground">Estado</Label>
               <Select
                 value={filters.estado}
@@ -445,7 +704,7 @@ export default function Orders() {
               </Select>
             </div>
 
-            <div className="shrink-0 w-[120px] space-y-0.5">
+            <div className="shrink-0 w-[115px] space-y-0.5">
               <Label className="text-xs font-medium text-muted-foreground">Pago</Label>
               <Select
                 value={filters.payment_status}
@@ -466,14 +725,26 @@ export default function Orders() {
               </Select>
             </div>
 
-            <div className="shrink-0 w-[148px] space-y-0.5">
-              <Label className="text-xs font-medium text-muted-foreground">Fecha inicio</Label>
+            <div className="shrink-0 w-[138px] space-y-0.5">
+              <Label className="text-xs font-medium text-muted-foreground">Desde</Label>
               <Input
                 type="date"
                 className="h-9 w-full box-border text-sm leading-none px-2.5 py-0 overflow-hidden [&::-webkit-datetime-edit]:min-w-0"
-                value={filters.fecha_creacion}
+                value={filters.fecha_desde || ""}
                 onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, fecha_creacion: e.target.value, page: 1 }))
+                  setFilters((prev) => ({ ...prev, fecha_desde: e.target.value, page: 1 }))
+                }
+              />
+            </div>
+
+            <div className="shrink-0 w-[138px] space-y-0.5">
+              <Label className="text-xs font-medium text-muted-foreground">Hasta</Label>
+              <Input
+                type="date"
+                className="h-9 w-full box-border text-sm leading-none px-2.5 py-0 overflow-hidden [&::-webkit-datetime-edit]:min-w-0"
+                value={filters.fecha_hasta || ""}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, fecha_hasta: e.target.value, page: 1 }))
                 }
               />
             </div>
@@ -486,6 +757,16 @@ export default function Orders() {
               >
                 <SlidersHorizontal className="h-3.5 w-3.5 mr-1" /> Avanzado
               </Button>
+              {hasActiveFilters && (
+                <Button
+                  variant="ghost"
+                  className="h-9 px-2 text-sm text-muted-foreground hover:text-destructive whitespace-nowrap"
+                  onClick={handleClearFilters}
+                  title="Limpiar todos los filtros"
+                >
+                  <X className="h-3.5 w-3.5 mr-1" /> Limpiar
+                </Button>
+              )}
             </div>
           </div>
 

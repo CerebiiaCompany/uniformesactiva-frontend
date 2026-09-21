@@ -38,6 +38,7 @@ import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
 import { useGetProductLines } from "@/hooks/useGetProductLines";
 import { AddOrderProductDialog, type OrderProductEntry } from "@/components/AddOrderProductDialog";
+import { ClienteCombobox } from "@/components/ClienteCombobox";
 import type { Client } from "@/hooks/useGetClients";
 import { formatCurrency } from "@/lib/format-number";
 import { getApiBaseUrl } from "@/lib/api-base";
@@ -870,23 +871,13 @@ export function NewOrderDialog({
                                     >
                                         <div className="space-y-1.5">
                                             <Label className="text-xs font-medium">Cliente</Label>
-                                            <Select
+                                            <ClienteCombobox
                                                 value={selectedClient}
+                                                clients={clients}
                                                 onValueChange={setSelectedClient}
                                                 disabled={fromQuote && Boolean(initialClientId)}
-                                            >
-                                                <SelectTrigger className="h-10 bg-background">
-                                                    <SelectValue placeholder="Selecciona cliente..." />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    {clients.map((client) => (
-                                                        <SelectItem key={client.id} value={client.id}>
-                                                            {client.name}
-                                                            {client.nit ? ` — ${client.nit}` : ""}
-                                                        </SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
+                                                placeholder="Buscar o seleccionar cliente..."
+                                            />
                                         </div>
                                         <div className="space-y-1.5">
                                             <Label className="text-xs font-medium">

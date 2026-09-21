@@ -44,6 +44,17 @@ export type SatelliteUserRef = {
   roles: string[];
 };
 
+export type SatellitePendingOrderPreview = {
+  orderId: string;
+  orderCode: string;
+  customerName: string;
+  stageKey?: string;
+  stageLabel?: string;
+  workStatus: SatelliteWorkStatus;
+  workStatusLabel: string;
+  quantity?: number;
+};
+
 export type SatelliteDashboardCard = {
   id: string;
   name: string;
@@ -70,6 +81,8 @@ export type SatelliteDashboardCard = {
   porPagar: number;
   /** True si tiene pedidos sincronizados desde TNS */
   isTnsSynced?: boolean;
+  /** Órdenes pendientes por recibir de este satélite */
+  pendingOrders?: SatellitePendingOrderPreview[];
 };
 
 export type SatelliteOrderStageWork = {
@@ -99,6 +112,7 @@ export type SatelliteOrderDetail = {
   description: string;
   quantity: number;
   dueDate: string;
+  createdAt?: string;
   stageKey: string;
   stageLabel: string;
   orderStatus: string;
@@ -1057,12 +1071,14 @@ export function buildSatelliteOrderDetails(params: {
       row.cards.find((c) => c.satelliteAssigneeId && userIds.has(String(c.satelliteAssigneeId))) ||
       row.cards[0];
     const stageKey = primary?.stage || row.order.etapa_produccion || "";
-    const rawId = String(orderId).replace(/^PO-/, "");
+    const rawId = String(orderId).replace(/^PO-/, "").replace(/^tns-/, "");
     const settlement =
       settlements[rawId] ||
       settlements[orderId] ||
       settlements[`PO-${rawId}`] ||
-      (primary?.id ? settlements[primary.id] : undefined);
+      settlements[`tns-${rawId}`] ||
+      (primary?.id ? settlements[primary.id] : undefined) ||
+      (row.cards || []).map((c) => settlements[c.id]).find(Boolean);
 
     const workStatus: SatelliteWorkStatus =
       settlement?.work_status === "recibido_completo"
@@ -1071,10 +1087,15 @@ export function buildSatelliteOrderDetails(params: {
           ? "recibido_faltantes"
           : "enviado";
 
-    // Si hay soporte de pago, la deuda queda pagada aunque el trabajo aún no esté confirmado.
+    const hasSupport = Boolean(
+      settlement?.support_document_url ||
+      settlement?.support_document_path ||
+      settlement?.support_document_name
+    );
+
+    // Si hay soporte de pago, la deuda queda pagada inmediatamente
     const paymentStatus: "pending" | "paid" =
-      settlement?.status === "paid" ||
-      Boolean(settlement?.support_document_url || settlement?.support_document_path)
+      settlement?.status === "paid" || hasSupport
         ? "paid"
         : "pending";
 
@@ -1131,6 +1152,7 @@ export function buildSatelliteOrderDetails(params: {
       description: orderDescription(row.order, row.cards),
       quantity: qty,
       dueDate: (row.order.fecha_estimada_entrega || primary?.dueDate || "").slice(0, 10),
+      createdAt: (row.order.fecha_creacion || "").slice(0, 10),
       stageKey: stagesWorked[0]?.stageKey || stageKey,
       stageLabel: displayStageLabel,
       orderStatus: row.order.estado || "pending",
@@ -1147,8 +1169,8 @@ export function buildSatelliteOrderDetails(params: {
       garmentLines: extractOrderGarmentLines(row.order, row.cards),
       missingItems: normalizeMissingItems(settlement?.missing_items),
       source: "local",
-      supportDocumentUrl: settlement?.support_document_url || null,
-      supportDocumentName: settlement?.support_document_name || null,
+      supportDocumentUrl: settlement?.support_document_url || settlement?.support_document_path || null,
+      supportDocumentName: settlement?.support_document_name || (hasSupport ? "Documento soporte" : null),
     });
   }
 
@@ -1240,6 +1262,7 @@ export function buildSatelliteOrderDetails(params: {
         description: orderDesc,
         quantity: qty,
         dueDate: getPedidoFechaEntrega(p) || getPedidoFecha(p) || "",
+        createdAt: getPedidoFecha(p) || "",
         stageKey: ws.specialties?.[0] || "corte",
         stageLabel: ws.specialties?.[0] || "Mano de Obra TNS",
         orderStatus: isCerrado ? "delivered" : "in_production",
@@ -1304,8 +1327,8 @@ export function summarizeSatelliteOrders(
     totalFacturado += amount;
     if (d.paymentStatus === "paid") {
       pagado += amount;
-    } else if (d.workStatus === "recibido_completo" || d.source === "tns") {
-      // Solo se suma a la deuda pendiente si se le dio terminar a la capa donde se estipuló la labor
+    } else {
+      // Todo costo estipulado o acordado que no esté pagado se suma a por pagar
       porPagar += amount;
     }
 
@@ -1423,6 +1446,19 @@ export function buildSatelliteDashboard(params: {
       ws.name ||
       "Sin contacto";
 
+    const pendingOrders: SatellitePendingOrderPreview[] = orderDetails
+      .filter((d) => !isSatelliteWorkStatusFinal(d.workStatus))
+      .map((d) => ({
+        orderId: d.orderId,
+        orderCode: d.orderCode || d.orderId,
+        customerName: d.customerName || "Sin cliente",
+        stageKey: d.stageKey,
+        stageLabel: d.stageLabel,
+        workStatus: d.workStatus,
+        workStatusLabel: workStatusLabel(d.workStatus),
+        quantity: d.quantity,
+      }));
+
     return {
       id: ws.id,
       name: ws.name || "Sin nombre",
@@ -1442,6 +1478,7 @@ export function buildSatelliteDashboard(params: {
       pagado: summary.pagado,
       porPagar: summary.porPagar,
       isTnsSynced: hasTnsMatches,
+      pendingOrders,
     };
   });
 }

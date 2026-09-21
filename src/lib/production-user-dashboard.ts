@@ -78,6 +78,7 @@ export type ProductionOrderDetail = {
   description: string;
   quantity: number;
   dueDate: string;
+  createdAt?: string;
   stageKey: string;
   stageLabel: string;
   orderStatus: string;
@@ -656,6 +657,7 @@ export function buildProductionOrderDetails(params: {
       description: orderDescription(row.order, row.cards),
       quantity: qty,
       dueDate: (row.order.fecha_estimada_entrega || primary?.dueDate || "").slice(0, 10),
+      createdAt: (row.order.fecha_creacion || "").slice(0, 10),
       stageKey,
       stageLabel: stageLabels[stageKey] || stageKey || "Sin etapa",
       orderStatus: row.order.estado || "pending",
@@ -808,7 +810,7 @@ export function buildProductionUserPanel(params: {
     return (
       sum +
       d.stagePayments
-        .filter((s) => s.paymentStatus === "pending" && !s.inWork)
+        .filter((s) => s.paymentStatus === "pending")
         .reduce((s, st) => s + (Number(st.cost) || 0), 0)
     );
   }, 0);

@@ -10,9 +10,11 @@ export type NotificationType =
   | "quote_to_order"
   | "kanban_stage"
   | "labor_rate"
+  | "mold_request"
   | "order_payment"
   | "inventory_exit"
   | "order_ready_for_dispatch"
+  | "order_in_production"
   | "order_delivered"
   | "order_delayed"
   | string;
