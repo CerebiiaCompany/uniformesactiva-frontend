@@ -2,7 +2,30 @@ import { useState } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Mail, Phone, Building2, ShieldAlert, MapPin, Loader2, ChevronLeft, ChevronRight, Search, X, ClipboardList, Pencil, Trash2 } from "lucide-react";  // <-- NUEVOS ICONOS
+import {
+  Plus,
+  Mail,
+  Phone,
+  Building2,
+  ShieldAlert,
+  MapPin,
+  Loader2,
+  ChevronLeft,
+  ChevronRight,
+  Search,
+  X,
+  ClipboardList,
+  Pencil,
+  Trash2,
+  Package,
+  Clock,
+  CheckCircle2,
+  Layers,
+  Calendar,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
+import { formatCurrency } from "@/lib/format-number";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { toast } from "sonner";
 
@@ -37,6 +60,12 @@ export default function Customers() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  const [orderTab, setOrderTab] = useState<"all" | "active" | "delivered">("all");
+  const [expandedOrders, setExpandedOrders] = useState<Record<string, boolean>>({});
+
+  const toggleOrderExpand = (orderId: string) => {
+    setExpandedOrders((prev) => ({ ...prev, [orderId]: !prev[orderId] }));
+  };
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<any | null>(null);
@@ -92,6 +121,8 @@ export default function Customers() {
   const handleCloseDetail = () => {
     setIsDetailOpen(false);
     setSelectedClientId(null);
+    setOrderTab("all");
+    setExpandedOrders({});
   };
   const openEditModal = (client: any) => {
     setEditingClient(client);
@@ -354,87 +385,358 @@ export default function Customers() {
         )}
       </div>
 
-      {/* ── MODAL DETALLE DE CLIENTE (HISTORIAL DE ORDENES SIMULADO) ── */}
-      <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
-        <DialogContent className="sm:max-w-lg bg-background p-6">
+      {/* ── MODAL DETALLE DE CLIENTE (HISTORIAL DE ORDENES ACTIVAS Y DESPACHADAS) ── */}
+      <Dialog open={isDetailOpen} onOpenChange={(open) => !open && handleCloseDetail()}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto bg-background p-6">
           <DialogHeader>
             <DialogTitle className="text-lg font-bold flex items-center gap-2">
               <ClipboardList className="h-5 w-5 text-primary" /> Detalle del Cliente comercial
             </DialogTitle>
             <DialogDescription>
-              Consulta la información centralizada y el historial de pedidos de este cliente en FlowTextil.
+              Consulta la información centralizada y el historial de pedidos activos y despachados de este cliente en FlowTextil.
             </DialogDescription>
           </DialogHeader>
 
           {isReadingDetail ? (
-            <div className="flex flex-col items-center justify-center py-8 space-y-2">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
-              <p className="text-xs text-muted-foreground">Consultando información del cliente...</p>
+            <div className="flex flex-col items-center justify-center py-10 space-y-2">
+              <Loader2 className="h-7 w-7 animate-spin text-primary" />
+              <p className="text-xs text-muted-foreground">Consultando información e historial del cliente...</p>
             </div>
           ) : detailError ? (
             <div className="bg-destructive/10 text-destructive text-xs p-3 rounded-md flex items-center gap-2 border border-destructive/20">
               <ShieldAlert className="h-4 w-4 flex-shrink-0" />
               <span>{detailError}</span>
             </div>
-          ) : clientDetail ? (
-            <div className="space-y-5 mt-2 animate-fade-in">
-              {/* Bloque de Información Primaria */}
-              <div className="bg-muted/40 rounded-xl p-4 border grid grid-cols-2 gap-y-3 gap-x-2 text-xs">
-                <div className="col-span-2 border-b pb-1.5 mb-1 font-semibold text-foreground text-sm flex justify-between items-center">
-                  <span>{clientDetail.name}</span>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${clientDetail.status === "active" ? "bg-emerald-500/10 text-emerald-500" : "bg-muted text-muted-foreground"}`}>
-                    {clientDetail.status === "active" ? "Activo" : "Inactivo"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground block font-medium">NIT</span>
-                  <span className="text-foreground font-medium">{clientDetail.nit}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground block font-medium">Teléfono</span>
-                  <span className="text-foreground font-medium">{clientDetail.phone}</span>
-                </div>
-                <div className="col-span-2">
-                  <span className="text-muted-foreground block font-medium">Correo Electrónico</span>
-                  <span className="text-foreground font-medium truncate block">{clientDetail.email}</span>
-                </div>
-                {/* <-- NUEVO CAMPO TIPO DE CLIENTE EN EL DETALLE */}
-                <div className="col-span-2">
-                  <span className="text-muted-foreground block font-medium">Tipo de Cliente</span>
-                  <span className="text-foreground font-medium">
-                    {clientDetail.tipo_cliente === "Juridico" ? "Persona Jurídica" : "Persona Natural"}
-                  </span>
-                </div>
-                <div className="col-span-2">
-                  <span className="text-muted-foreground block font-medium">Ubicación</span>
-                  <span className="text-foreground font-medium">{clientDetail.address}, {clientDetail.city}</span>
-                </div>
-              </div>
+          ) : clientDetail ? (() => {
+            const allOrders = clientDetail.orders || [];
+            const activeOrders = allOrders.filter(
+              (o) =>
+                o.estado === "pending" ||
+                o.estado === "in_production" ||
+                o.estado === "Pendiente" ||
+                o.estado === "En Producción"
+            );
+            const deliveredOrders = allOrders.filter(
+              (o) => o.estado === "delivered" || o.estado === "Entregado"
+            );
 
-              {/* Bloque de Historial de Órdenes */}
-              <div className="space-y-2">
-                <h4 className="text-xs font-bold text-foreground uppercase tracking-wider">Historial de Órdenes / Pedidos</h4>
+            const displayedOrders =
+              orderTab === "active"
+                ? activeOrders
+                : orderTab === "delivered"
+                ? deliveredOrders
+                : allOrders;
 
-                {clientDetail.orders && clientDetail.orders.length === 0 ? (
-                  <div className="text-center py-8 border rounded-xl bg-muted/20 border-dashed">
-                    <p className="text-xs text-muted-foreground font-medium">
-                      Este cliente no registra órdenes de compra creadas en el sistema actualmente.
-                    </p>
+            const totalRevenue = allOrders.reduce(
+              (acc, o) => acc + Number(o.valor_venta_proyectado || 0),
+              0
+            );
+            const totalGarments = allOrders.reduce(
+              (acc, o) =>
+                acc +
+                (o.total_prendas ||
+                  (o.items && o.items.length > 0
+                    ? o.items.reduce((s, it) => s + (Number(it.cantidad) || 0), 0)
+                    : 0)),
+              0
+            );
+
+            return (
+              <div className="space-y-5 mt-2 animate-fade-in">
+                {/* Bloque de Información Primaria */}
+                <div className="bg-muted/40 rounded-xl p-4 border grid grid-cols-2 gap-y-3 gap-x-2 text-xs">
+                  <div className="col-span-2 border-b pb-1.5 mb-1 font-semibold text-foreground text-sm flex justify-between items-center">
+                    <span>{clientDetail.name}</span>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${clientDetail.status === "active" ? "bg-emerald-500/10 text-emerald-500" : "bg-muted text-muted-foreground"}`}>
+                      {clientDetail.status === "active" ? "Activo" : "Inactivo"}
+                    </span>
                   </div>
-                ) : (
-                  <div className="text-xs text-muted-foreground">
-                    Órdenes detectadas.
+                  <div>
+                    <span className="text-muted-foreground block font-medium">NIT</span>
+                    <span className="text-foreground font-medium">{clientDetail.nit}</span>
                   </div>
-                )}
-              </div>
+                  <div>
+                    <span className="text-muted-foreground block font-medium">Teléfono</span>
+                    <span className="text-foreground font-medium">{clientDetail.phone}</span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-muted-foreground block font-medium">Correo Electrónico</span>
+                    <span className="text-foreground font-medium truncate block">{clientDetail.email}</span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-muted-foreground block font-medium">Tipo de Cliente</span>
+                    <span className="text-foreground font-medium">
+                      {clientDetail.tipo_cliente === "Juridico" ? "Persona Jurídica" : "Persona Natural"}
+                    </span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-muted-foreground block font-medium">Ubicación</span>
+                    <span className="text-foreground font-medium">{clientDetail.address}, {clientDetail.city}</span>
+                  </div>
+                </div>
 
-              <div className="flex justify-end pt-2">
-                <Button variant="outline" size="sm" onClick={handleCloseDetail}>
-                  Cerrar Ventana
-                </Button>
+                {/* Bloque de Historial de Órdenes */}
+                <div className="space-y-3 pt-1">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-2">
+                    <h4 className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                      <Package className="h-4 w-4 text-primary" /> Historial de Órdenes / Pedidos
+                    </h4>
+                    {allOrders.length > 0 && (
+                      <span className="text-[11px] text-muted-foreground">
+                        Total Facturado: <strong className="text-foreground">{formatCurrency(totalRevenue)}</strong>
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Tarjetas resumen de pedidos */}
+                  {allOrders.length > 0 && (
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="bg-muted/40 p-2.5 rounded-lg border">
+                        <span className="block text-[10px] font-medium text-muted-foreground uppercase">Total Pedidos</span>
+                        <span className="text-base font-bold text-foreground">{allOrders.length}</span>
+                        <span className="text-[10px] text-muted-foreground block">{totalGarments} prendas</span>
+                      </div>
+                      <div className="bg-blue-500/5 p-2.5 rounded-lg border border-blue-500/20">
+                        <span className="block text-[10px] font-medium text-blue-600 dark:text-blue-400 uppercase">Activos</span>
+                        <span className="text-base font-bold text-blue-600 dark:text-blue-400">{activeOrders.length}</span>
+                        <span className="text-[10px] text-muted-foreground block">En curso / taller</span>
+                      </div>
+                      <div className="bg-emerald-500/5 p-2.5 rounded-lg border border-emerald-500/20">
+                        <span className="block text-[10px] font-medium text-emerald-600 dark:text-emerald-400 uppercase">Despachados</span>
+                        <span className="text-base font-bold text-emerald-600 dark:text-emerald-400">{deliveredOrders.length}</span>
+                        <span className="text-[10px] text-muted-foreground block">Entregados</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Filtro por pestañas */}
+                  {allOrders.length > 0 && (
+                    <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-lg text-xs">
+                      <button
+                        type="button"
+                        className={`flex-1 py-1 px-2.5 rounded-md font-medium transition-all ${
+                          orderTab === "all"
+                            ? "bg-background text-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                        onClick={() => setOrderTab("all")}
+                      >
+                        Todos ({allOrders.length})
+                      </button>
+                      <button
+                        type="button"
+                        className={`flex-1 py-1 px-2.5 rounded-md font-medium transition-all ${
+                          orderTab === "active"
+                            ? "bg-background text-blue-600 font-semibold shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                        onClick={() => setOrderTab("active")}
+                      >
+                        Activos ({activeOrders.length})
+                      </button>
+                      <button
+                        type="button"
+                        className={`flex-1 py-1 px-2.5 rounded-md font-medium transition-all ${
+                          orderTab === "delivered"
+                            ? "bg-background text-emerald-600 font-semibold shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                        onClick={() => setOrderTab("delivered")}
+                      >
+                        Despachados ({deliveredOrders.length})
+                      </button>
+                    </div>
+                  )}
+
+                  {displayedOrders.length === 0 ? (
+                    <div className="text-center py-8 border rounded-xl bg-muted/20 border-dashed">
+                      <p className="text-xs text-muted-foreground font-medium">
+                        {allOrders.length === 0
+                          ? "Este cliente no registra órdenes de compra creadas en el sistema actualmente."
+                          : orderTab === "active"
+                          ? "No hay pedidos activos actualmente para este cliente."
+                          : "No hay pedidos despachados/entregados actualmente para este cliente."}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
+                      {displayedOrders.map((order) => {
+                        const isDelivered = order.estado === "delivered" || order.estado === "Entregado";
+                        const isInProd = order.estado === "in_production" || order.estado === "En Producción";
+                        const isExpanded = !!expandedOrders[order.id];
+
+                        const orderItemsCount =
+                          order.total_prendas ||
+                          (order.items && order.items.length > 0
+                            ? order.items.reduce((s, it) => s + (Number(it.cantidad) || 0), 0)
+                            : 0);
+
+                        return (
+                          <div
+                            key={order.id}
+                            className="bg-card border rounded-xl p-3.5 shadow-sm hover:border-primary/40 transition-colors text-xs space-y-2.5"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-[11px] font-bold text-primary">
+                                    #{order.id.slice(0, 8).toUpperCase()}
+                                  </span>
+                                  <span className="font-semibold text-foreground truncate">
+                                    {order.producto_nombre || "Producto general"}
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground mt-1">
+                                  {order.fecha_creacion && (
+                                    <span className="flex items-center gap-1">
+                                      <Calendar className="h-3 w-3" /> Creado: {new Date(order.fecha_creacion).toLocaleDateString("es-CO")}
+                                    </span>
+                                  )}
+                                  {order.fecha_estimada_entrega && !isDelivered && (
+                                    <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                                      <Clock className="h-3 w-3" /> Entrega est: {new Date(order.fecha_estimada_entrega).toLocaleDateString("es-CO")}
+                                    </span>
+                                  )}
+                                  {order.fecha_entrega_real && isDelivered && (
+                                    <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                                      <CheckCircle2 className="h-3 w-3" /> Despachado: {new Date(order.fecha_entrega_real).toLocaleDateString("es-CO")}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="flex flex-col items-end gap-1 shrink-0">
+                                {/* Badge Estado de Orden */}
+                                {isDelivered ? (
+                                  <span className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[10px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
+                                    <CheckCircle2 className="h-3 w-3" /> Despachado
+                                  </span>
+                                ) : isInProd ? (
+                                  <span className="bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 text-[10px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
+                                    <Layers className="h-3 w-3" /> En Producción
+                                  </span>
+                                ) : (
+                                  <span className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
+                                    <Clock className="h-3 w-3" /> Pendiente
+                                  </span>
+                                )}
+
+                                {/* Badge Estado de Pago */}
+                                {order.pagado || order.estado_pago === "pagado" ? (
+                                  <span className="bg-emerald-500/10 text-emerald-600 text-[10px] font-medium px-2 py-0.5 rounded-full">
+                                    Pagado
+                                  </span>
+                                ) : order.estado_pago === "parcial" ? (
+                                  <span className="bg-purple-500/10 text-purple-600 text-[10px] font-medium px-2 py-0.5 rounded-full">
+                                    Abono Parcial
+                                  </span>
+                                ) : (
+                                  <span className="bg-red-500/10 text-red-600 text-[10px] font-medium px-2 py-0.5 rounded-full">
+                                    No Pagado
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Fila de valores y prendas */}
+                            <div className="bg-muted/30 rounded-lg p-2.5 flex items-center justify-between text-xs">
+                              <div className="flex items-center gap-3">
+                                <div>
+                                  <span className="text-[10px] text-muted-foreground block">Prendas</span>
+                                  <span className="font-semibold text-foreground">{orderItemsCount} uds</span>
+                                </div>
+                                {order.color && (
+                                  <div className="border-l pl-3">
+                                    <span className="text-[10px] text-muted-foreground block">Color</span>
+                                    <span className="font-medium text-foreground">{order.color}</span>
+                                  </div>
+                                )}
+                                {order.estampado && (
+                                  <div className="border-l pl-3">
+                                    <span className="text-[10px] text-muted-foreground block">Estampado / Bordado</span>
+                                    <span className="font-medium text-foreground">{order.estampado}</span>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="text-right">
+                                <span className="text-[10px] text-muted-foreground block">Valor Venta</span>
+                                <span className="font-bold text-foreground text-sm">
+                                  {formatCurrency(Number(order.valor_venta_proyectado || 0))}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Desglose de ítems (tallas / subproductos) */}
+                            {order.items && order.items.length > 0 && (
+                              <div>
+                                <button
+                                  type="button"
+                                  className="text-[11px] text-primary hover:underline flex items-center gap-1 font-medium"
+                                  onClick={() => toggleOrderExpand(order.id)}
+                                >
+                                  {isExpanded ? (
+                                    <>
+                                      <ChevronUp className="h-3 w-3" /> Ocultar detalle de prendas ({order.items.length})
+                                    </>
+                                  ) : (
+                                    <>
+                                      <ChevronDown className="h-3 w-3" /> Ver detalle de prendas ({order.items.length})
+                                    </>
+                                  )}
+                                </button>
+
+                                {isExpanded && (
+                                  <div className="mt-2 border rounded-lg overflow-hidden bg-muted/10 text-[11px]">
+                                    <table className="w-full text-left">
+                                      <thead className="bg-muted/50 text-[10px] uppercase font-semibold text-muted-foreground border-b">
+                                        <tr>
+                                          <th className="py-1.5 px-2.5">Variante / Prenda</th>
+                                          <th className="py-1.5 px-2">Talla</th>
+                                          <th className="py-1.5 px-2 text-center">Cant.</th>
+                                          <th className="py-1.5 px-2.5 text-right">Precio Unit.</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-border/50">
+                                        {order.items.map((it, idx) => (
+                                          <tr key={it.id || idx} className="hover:bg-muted/30">
+                                            <td className="py-1.5 px-2.5 font-medium text-foreground">
+                                              {it.subproducto_nombre || "Variante"}
+                                              {it.color ? ` (${it.color})` : ""}
+                                            </td>
+                                            <td className="py-1.5 px-2 text-muted-foreground">
+                                              {it.talla_nombre || "Única"}
+                                            </td>
+                                            <td className="py-1.5 px-2 text-center font-semibold text-foreground">
+                                              {it.cantidad}
+                                            </td>
+                                            <td className="py-1.5 px-2.5 text-right font-medium text-foreground">
+                                              {it.precio_venta_unitario
+                                                ? formatCurrency(Number(it.precio_venta_unitario))
+                                                : "-"}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-end pt-2 border-t">
+                  <Button variant="outline" size="sm" onClick={handleCloseDetail}>
+                    Cerrar Ventana
+                  </Button>
+                </div>
               </div>
-            </div>
-          ) : null}
+            );
+          })() : null}
         </DialogContent>
       </Dialog>
 

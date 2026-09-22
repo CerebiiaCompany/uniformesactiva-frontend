@@ -21,7 +21,7 @@ const INITIAL_FILTERS: PedidosCompraFilters = {
   estado: "todos",
   search: "",
   page: 1,
-  page_size: 50,
+  page_size: 1000,
 };
 
 export function usePedidosCompraTNS(autoFetch = true) {

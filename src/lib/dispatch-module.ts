@@ -170,9 +170,10 @@ export function collectShipmentsFromOrder(order: Order): DispatchShipmentRow[] {
     const rows: DispatchShipmentRow[] = [];
     const shortId = `ORD-${String(order.id).slice(0, 3).toUpperCase()}`;
     const seenKeys = new Set<string>();
+    const seenRoundtrips = new Set<string>();
 
     const pushRow = (row: DispatchShipmentRow) => {
-      const key = `${row.orderId}|${row.counterpart}|${row.amount}|${row.direction}|${row.source}`;
+      const key = `${row.orderId}|${row.counterpart.toLowerCase().trim()}|${row.amount}|${row.direction}|${row.stageLabel.toLowerCase().trim()}`;
       if (seenKeys.has(key)) return;
       seenKeys.add(key);
       rows.push(row);
@@ -203,8 +204,15 @@ export function collectShipmentsFromOrder(order: Order): DispatchShipmentRow[] {
           ? "hacia_satelite"
           : "otro";
 
+      // Por negocio: solo 1 registro de domicilio ida y vuelta por pedido y satélite
+      if (isRoundTrip) {
+        const roundtripKey = `${order.id}|${satName.toLowerCase().trim()}`;
+        if (seenRoundtrips.has(roundtripKey)) continue;
+        seenRoundtrips.add(roundtripKey);
+      }
+
       pushRow({
-        id: `card-ship-${order.id}-${card.id}`,
+        id: `card-ship-${order.id}-${satName}-${dir}-${amount}`,
         orderId: order.id,
         shortId,
         customerName: order.cliente_nombre,
@@ -265,12 +273,13 @@ export function collectShipmentsFromOrder(order: Order): DispatchShipmentRow[] {
   }
 }
 
-/** Movimientos satélite (enviado / recibido) como domicilios logísticos. */
+/** Movimientos satélite (enviado / recibido) como domicilios logísticos netamente informativos. */
 export function collectShipmentsFromSatellites(
   satellites: Satellite[],
   ordersById: Map<string, Order>
 ): DispatchShipmentRow[] {
   const rows: DispatchShipmentRow[] = [];
+  const seenSatShipments = new Set<string>();
 
   for (const sat of satellites) {
     const settlements = sat.settlements || {};
@@ -279,11 +288,17 @@ export function collectShipmentsFromSatellites(
       const work = String(s.work_status || "").trim();
       if (!work) continue;
 
-      const orderId = rawOrderId.replace(/^PO-/, "");
-      const order = ordersById.get(orderId) || ordersById.get(rawOrderId);
+      let cleanId = rawOrderId.replace(/^PO-/, "");
+      if (cleanId.includes("__")) {
+        cleanId = cleanId.split("__")[0];
+      }
+
+      const order = ordersById.get(cleanId) || ordersById.get(rawOrderId);
+      const canonicalOrderId = order ? order.id : cleanId;
+
       const shortId = order
         ? `ORD-${order.id.slice(0, 3).toUpperCase()}`
-        : `ORD-${orderId.slice(0, 3).toUpperCase()}`;
+        : `ORD-${canonicalOrderId.slice(0, 3).toUpperCase()}`;
 
       const dir: DispatchShipmentDirection =
         work === "enviado"
@@ -292,10 +307,16 @@ export function collectShipmentsFromSatellites(
             ? "desde_satelite"
             : "otro";
 
-      // amount/agreed_cost del settlement es costo de taller, NO domicilio → no va en Costo
+      const timeStamp = s.confirmed_at || s.paid_at || "";
+      const timeKey = timeStamp ? timeStamp.slice(0, 19) : "na";
+      // Clave estricta de deduplicación: satélite + orden + estado_trabajo + timestamp
+      const dedupKey = `${sat.id}|${canonicalOrderId}|${work}|${timeKey}`;
+      if (seenSatShipments.has(dedupKey)) continue;
+      seenSatShipments.add(dedupKey);
+
       rows.push({
-        id: `sat-${sat.id}-${rawOrderId}-${work}`,
-        orderId: order?.id || orderId,
+        id: `sat-${sat.id}-${canonicalOrderId}-${work}-${timeKey}`,
+        orderId: canonicalOrderId,
         shortId,
         customerName: order?.cliente_nombre || "—",
         direction: dir,

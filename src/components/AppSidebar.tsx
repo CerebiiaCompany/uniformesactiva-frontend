@@ -11,7 +11,6 @@ import {
   Package,
   Satellite,
   Truck,
-  Globe,
   Scissors,
   Settings,
   LogOut,
@@ -58,7 +57,6 @@ interface CustomJwtPayload {
 
 const MODULE_MAPPING: Record<string, string> = {
   dashboard: "Dashboard",
-  website: "Sitio Web",
   customers: "Clientes",
   clients: "Clientes",
   quotes: "Cotizaciones",
@@ -82,7 +80,6 @@ const MODULE_MAPPING: Record<string, string> = {
 
 const generalItems = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
-  { title: "Sitio Web", url: "/website", icon: Globe },
 ];
 
 const comercialItems = [

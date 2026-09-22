@@ -4,7 +4,6 @@
  */
 export const MODULE_SIDEBAR_ORDER = [
   "dashboard",
-  "website",
   "clients",
   "quotations",
   "orders",
