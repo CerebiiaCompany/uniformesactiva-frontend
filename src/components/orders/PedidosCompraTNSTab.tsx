@@ -261,7 +261,7 @@ export function PedidosCompraTNSTab({
               Pedidos de Compra (TNS)
             </CardTitle>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Consulta en tiempo real de órdenes y pedidos de compra registrados en el ERP TNS.
+              Consulta en tiempo real de órdenes y pedidos de compra de satélites registrados en el ERP TNS (año en curso por defecto).
             </p>
           </div>
 

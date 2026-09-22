@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
     Dialog,
     DialogContent,
@@ -19,6 +20,8 @@ import {
     MessageSquare,
     ImageIcon,
     Layers,
+    Download,
+    ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Order } from "@/hooks/useOrders";
@@ -112,6 +115,45 @@ export function OrderDetailDialog({
         : [];
 
     const commentsChanged = order ? commentsDraft !== (order.comentarios ?? "") : false;
+    const logoUrl = resolveMediaUrl(order?.logo_url || order?.logo);
+    const [downloadingLogo, setDownloadingLogo] = useState(false);
+
+    const handleDownloadLogo = async () => {
+        if (!logoUrl) return;
+        try {
+            setDownloadingLogo(true);
+            const response = await fetch(logoUrl);
+            if (!response.ok) throw new Error("Error al obtener la imagen");
+            const blob = await response.blob();
+            const blobUrl = window.URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = blobUrl;
+
+            const extMatch = logoUrl.match(/\.([a-zA-Z0-9]+)(?:\?.*)?$/);
+            const ext = extMatch ? extMatch[1].toLowerCase() : "png";
+            const orderCode = order?.id ? `ORD-${order.id.slice(0, 8).toUpperCase()}` : "orden";
+            const clientName = (order?.cliente_nombre || "cliente")
+                .toLowerCase()
+                .trim()
+                .replace(/[^a-z0-9]+/g, "-");
+            link.download = `logo-bordado-${orderCode}-${clientName}.${ext}`;
+
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(blobUrl);
+        } catch (err) {
+            console.warn("Error descargando via blob, usando apertura directa:", err);
+            const fallbackLink = document.createElement("a");
+            fallbackLink.href = logoUrl;
+            fallbackLink.target = "_blank";
+            fallbackLink.rel = "noopener noreferrer";
+            fallbackLink.download = `logo-bordado-${order?.id ? order.id.slice(0, 8) : "orden"}`;
+            fallbackLink.click();
+        } finally {
+            setDownloadingLogo(false);
+        }
+    };
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -194,7 +236,7 @@ export function OrderDetailDialog({
                                         "flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium",
                                         profitPositive
                                             ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400"
-                                            : "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400"
+                                             : "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400"
                                     )}
                                 >
                                     <TrendingUp className="h-3.5 w-3.5 shrink-0" />
@@ -240,17 +282,52 @@ export function OrderDetailDialog({
 
                             {/* Logos */}
                             <section className="space-y-3">
-                                <div className="flex items-center gap-2">
-                                    <ImageIcon className="h-4 w-4 text-primary" />
-                                    <h3 className="text-sm font-semibold">Logo del cliente</h3>
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <ImageIcon className="h-4 w-4 text-primary" />
+                                        <h3 className="text-sm font-semibold">Logo del cliente</h3>
+                                    </div>
+                                    {logoUrl && (
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-8 gap-1.5 text-xs font-medium border-primary/20 hover:bg-primary/10 hover:text-primary transition-colors"
+                                            onClick={handleDownloadLogo}
+                                            disabled={downloadingLogo}
+                                        >
+                                            {downloadingLogo ? (
+                                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                            ) : (
+                                                <Download className="h-3.5 w-3.5 text-primary" />
+                                            )}
+                                            Descargar imagen
+                                        </Button>
+                                    )}
                                 </div>
-                                {resolveMediaUrl(order.logo_url || order.logo) ? (
-                                    <div className="rounded-xl border bg-muted/20 p-3 flex items-center justify-center h-32">
+                                {logoUrl ? (
+                                    <div className="group relative rounded-xl border bg-muted/20 p-3 flex flex-col items-center justify-center min-h-[140px] overflow-hidden">
                                         <img
-                                            src={resolveMediaUrl(order.logo_url || order.logo) || ""}
+                                            src={logoUrl}
                                             alt="Logo del cliente"
-                                            className="max-h-full max-w-full object-contain"
+                                            className="max-h-36 max-w-full object-contain transition-transform duration-200 group-hover:scale-105"
                                         />
+                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 backdrop-blur-[2px]">
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                className="h-8 gap-1.5 text-xs bg-white text-gray-900 hover:bg-gray-100 shadow-md font-medium"
+                                                onClick={handleDownloadLogo}
+                                                disabled={downloadingLogo}
+                                            >
+                                                {downloadingLogo ? (
+                                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                ) : (
+                                                    <Download className="h-3.5 w-3.5" />
+                                                )}
+                                                Descargar para bordado
+                                            </Button>
+                                        </div>
                                     </div>
                                 ) : (
                                     <p className="text-xs text-muted-foreground rounded-lg border border-dashed px-3 py-3">

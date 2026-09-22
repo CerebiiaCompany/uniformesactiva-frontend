@@ -52,6 +52,8 @@ import {
   PackageCheck,
   Search,
   Truck,
+  X,
+  Filter,
 } from "lucide-react";
 
 type TabId = "listos" | "domicilios" | "entregados";
@@ -145,6 +147,11 @@ export default function Despacho() {
   const [previewOrder, setPreviewOrder] = useState<Order | null>(null);
   const [deliverDialogOrder, setDeliverDialogOrder] = useState<Order | null>(null);
 
+  // Filtros específicos para la pestaña Domicilios
+  const [domicilioType, setDomicilioType] = useState<"satelites" | "clientes" | "todos">("satelites");
+  const [selectedSatellite, setSelectedSatellite] = useState<string>("todos");
+  const [selectedClient, setSelectedClient] = useState<string>("todos");
+
   const reload = useCallback(async () => {
     setLoading(true);
     try {
@@ -237,8 +244,12 @@ export default function Despacho() {
     const seen = new Set<string>();
     return merged
       .filter((row) => {
-        if (seen.has(row.id)) return false;
-        seen.add(row.id);
+        const timeKey = row.updatedAt ? row.updatedAt.slice(0, 19) : "na";
+        const counterpartKey = (row.counterpart || "").toLowerCase().trim();
+        const stageKey = (row.stageLabel || "").toLowerCase().trim();
+        const key = `${row.orderId}|${counterpartKey}|${row.direction}|${stageKey}|${row.amount}|${timeKey}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
         return true;
       })
       .sort((a, b) => {
@@ -267,15 +278,87 @@ export default function Despacho() {
     });
   }, [deliveredRows, search]);
 
-  const filteredShipments = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term) return shipmentRows;
-    return shipmentRows.filter((row) => {
-      const hay =
-        `${row.shortId} ${row.customerName} ${row.counterpart} ${row.directionLabel} ${row.address}`.toLowerCase();
-      return hay.includes(term);
+  const satelliteOptions = useMemo(() => {
+    const names = new Set<string>();
+    (satellites || []).forEach((s) => {
+      if (s.name?.trim()) names.add(s.name.trim());
     });
-  }, [shipmentRows, search]);
+    shipmentRows.forEach((r) => {
+      if (
+        r.counterpart?.trim() &&
+        r.counterpart !== "—" &&
+        r.direction !== "a_cliente"
+      ) {
+        names.add(r.counterpart.trim());
+      }
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [satellites, shipmentRows]);
+
+  const clientOptions = useMemo(() => {
+    const names = new Set<string>();
+    orders.forEach((o) => {
+      if (o.cliente_nombre?.trim()) names.add(o.cliente_nombre.trim());
+    });
+    shipmentRows.forEach((r) => {
+      if (r.customerName?.trim() && r.customerName !== "—") {
+        names.add(r.customerName.trim());
+      }
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [orders, shipmentRows]);
+
+  const filteredShipments = useMemo(() => {
+    let rows = shipmentRows;
+
+    // 1. Filtro Tipo de Domicilio (Por defecto 'satelites')
+    if (domicilioType === "satelites") {
+      rows = rows.filter(
+        (r) =>
+          r.direction === "hacia_satelite" ||
+          r.direction === "desde_satelite" ||
+          r.direction === "ida_vuelta_satelite" ||
+          r.source === "settlement" ||
+          r.source === "kanban" ||
+          r.direction !== "a_cliente"
+      );
+    } else if (domicilioType === "clientes") {
+      rows = rows.filter(
+        (r) =>
+          r.direction === "a_cliente" ||
+          r.stageLabel.toLowerCase().includes("despacho") ||
+          r.stageLabel.toLowerCase().includes("cliente")
+      );
+    }
+
+    // 2. Filtro Satélite
+    if (selectedSatellite !== "todos") {
+      const satTarget = selectedSatellite.toLowerCase();
+      rows = rows.filter(
+        (r) => r.counterpart && r.counterpart.toLowerCase().includes(satTarget)
+      );
+    }
+
+    // 3. Filtro Cliente
+    if (selectedClient !== "todos") {
+      const clientTarget = selectedClient.toLowerCase();
+      rows = rows.filter(
+        (r) => r.customerName && r.customerName.toLowerCase().includes(clientTarget)
+      );
+    }
+
+    // 4. Búsqueda por texto libre
+    const term = search.trim().toLowerCase();
+    if (term) {
+      rows = rows.filter((row) => {
+        const hay =
+          `${row.shortId} ${row.customerName} ${row.counterpart} ${row.directionLabel} ${row.address} ${row.stageLabel}`.toLowerCase();
+        return hay.includes(term);
+      });
+    }
+
+    return rows;
+  }, [shipmentRows, domicilioType, selectedSatellite, selectedClient, search]);
 
   const openDeliverDialog = (order: Order) => {
     setDeliverDialogOrder(order);
@@ -412,6 +495,97 @@ export default function Despacho() {
             />
           </div>
         </div>
+
+        {/* Barra de filtros avanzados para la pestaña Domicilios */}
+        {activeTab === "domicilios" && !busy && (
+          <div className="bg-card border rounded-xl p-3.5 shadow-sm flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+            <div className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center flex-1">
+              {/* Filtro Tipo de Domicilio */}
+              <div className="w-full sm:w-52">
+                <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
+                  Tipo de domicilio
+                </label>
+                <select
+                  value={domicilioType}
+                  onChange={(e) =>
+                    setDomicilioType(e.target.value as "satelites" | "clientes" | "todos")
+                  }
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring font-medium"
+                >
+                  <option value="satelites">🚚 Domicilios Satélites</option>
+                  <option value="clientes">📦 Domicilios Clientes</option>
+                  <option value="todos">🔄 Todos los domicilios</option>
+                </select>
+              </div>
+
+              {/* Filtro Satélite */}
+              <div className="w-full sm:w-52">
+                <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
+                  Satélite
+                </label>
+                <select
+                  value={selectedSatellite}
+                  onChange={(e) => setSelectedSatellite(e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <option value="todos">Todos los satélites</option>
+                  {satelliteOptions.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filtro Cliente */}
+              <div className="w-full sm:w-52">
+                <label className="text-[11px] font-semibold text-muted-foreground block mb-1">
+                  Cliente
+                </label>
+                <select
+                  value={selectedClient}
+                  onChange={(e) => setSelectedClient(e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <option value="todos">Todos los clientes</option>
+                  {clientOptions.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Contador y botón de restablecer */}
+            <div className="flex items-center gap-2 self-end sm:self-auto pt-1 sm:pt-0">
+              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                Mostrando <strong className="text-foreground">{filteredShipments.length}</strong> de {shipmentRows.length}
+              </span>
+              {(selectedSatellite !== "todos" ||
+                selectedClient !== "todos" ||
+                domicilioType !== "satelites" ||
+                search.trim() !== "") && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2.5 text-xs text-muted-foreground hover:text-destructive border-dashed"
+                  onClick={() => {
+                    setDomicilioType("satelites");
+                    setSelectedSatellite("todos");
+                    setSelectedClient("todos");
+                    setSearch("");
+                  }}
+                  title="Restablecer filtros a valores por defecto"
+                >
+                  <X className="h-3.5 w-3.5 mr-1" />
+                  Restablecer
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
 
         {busy ? (
           <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
