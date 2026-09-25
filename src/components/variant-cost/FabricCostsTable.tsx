@@ -1,10 +1,28 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Plus, Pencil, Trash2, Check, X, Loader2 } from "lucide-react";
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogDescription,
+    DialogFooter,
+} from "@/components/ui/dialog";
+import {
+    Plus,
+    Pencil,
+    Trash2,
+    Check,
+    X,
+    Loader2,
+    Package,
+    Tag,
+    Building2,
+} from "lucide-react";
 import type { FabricRecord, Proveedor } from "@/types/variant";
 import { normalizeDecimalInput, parseDecimalInput } from "@/lib/decimal-input";
 import { formatCurrency, formatDecimal, formatForInput } from "@/lib/format-number";
@@ -16,11 +34,10 @@ import {
     type FabricBodegaKind,
 } from "@/lib/tns-fabric-bodega";
 import {
-    formatFabricSelectionValue,
     parseFabricSelectionInput,
 } from "@/services/tnsService";
 
-type InventoryFabricRef = {
+export type InventoryFabricRef = {
     reference: string;
     unit_cost: number;
     color?: string;
@@ -41,7 +58,8 @@ interface FabricTableProps {
     /** Ofertas por referencia+proveedor (precio real) y color del material */
     inventoryFabricRefs?: InventoryFabricRef[];
     onAdd: (payload: any) => Promise<boolean>;
-    onEdit: (fabric: FabricRecord) => void;
+    onUpdate?: (id: string, payload: any) => Promise<boolean>;
+    onEdit?: (fabric: FabricRecord) => void;
     onDelete: (id: string) => void;
     onSetPrincipal: (id: string) => Promise<boolean>;
     isSettingPrincipal?: boolean;
@@ -51,18 +69,20 @@ type FabricFormErrors = {
     bodega_kind?: string;
     proveedor_id?: string;
     reference?: string;
+    descripcion?: string;
     meters?: string;
     price_per_meter?: string;
     general?: string;
 };
 
 const FABRIC_GRID =
-    "grid grid-cols-[auto_minmax(0,0.95fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,0.9fr)_64px_80px_48px_minmax(0,1fr)] gap-2";
+    "grid grid-cols-[auto_minmax(0,0.8fr)_minmax(0,1.1fr)_minmax(0,1.2fr)_minmax(0,1.2fr)_minmax(0,0.8fr)_56px_76px_44px_minmax(0,0.9fr)] gap-2";
 
 const emptyRow = {
     bodega_kind: "" as FabricBodegaFilter | "",
     proveedor_id: "",
     reference: "",
+    descripcion: "",
     codigo: "",
     meters: "1",
     price_per_meter: "",
@@ -127,6 +147,7 @@ export function FabricCostsTable({
     proveedores,
     inventoryFabricRefs = [],
     onAdd,
+    onUpdate,
     onEdit,
     onDelete,
     onSetPrincipal,
@@ -140,9 +161,53 @@ export function FabricCostsTable({
     const [errors, setErrors] = useState<FabricFormErrors>({});
     const [isSaving, setIsSaving] = useState(false);
 
+    // Modal de descripción al seleccionar tela TNS en creación
+    const [isDescriptionModalOpen, setIsDescriptionModalOpen] = useState(false);
+    const [pendingFabricForModal, setPendingFabricForModal] = useState<InventoryFabricRef | null>(null);
+    const [fabricDescriptionInput, setFabricDescriptionInput] = useState("");
+    const [descriptionModalError, setDescriptionModalError] = useState<string | null>(null);
+
+    // Dropdown buscador de telas TNS en creación
+    const [searchQuery, setSearchQuery] = useState("");
+    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+
+    // Modal de Edición Completa de Tela (referencia TNS + descripción + proveedor + consumo + precio)
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [editingItem, setEditingItem] = useState<FabricRecord | null>(null);
+    const [editForm, setEditForm] = useState({
+        reference: "",
+        descripcion: "",
+        codigo: "",
+        proveedor_id: "",
+        meters: "1",
+        price_per_meter: "",
+        tiene_iva: false,
+        bodega_kind: "" as FabricBodegaFilter | "",
+    });
+    const [editSearchQuery, setEditSearchQuery] = useState("");
+    const [isEditDropdownOpen, setIsEditDropdownOpen] = useState(false);
+    const [editErrors, setEditErrors] = useState<Record<string, string>>({});
+    const [isSavingEdit, setIsSavingEdit] = useState(false);
+    const editDropdownRef = useRef<HTMLDivElement>(null);
+
     useEffect(() => {
         setRows(data);
     }, [data]);
+
+    // Cerrar dropdowns al hacer clic fuera
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+                setIsDropdownOpen(false);
+            }
+            if (editDropdownRef.current && !editDropdownRef.current.contains(e.target as Node)) {
+                setIsEditDropdownOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
 
     // Proveedor seleccionado en la fila de creación
     const selectedProveedor = useMemo(() => {
@@ -199,10 +264,43 @@ export function FabricCostsTable({
         return pool.filter((r) => matchesProveedorName(r, selectedProveedor.name));
     }, [refsForBodegaFilter, selectedProveedor]);
 
-    const uniqueRefs = useMemo(
-        () => [...new Set(filteredInventoryRefs.map((r) => r.reference).filter(Boolean))],
-        [filteredInventoryRefs]
-    );
+    // Resultados de búsqueda en el selector dropdown de creación
+    const searchDropdownResults = useMemo(() => {
+        const q = searchQuery.trim().toLowerCase();
+        if (!q) return filteredInventoryRefs.slice(0, 50);
+        return filteredInventoryRefs
+            .filter((r) => {
+                const code = (r.code || "").toLowerCase();
+                const refName = (r.reference || "").toLowerCase();
+                const fullDesc = (r.full_desc || "").toLowerCase();
+                const prov = (r.proveedor || "").toLowerCase();
+                return code.includes(q) || refName.includes(q) || fullDesc.includes(q) || prov.includes(q);
+            })
+            .slice(0, 50);
+    }, [filteredInventoryRefs, searchQuery]);
+
+    // Resultados de búsqueda en el modal de edición
+    const editSearchDropdownResults = useMemo(() => {
+        const q = editSearchQuery.trim().toLowerCase();
+        let pool = refsInAllowedBodegas;
+        if (editForm.bodega_kind && editForm.bodega_kind !== "todas") {
+            pool = filterRefsByBodega(pool, editForm.bodega_kind);
+        }
+        if (editForm.proveedor_id) {
+            const provName = proveedorNameById.get(editForm.proveedor_id);
+            if (provName) pool = pool.filter((r) => matchesProveedorName(r, provName));
+        }
+        if (!q) return pool.slice(0, 40);
+        return pool
+            .filter((r) => {
+                const code = (r.code || "").toLowerCase();
+                const refName = (r.reference || "").toLowerCase();
+                const fullDesc = (r.full_desc || "").toLowerCase();
+                const prov = (r.proveedor || "").toLowerCase();
+                return code.includes(q) || refName.includes(q) || fullDesc.includes(q) || prov.includes(q);
+            })
+            .slice(0, 40);
+    }, [refsInAllowedBodegas, editForm.bodega_kind, editForm.proveedor_id, editSearchQuery, proveedorNameById]);
 
     const findMaterialByReference = (
         reference: string,
@@ -259,50 +357,136 @@ export function FabricCostsTable({
         return undefined;
     };
 
-    const applyInventoryDefaults = (
-        reference: string,
-        proveedorId: string,
-        current: typeof emptyRow,
-        bodegaKind?: FabricBodegaFilter | ""
-    ) => {
-        const match = findMaterialByReference(
-            reference,
-            proveedorId,
-            bodegaKind ?? current.bodega_kind,
-            current.codigo
-        );
-        if (!match) {
-            return {
-                ...current,
-                reference,
-                proveedor_id: proveedorId,
-                codigo: "",
-                meters: current.meters || "1",
-                price_per_meter: "",
-            };
-        }
+    // Abre el modal para pedir la descripción cuando se selecciona una tela de TNS
+    const handleSelectFabricFromTNS = (fabricItem: InventoryFabricRef) => {
+        setPendingFabricForModal(fabricItem);
+        // Pre-llenar descripción con la descripción actual si existe, o dejar lista para escribir
+        setFabricDescriptionInput(newRow.descripcion || "");
+        setDescriptionModalError(null);
+        setIsDescriptionModalOpen(true);
+        setIsDropdownOpen(false);
+    };
 
-        // Si el material tiene proveedor en TNS y no se ha seleccionado proveedor, buscar si coincide por nombre
-        let matchedProvId = proveedorId;
-        if (!matchedProvId && match.proveedor && proveedores.length > 0) {
+    // Confirma la descripción en el modal de creación y actualiza los campos
+    const handleConfirmFabricDescription = () => {
+        if (!pendingFabricForModal) return;
+
+        const fabric = pendingFabricForModal;
+        const trimmedDesc = fabricDescriptionInput.trim();
+
+        // Si el material tiene proveedor en TNS y no se ha seleccionado proveedor, autocompletar
+        let matchedProvId = newRow.proveedor_id;
+        if (!matchedProvId && fabric.proveedor && proveedores.length > 0) {
             const foundP = proveedores.find(
-                (p) => p.name.toLowerCase() === match.proveedor?.toLowerCase()
+                (p) => p.name.toLowerCase() === fabric.proveedor?.toLowerCase()
             );
             if (foundP) matchedProvId = foundP.id;
         }
 
-        const selectionLabel = formatFabricSelectionValue(match.code || "", match.reference);
-
-        return {
-            ...current,
-            bodega_kind: match.bodega_kind || current.bodega_kind,
-            reference: selectionLabel,
+        setNewRow((prev) => ({
+            ...prev,
+            bodega_kind: fabric.bodega_kind || prev.bodega_kind,
+            reference: (fabric.reference || fabric.full_desc || "").trim(),
+            descripcion: trimmedDesc,
+            codigo: (fabric.code || "").trim(),
             proveedor_id: matchedProvId,
-            codigo: (match.code || "").trim(),
-            meters: current.meters || "1",
-            price_per_meter:
-                match.unit_cost > 0 ? formatForInput(match.unit_cost) : "",
-        };
+            price_per_meter: fabric.unit_cost > 0 ? formatForInput(fabric.unit_cost) : prev.price_per_meter,
+            meters: prev.meters || "1",
+        }));
+
+        setSearchQuery(fabric.reference || fabric.full_desc || "");
+        clearFieldError("reference");
+        clearFieldError("descripcion");
+        clearFieldError("bodega_kind");
+        clearFieldError("proveedor_id");
+        clearFieldError("price_per_meter");
+        clearFieldError("meters");
+
+        setIsDescriptionModalOpen(false);
+        setPendingFabricForModal(null);
+    };
+
+    // Inicia la edición de un costo de tela existente
+    const handleStartEdit = (item: FabricRecord) => {
+        if (onUpdate) {
+            const match = findMaterialByReference(item.reference, item.proveedor_id, "", item.codigo);
+            setEditingItem(item);
+            setEditForm({
+                reference: item.reference || "",
+                descripcion: item.descripcion || "",
+                codigo: item.codigo || match?.code || "",
+                proveedor_id: item.proveedor_id || "",
+                meters: formatForInput(item.meters) || "1",
+                price_per_meter: formatForInput(item.price_per_meter) || "",
+                tiene_iva: Boolean(item.tiene_iva),
+                bodega_kind: match?.bodega_kind || "",
+            });
+            setEditSearchQuery(item.reference || (match ? (match.reference || match.full_desc || "") : ""));
+            setEditErrors({});
+            setIsEditModalOpen(true);
+        } else if (onEdit) {
+            onEdit(item);
+        }
+    };
+
+    // Selecciona una tela TNS dentro del modal de edición
+    const handleSelectFabricInEdit = (fabric: InventoryFabricRef) => {
+        let matchedProvId = editForm.proveedor_id;
+        if (!matchedProvId && fabric.proveedor && proveedores.length > 0) {
+            const foundP = proveedores.find(
+                (p) => p.name.toLowerCase() === fabric.proveedor?.toLowerCase()
+            );
+            if (foundP) matchedProvId = foundP.id;
+        }
+
+        setEditForm((prev) => ({
+            ...prev,
+            reference: (fabric.reference || fabric.full_desc || "").trim(),
+            codigo: (fabric.code || "").trim(),
+            bodega_kind: fabric.bodega_kind || prev.bodega_kind,
+            proveedor_id: matchedProvId || prev.proveedor_id,
+            price_per_meter: fabric.unit_cost > 0 ? formatForInput(fabric.unit_cost) : prev.price_per_meter,
+        }));
+        setEditSearchQuery(fabric.reference || fabric.full_desc || "");
+        setIsEditDropdownOpen(false);
+    };
+
+    // Guarda los cambios del modal de edición
+    const handleSaveEdit = async () => {
+        if (!editingItem || !onUpdate) return;
+
+        const nextErrors: Record<string, string> = {};
+        if (!editForm.reference.trim()) nextErrors.reference = "La referencia de tela TNS es requerida";
+        const metersNum = parseDecimalInput(editForm.meters);
+        const priceNum = parseDecimalInput(editForm.price_per_meter);
+        if (metersNum <= 0) nextErrors.meters = "Debe ser mayor a 0";
+        if (priceNum <= 0) nextErrors.price_per_meter = "Debe ser mayor a 0";
+
+        if (Object.keys(nextErrors).length > 0) {
+            setEditErrors(nextErrors);
+            return;
+        }
+
+        setIsSavingEdit(true);
+        try {
+            const payload: Record<string, string | boolean> = {
+                reference: editForm.reference.trim(),
+                descripcion: editForm.descripcion.trim(),
+                codigo: editForm.codigo.trim(),
+                proveedor_id: editForm.proveedor_id,
+                meters: normalizeDecimalInput(editForm.meters),
+                price_per_meter: normalizeDecimalInput(editForm.price_per_meter),
+                tiene_iva: editForm.tiene_iva,
+            };
+
+            const success = await onUpdate(editingItem.id, payload);
+            if (success) {
+                setIsEditModalOpen(false);
+                setEditingItem(null);
+            }
+        } finally {
+            setIsSavingEdit(false);
+        }
     };
 
     const resolveRowCodigo = (item: FabricRecord) => {
@@ -341,35 +525,16 @@ export function FabricCostsTable({
                 nextErrors.price_per_meter = "Debe ser mayor a 0";
                 nextErrors.general = "Debe llenar todos los campos";
             }
-            // Comprobamos que la referencia exista en el inventario TNS
+            // Comprobamos que la referencia/código coincida con una tela TNS
             const match = findMaterialByReference(
                 newRow.reference,
                 newRow.proveedor_id,
                 newRow.bodega_kind,
                 newRow.codigo
             );
-            if (!match) {
-                nextErrors.reference = "La referencia no existe en el catálogo de telas TNS";
+            if (!match && !newRow.codigo) {
+                nextErrors.reference = "Debe seleccionar una tela del inventario TNS";
                 nextErrors.general = "Debe coincidir con una tela del inventario";
-            } else {
-                const codeNorm = (newRow.codigo || match.code || "").trim().toLowerCase();
-                const ambiguous = refsInAllowedBodegas.filter((r) => {
-                    if (!selectedProveedor || matchesProveedorName(r, selectedProveedor.name)) {
-                        if (codeNorm) {
-                            return (r.code || "").trim().toLowerCase() === codeNorm;
-                        }
-                        return r.reference.trim().toLowerCase() === match.reference.trim().toLowerCase();
-                    }
-                    return false;
-                });
-                const bodegas = new Set(ambiguous.map((r) => r.bodega_kind).filter(Boolean));
-                if (bodegas.size > 1 && !newRow.bodega_kind) {
-                    nextErrors.bodega_kind = "Esta tela existe en M.P. y Producción";
-                    nextErrors.general = "Seleccione la bodega de origen";
-                } else if (!(match.code || newRow.codigo || "").trim()) {
-                    nextErrors.reference = "La tela seleccionada no tiene código TNS";
-                    nextErrors.general = "Seleccione una tela con código de inventario";
-                }
             }
         }
 
@@ -390,7 +555,6 @@ export function FabricCostsTable({
             );
             let finalProveedorId = newRow.proveedor_id;
 
-            // Si no se eligió proveedor a mano, autocompletarlo desde el material o usar fallback
             if (!finalProveedorId && match?.proveedor && proveedores.length > 0) {
                 const foundP = proveedores.find(
                     (p) => p.name.toLowerCase() === match.proveedor?.toLowerCase()
@@ -403,8 +567,9 @@ export function FabricCostsTable({
 
             const success = await onAdd({
                 proveedor_id: finalProveedorId,
-                reference: match?.reference || parseFabricSelectionInput(newRow.reference).reference,
-                codigo: (match?.code || newRow.codigo || "").trim(),
+                reference: newRow.reference.trim() || match?.reference || "",
+                descripcion: newRow.descripcion.trim(),
+                codigo: (newRow.codigo || match?.code || "").trim(),
                 variant_id: variantId,
                 meters: normalizeDecimalInput(newRow.meters),
                 price_per_meter: normalizeDecimalInput(newRow.price_per_meter),
@@ -415,6 +580,7 @@ export function FabricCostsTable({
             if (success) {
                 setIsAdding(false);
                 setNewRow(emptyRow);
+                setSearchQuery("");
                 setErrors({});
             }
         } finally {
@@ -425,6 +591,7 @@ export function FabricCostsTable({
     const handleCancelAdd = () => {
         setIsAdding(false);
         setNewRow(emptyRow);
+        setSearchQuery("");
         setErrors({});
     };
 
@@ -451,9 +618,8 @@ export function FabricCostsTable({
                 <div>
                     <CardTitle className="text-lg font-bold tracking-tight">Costos de tela</CardTitle>
                     <p className="text-xs text-muted-foreground mt-1">
-                        Elige <strong>bodega</strong> (materia prima o producción),{" "}
-                        <strong>proveedor</strong> y la <strong>referencia</strong> de inventario TNS. El{" "}
-                        <strong>$/metro</strong> es el costo unitario con el que se creó/configuró la tela;{" "}
+                        Elige <strong>bodega</strong>, <strong>proveedor</strong> y la <strong>referencia</strong> de inventario TNS con su <strong>descripción</strong> personalizada. El{" "}
+                        <strong>$/metro</strong> es el costo unitario con el que se configuró la tela;{" "}
                         <strong>metro</strong> inicia en 1.
                     </p>
                 </div>
@@ -464,6 +630,7 @@ export function FabricCostsTable({
                         onClick={() => {
                             setIsAdding(true);
                             setNewRow({ ...emptyRow });
+                            setSearchQuery("");
                             setErrors({});
                         }}
                     >
@@ -479,6 +646,7 @@ export function FabricCostsTable({
                     <div>Bodega</div>
                     <div>Proveedor</div>
                     <div>Referencia (inventario)</div>
+                    <div>Descripción</div>
                     <div>Código</div>
                     <div>metro</div>
                     <div>$/metro</div>
@@ -516,7 +684,7 @@ export function FabricCostsTable({
                         </div>
                         <div className="truncate min-w-0 text-xs text-muted-foreground">
                             {(() => {
-                                const match = findMaterialByReference(item.reference, item.proveedor_id);
+                                const match = findMaterialByReference(item.reference, item.proveedor_id, "", item.codigo);
                                 return match?.bodega_kind
                                     ? fabricBodegaShortLabel(match.bodega_kind)
                                     : "—";
@@ -530,7 +698,16 @@ export function FabricCostsTable({
                                 <span className="ml-1 text-[10px] font-semibold text-primary">Principal</span>
                             )}
                         </div>
-                        <div className="truncate min-w-0">{item.reference}</div>
+                        <div className="truncate min-w-0" title={item.reference}>
+                            {item.reference || "—"}
+                        </div>
+                        <div className="truncate min-w-0 font-medium text-foreground" title={item.descripcion || ""}>
+                            {item.descripcion ? (
+                                item.descripcion
+                            ) : (
+                                <span className="text-muted-foreground/50 italic text-xs">Sin descripción</span>
+                            )}
+                        </div>
                         <div className="truncate min-w-0 font-mono text-xs">{resolveRowCodigo(item)}</div>
                         <div>{formatDecimal(item.meters)}</div>
                         <div>${formatCurrency(item.price_per_meter)}</div>
@@ -540,11 +717,13 @@ export function FabricCostsTable({
                             <div className="flex gap-1 shrink-0">
                                 <Pencil
                                     className="h-4 w-4 cursor-pointer text-muted-foreground hover:text-primary"
-                                    onClick={() => onEdit(item)}
+                                    onClick={() => handleStartEdit(item)}
+                                    title="Editar información de tela y descripción"
                                 />
                                 <Trash2
                                     className="h-4 w-4 cursor-pointer text-red-500 hover:text-red-700"
                                     onClick={() => onDelete(item.id)}
+                                    title="Eliminar tela"
                                 />
                             </div>
                         </div>
@@ -561,6 +740,7 @@ export function FabricCostsTable({
                     <div className="space-y-3 border rounded-lg mt-2 p-3 bg-muted/30">
                         <div className={`${FABRIC_GRID} items-start text-sm`}>
                             <div className="w-8" />
+                            {/* Selector de Bodega */}
                             <div className="space-y-1">
                                 <select
                                     className={cn(
@@ -572,32 +752,11 @@ export function FabricCostsTable({
                                     value={newRow.bodega_kind}
                                     onChange={(e) => {
                                         const bodegaKind = e.target.value as FabricBodegaFilter | "";
-                                        setNewRow((prev) => {
-                                            const matchInNewBodega = findMaterialByReference(
-                                                prev.reference,
-                                                prev.proveedor_id,
-                                                bodegaKind
-                                            );
-                                            if (!matchInNewBodega) {
-                                                return {
-                                                    ...prev,
-                                                    bodega_kind: bodegaKind,
-                                                    reference: "",
-                                                    codigo: "",
-                                                    price_per_meter: "",
-                                                    proveedor_id: "",
-                                                };
-                                            }
-                                            return applyInventoryDefaults(
-                                                prev.reference,
-                                                prev.proveedor_id,
-                                                { ...prev, bodega_kind: bodegaKind },
-                                                bodegaKind
-                                            );
-                                        });
+                                        setNewRow((prev) => ({
+                                            ...prev,
+                                            bodega_kind: bodegaKind,
+                                        }));
                                         clearFieldError("bodega_kind");
-                                        clearFieldError("reference");
-                                        clearFieldError("proveedor_id");
                                     }}
                                 >
                                     <option value="">Todas (M.P. + Prod.)</option>
@@ -608,10 +767,12 @@ export function FabricCostsTable({
                                     <p className="text-[11px] text-red-600 leading-tight">{errors.bodega_kind}</p>
                                 ) : (
                                     <p className="text-[10px] text-muted-foreground leading-tight">
-                                        Solo telas de bodega M.P. o Producción
+                                        Bodega M.P. o Prod.
                                     </p>
                                 )}
                             </div>
+
+                            {/* Selector de Proveedor */}
                             <div className="space-y-1">
                                 <select
                                     className={cn(
@@ -623,33 +784,15 @@ export function FabricCostsTable({
                                     value={newRow.proveedor_id}
                                     onChange={(e) => {
                                         const proveedorId = e.target.value;
-                                        setNewRow((prev) => {
-                                            const matchInNewProv = findMaterialByReference(
-                                                prev.reference,
-                                                proveedorId,
-                                                prev.bodega_kind
-                                            );
-                                            if (!matchInNewProv) {
-                                                return {
-                                                    ...prev,
-                                                    proveedor_id: proveedorId,
-                                                    reference: "",
-                                                    codigo: "",
-                                                    price_per_meter: "",
-                                                };
-                                            }
-                                            return applyInventoryDefaults(prev.reference, proveedorId, {
-                                                ...prev,
-                                                proveedor_id: proveedorId,
-                                            });
-                                        });
+                                        setNewRow((prev) => ({
+                                            ...prev,
+                                            proveedor_id: proveedorId,
+                                        }));
                                         clearFieldError("proveedor_id");
-                                        clearFieldError("reference");
-                                        clearFieldError("price_per_meter");
                                     }}
                                 >
                                     <option value="">
-                                        Todos los proveedores ({proveedoresForBodega.length})
+                                        Todos ({proveedoresForBodega.length})
                                     </option>
                                     {proveedoresForBodega.map((p) => {
                                         const hint = proveedorBodegaHint(p.name);
@@ -667,88 +810,124 @@ export function FabricCostsTable({
                                     </p>
                                 )}
                             </div>
-                            <div className="space-y-1">
+
+                            {/* Selector de Referencia TNS */}
+                            <div className="space-y-1 relative" ref={dropdownRef}>
                                 <Input
-                                    list="fabric-inventory-refs"
-                                    value={newRow.reference}
+                                    value={newRow.reference || searchQuery}
                                     onChange={(e) => {
-                                        const reference = e.target.value;
-                                        setNewRow((prev) =>
-                                            applyInventoryDefaults(reference, prev.proveedor_id, {
-                                                ...prev,
-                                                reference,
-                                            })
-                                        );
+                                        const val = e.target.value;
+                                        setSearchQuery(val);
+                                        setNewRow((prev) => ({
+                                            ...prev,
+                                            reference: val,
+                                        }));
+                                        setIsDropdownOpen(true);
                                         clearFieldError("reference");
-                                        clearFieldError("price_per_meter");
-                                        clearFieldError("meters");
                                     }}
+                                    onFocus={() => setIsDropdownOpen(true)}
                                     placeholder={
                                         selectedProveedor
-                                            ? `Telas de ${selectedProveedor.name}...`
-                                            : newRow.bodega_kind && newRow.bodega_kind !== "todas"
-                                              ? `Telas en ${fabricBodegaLabel(newRow.bodega_kind)}...`
-                                              : "Referencia de tela..."
+                                            ? `Buscar tela ${selectedProveedor.name}...`
+                                            : "Seleccionar tela TNS..."
                                     }
                                     className={cn(
+                                        "text-xs",
                                         errors.reference && "border-red-500 focus-visible:ring-red-500"
                                     )}
                                 />
-                                <datalist id="fabric-inventory-refs">
-                                    {filteredInventoryRefs.map((r, i) => {
-                                        const optionValue = formatFabricSelectionValue(
-                                            r.code || "",
-                                            r.reference
-                                        );
-                                        return (
-                                            <option
-                                                key={`${r.bodega_cod || r.bodega_kind}-${r.code || r.reference}-${i}`}
-                                                value={optionValue}
-                                            >
-                                                {r.bodega_kind ? `[${fabricBodegaShortLabel(r.bodega_kind)}] ` : ""}
-                                                {r.code ? `[${r.code}] ` : ""}
-                                                {r.reference}
-                                                {r.bodega_desc ? ` · ${r.bodega_desc}` : ""}
-                                                {r.unit_cost > 0
-                                                    ? ` (${formatCurrency(r.unit_cost)}/m)`
-                                                    : " (sin costo TNS)"}
-                                            </option>
-                                        );
-                                    })}
-                                </datalist>
+
+                                {/* Dropdown flotante con las telas disponibles */}
+                                {isDropdownOpen && (
+                                    <div className="absolute left-0 top-full mt-1 w-[380px] max-h-60 overflow-y-auto rounded-md border bg-popover p-1 shadow-lg z-50 text-xs">
+                                        <div className="px-2 py-1.5 text-[11px] font-semibold text-muted-foreground border-b flex justify-between items-center">
+                                            <span>Telas TNS ({searchDropdownResults.length})</span>
+                                            <span className="text-[10px]">Clic para definir descripción</span>
+                                        </div>
+                                        {searchDropdownResults.length === 0 ? (
+                                            <div className="p-3 text-center text-muted-foreground text-xs">
+                                                No se encontraron telas con los filtros actuales
+                                            </div>
+                                        ) : (
+                                            searchDropdownResults.map((r, i) => (
+                                                <button
+                                                    key={`${r.bodega_cod || r.bodega_kind}-${r.code || r.reference}-${i}`}
+                                                    type="button"
+                                                    onClick={() => handleSelectFabricFromTNS(r)}
+                                                    className="w-full text-left p-2 rounded hover:bg-muted/80 transition-colors flex flex-col gap-0.5 border-b last:border-0"
+                                                >
+                                                    <div className="flex items-center justify-between gap-1 font-medium">
+                                                        <div className="flex items-center gap-1.5 truncate">
+                                                            {r.bodega_kind && (
+                                                                <span className="px-1 py-0.2 rounded text-[10px] bg-primary/10 text-primary font-bold">
+                                                                    {fabricBodegaShortLabel(r.bodega_kind)}
+                                                                </span>
+                                                            )}
+                                                            {r.code && (
+                                                                <span className="font-mono text-muted-foreground text-[11px]">
+                                                                    [{r.code}]
+                                                                </span>
+                                                            )}
+                                                            <span className="truncate">{r.reference}</span>
+                                                        </div>
+                                                        <span className="shrink-0 text-emerald-600 font-semibold">
+                                                            {r.unit_cost > 0
+                                                                ? `$${formatCurrency(r.unit_cost)}`
+                                                                : "Sin costo"}
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                                                        <span className="truncate">
+                                                            {r.proveedor || r.bodega_desc || "TNS"}
+                                                        </span>
+                                                        {r.stock !== undefined && (
+                                                            <span>Stock: {formatDecimal(r.stock)} m</span>
+                                                        )}
+                                                    </div>
+                                                </button>
+                                            ))
+                                        )}
+                                    </div>
+                                )}
+
                                 {errors.reference ? (
                                     <p className="text-[11px] text-red-600 leading-tight">{errors.reference}</p>
-                                ) : selectedProveedor ? (
-                                    <p className="text-[10px] text-muted-foreground leading-tight">
-                                        {filteredInventoryRefs.length > 0
-                                            ? `${filteredInventoryRefs.length} telas de ${selectedProveedor.name}${
-                                                  newRow.bodega_kind && newRow.bodega_kind !== "todas"
-                                                      ? ` en ${fabricBodegaLabel(newRow.bodega_kind)}`
-                                                      : ""
-                                              }`
-                                            : `Sin telas de este proveedor en la bodega seleccionada`}
-                                    </p>
-                                ) : newRow.bodega_kind && newRow.bodega_kind !== "todas" ? (
-                                    <p className="text-[10px] text-muted-foreground leading-tight">
-                                        {filteredInventoryRefs.length > 0
-                                            ? `${filteredInventoryRefs.length} telas en ${fabricBodegaLabel(newRow.bodega_kind)}`
-                                            : `Sin telas en ${fabricBodegaLabel(newRow.bodega_kind)}`}
-                                    </p>
                                 ) : (
                                     <p className="text-[10px] text-muted-foreground leading-tight">
-                                        Elige bodega y proveedor para filtrar telas de M.P. o Producción.
+                                        Referencia exacta TNS
                                     </p>
                                 )}
                             </div>
+
+                            {/* Campo de Descripción personalizada en la fila */}
+                            <div className="space-y-1">
+                                <Input
+                                    value={newRow.descripcion}
+                                    onChange={(e) => {
+                                        setNewRow({ ...newRow, descripcion: e.target.value });
+                                        clearFieldError("descripcion");
+                                    }}
+                                    placeholder="Ej. Tela blanca suave..."
+                                    className="text-xs"
+                                    title="Descripción personalizada para esta variante"
+                                />
+                                <p className="text-[10px] text-muted-foreground leading-tight">
+                                    Descripción propia
+                                </p>
+                            </div>
+
+                            {/* Código TNS */}
                             <div className="space-y-1">
                                 <Input
                                     value={newRow.codigo}
                                     readOnly
-                                    placeholder="Código TNS"
+                                    placeholder="Código"
                                     className="bg-muted/60 cursor-default font-mono text-xs"
-                                    title="Código exacto del producto en inventario TNS"
+                                    title="Código exacto TNS"
                                 />
                             </div>
+
+                            {/* Metros */}
                             <div className="space-y-1">
                                 <Input
                                     value={newRow.meters}
@@ -766,6 +945,8 @@ export function FabricCostsTable({
                                     <p className="text-[11px] text-red-600 leading-tight">{errors.meters}</p>
                                 )}
                             </div>
+
+                            {/* Precio por metro */}
                             <div className="space-y-1">
                                 <Input
                                     value={newRow.price_per_meter}
@@ -773,7 +954,7 @@ export function FabricCostsTable({
                                         setNewRow({ ...newRow, price_per_meter: e.target.value });
                                         clearFieldError("price_per_meter");
                                     }}
-                                    placeholder="Desde inventario"
+                                    placeholder="Costo"
                                     inputMode="decimal"
                                     className={cn(
                                         errors.price_per_meter &&
@@ -786,12 +967,16 @@ export function FabricCostsTable({
                                     </p>
                                 )}
                             </div>
+
+                            {/* IVA */}
                             <div className="pt-2">
                                 <Switch
                                     checked={newRow.tiene_iva}
                                     onCheckedChange={(val) => setNewRow({ ...newRow, tiene_iva: val })}
                                 />
                             </div>
+
+                            {/* Total y Acciones */}
                             <div className="flex items-center gap-2 pt-1">
                                 <span className="text-xs">
                                     $
@@ -834,6 +1019,359 @@ export function FabricCostsTable({
                     </div>
                 )}
             </CardContent>
+
+            {/* Modal para ingresar la descripción al seleccionar la tela TNS en creación */}
+            <Dialog
+                open={isDescriptionModalOpen}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setIsDescriptionModalOpen(false);
+                        setPendingFabricForModal(null);
+                        setDescriptionModalError(null);
+                    }
+                }}
+            >
+                <DialogContent className="sm:max-w-[480px]">
+                    <DialogHeader>
+                        <DialogTitle className="text-base font-bold flex items-center gap-2">
+                            <Tag className="h-4 w-4 text-primary" />
+                            Descripción de la tela
+                        </DialogTitle>
+                        <DialogDescription className="text-xs">
+                            Define la descripción personalizada con la que se identificará esta tela en la prenda/variante.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {pendingFabricForModal && (
+                        <div className="space-y-4 py-2">
+                            {/* Tarjeta con los datos de la tela TNS seleccionada */}
+                            <div className="rounded-lg border bg-muted/40 p-3 space-y-2 text-xs">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
+                                            Referencia TNS (Inventario)
+                                        </span>
+                                        <div className="font-semibold text-foreground flex items-center gap-1.5 mt-0.5">
+                                            <Package className="h-3.5 w-3.5 text-primary" />
+                                            {pendingFabricForModal.reference || pendingFabricForModal.full_desc}
+                                        </div>
+                                    </div>
+                                    {pendingFabricForModal.bodega_kind && (
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-primary/10 text-primary">
+                                            {fabricBodegaLabel(pendingFabricForModal.bodega_kind)}
+                                        </span>
+                                    )}
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2 text-muted-foreground text-[11px] pt-2 border-t">
+                                    <div className="flex items-center gap-1">
+                                        <span className="font-medium text-foreground">Código TNS:</span>
+                                        <span className="font-mono">{pendingFabricForModal.code || "—"}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                        <span className="font-medium text-foreground">Costo sugerido:</span>
+                                        <span className="font-semibold text-emerald-600">
+                                            ${formatCurrency(pendingFabricForModal.unit_cost)} / m
+                                        </span>
+                                    </div>
+                                    {pendingFabricForModal.proveedor && (
+                                        <div className="col-span-2 flex items-center gap-1 truncate">
+                                            <Building2 className="h-3 w-3 shrink-0" />
+                                            <span className="font-medium text-foreground">Proveedor:</span>
+                                            <span className="truncate">{pendingFabricForModal.proveedor}</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Campo para ingresar la descripción de la tela */}
+                            <div className="space-y-1.5">
+                                <Label htmlFor="fabric-description-input" className="text-xs font-semibold">
+                                    Descripción personalizada de la tela
+                                </Label>
+                                <Input
+                                    id="fabric-description-input"
+                                    value={fabricDescriptionInput}
+                                    onChange={(e) => {
+                                        setFabricDescriptionInput(e.target.value);
+                                        if (descriptionModalError) setDescriptionModalError(null);
+                                    }}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                            e.preventDefault();
+                                            handleConfirmFabricDescription();
+                                        }
+                                    }}
+                                    placeholder="Ej. Tela blanca suave para camisa, Forro, Bolsillos..."
+                                    className="text-xs"
+                                    autoFocus
+                                />
+                                {descriptionModalError ? (
+                                    <p className="text-[11px] text-red-600 font-medium">{descriptionModalError}</p>
+                                ) : (
+                                    <p className="text-[10px] text-muted-foreground">
+                                        Esta descripción se mostrará en una columna separada a la referencia de inventario.
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    <DialogFooter className="gap-2 sm:gap-0">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                                setIsDescriptionModalOpen(false);
+                                setPendingFabricForModal(null);
+                            }}
+                        >
+                            Cancelar
+                        </Button>
+                        <Button
+                            type="button"
+                            size="sm"
+                            onClick={handleConfirmFabricDescription}
+                        >
+                            Confirmar descripción
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Modal de Edición Completa de Tela y Descripción */}
+            <Dialog
+                open={isEditModalOpen}
+                onOpenChange={(open) => {
+                    if (!open && !isSavingEdit) {
+                        setIsEditModalOpen(false);
+                        setEditingItem(null);
+                    }
+                }}
+            >
+                <DialogContent className="sm:max-w-[520px]">
+                    <DialogHeader>
+                        <DialogTitle className="text-base font-bold flex items-center gap-2">
+                            <Pencil className="h-4 w-4 text-primary" />
+                            Editar costo de tela
+                        </DialogTitle>
+                        <DialogDescription className="text-xs">
+                            Modifica la referencia de inventario TNS, descripción personalizada, proveedor, metros o precio.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {editingItem && (
+                        <div className="space-y-4 py-2">
+                            {/* Referencia de inventario TNS */}
+                            <div className="space-y-1.5 relative" ref={editDropdownRef}>
+                                <Label className="text-xs font-semibold flex items-center justify-between">
+                                    <span>Referencia de inventario TNS <span className="text-red-500">*</span></span>
+                                    {editForm.codigo && (
+                                        <span className="font-mono text-[11px] font-normal text-muted-foreground">
+                                            Código: {editForm.codigo}
+                                        </span>
+                                    )}
+                                </Label>
+                                <div className="relative">
+                                    <Input
+                                        value={editForm.reference || editSearchQuery}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setEditSearchQuery(val);
+                                            setEditForm((prev) => ({ ...prev, reference: val }));
+                                            setIsEditDropdownOpen(true);
+                                        }}
+                                        onFocus={() => setIsEditDropdownOpen(true)}
+                                        placeholder="Buscar por código o nombre en catálogo TNS..."
+                                        className={cn("text-xs", editErrors.reference && "border-red-500")}
+                                    />
+                                </div>
+
+                                {isEditDropdownOpen && (
+                                    <div className="absolute left-0 top-full mt-1 w-full max-h-52 overflow-y-auto rounded-md border bg-popover p-1 shadow-lg z-50 text-xs">
+                                        <div className="px-2 py-1 text-[10px] font-semibold text-muted-foreground border-b">
+                                            Telas en TNS ({editSearchDropdownResults.length})
+                                        </div>
+                                        {editSearchDropdownResults.length === 0 ? (
+                                            <div className="p-3 text-center text-muted-foreground text-xs">
+                                                No se encontraron telas coincidentes
+                                            </div>
+                                        ) : (
+                                            editSearchDropdownResults.map((r, i) => (
+                                                <button
+                                                    key={`${r.bodega_cod || r.bodega_kind}-${r.code || r.reference}-${i}`}
+                                                    type="button"
+                                                    onClick={() => handleSelectFabricInEdit(r)}
+                                                    className="w-full text-left p-2 rounded hover:bg-muted/80 transition-colors flex flex-col gap-0.5 border-b last:border-0"
+                                                >
+                                                    <div className="flex items-center justify-between gap-1 font-medium">
+                                                        <div className="flex items-center gap-1.5 truncate">
+                                                            {r.bodega_kind && (
+                                                                <span className="px-1 py-0.2 rounded text-[10px] bg-primary/10 text-primary font-bold">
+                                                                    {fabricBodegaShortLabel(r.bodega_kind)}
+                                                                </span>
+                                                            )}
+                                                            {r.code && (
+                                                                <span className="font-mono text-muted-foreground text-[11px]">
+                                                                    [{r.code}]
+                                                                </span>
+                                                            )}
+                                                            <span className="truncate">{r.reference}</span>
+                                                        </div>
+                                                        <span className="shrink-0 text-emerald-600 font-semibold">
+                                                            {r.unit_cost > 0
+                                                                ? `$${formatCurrency(r.unit_cost)}`
+                                                                : "Sin costo"}
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                                                        <span className="truncate">
+                                                            {r.proveedor || r.bodega_desc || "TNS"}
+                                                        </span>
+                                                        {r.stock !== undefined && (
+                                                            <span>Stock: {formatDecimal(r.stock)} m</span>
+                                                        )}
+                                                    </div>
+                                                </button>
+                                            ))
+                                        )}
+                                    </div>
+                                )}
+                                {editErrors.reference && (
+                                    <p className="text-[10px] text-red-600">{editErrors.reference}</p>
+                                )}
+                            </div>
+
+                            {/* Campo de Descripción Personalizada (Separado de Referencia) */}
+                            <div className="space-y-1.5">
+                                <Label htmlFor="edit-fabric-description" className="text-xs font-semibold">
+                                    Descripción personalizada de la tela
+                                </Label>
+                                <Input
+                                    id="edit-fabric-description"
+                                    value={editForm.descripcion}
+                                    onChange={(e) => {
+                                        setEditForm({ ...editForm, descripcion: e.target.value });
+                                    }}
+                                    placeholder="Ej. tela blanca suave para camisa, tela blanca estrés..."
+                                    className="text-xs"
+                                />
+                                <p className="text-[10px] text-muted-foreground">
+                                    Descripción o detalle propio con el que identificas esta tela en la prenda.
+                                </p>
+                            </div>
+
+                            {/* Proveedor */}
+                            <div className="space-y-1.5">
+                                <Label htmlFor="edit-fabric-proveedor" className="text-xs font-semibold">
+                                    Proveedor
+                                </Label>
+                                <select
+                                    id="edit-fabric-proveedor"
+                                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-xs font-medium"
+                                    value={editForm.proveedor_id}
+                                    onChange={(e) => setEditForm({ ...editForm, proveedor_id: e.target.value })}
+                                >
+                                    <option value="">Seleccionar proveedor...</option>
+                                    {proveedores.map((p) => (
+                                        <option key={p.id} value={p.id}>
+                                            {p.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            {/* Metros, $/metro e IVA */}
+                            <div className="grid grid-cols-3 gap-3">
+                                <div className="space-y-1">
+                                    <Label htmlFor="edit-fabric-meters" className="text-xs font-semibold">
+                                        Metros (consumo)
+                                    </Label>
+                                    <Input
+                                        id="edit-fabric-meters"
+                                        value={editForm.meters}
+                                        onChange={(e) => setEditForm({ ...editForm, meters: e.target.value })}
+                                        inputMode="decimal"
+                                        className={cn("text-xs", editErrors.meters && "border-red-500")}
+                                        placeholder="1"
+                                    />
+                                    {editErrors.meters && (
+                                        <p className="text-[10px] text-red-600">{editErrors.meters}</p>
+                                    )}
+                                </div>
+
+                                <div className="space-y-1">
+                                    <Label htmlFor="edit-fabric-price" className="text-xs font-semibold">
+                                        $/metro (costo)
+                                    </Label>
+                                    <Input
+                                        id="edit-fabric-price"
+                                        value={editForm.price_per_meter}
+                                        onChange={(e) => setEditForm({ ...editForm, price_per_meter: e.target.value })}
+                                        inputMode="decimal"
+                                        className={cn("text-xs", editErrors.price_per_meter && "border-red-500")}
+                                        placeholder="0"
+                                    />
+                                    {editErrors.price_per_meter && (
+                                        <p className="text-[10px] text-red-600">{editErrors.price_per_meter}</p>
+                                    )}
+                                </div>
+
+                                <div className="space-y-1 flex flex-col justify-center pt-2">
+                                    <div className="flex items-center gap-2">
+                                        <Switch
+                                            id="edit-fabric-iva"
+                                            checked={editForm.tiene_iva}
+                                            onCheckedChange={(val) => setEditForm({ ...editForm, tiene_iva: val })}
+                                        />
+                                        <Label htmlFor="edit-fabric-iva" className="text-xs cursor-pointer">
+                                            Aplica IVA
+                                        </Label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Previsualización del total */}
+                            <div className="p-2.5 rounded-md bg-muted/50 flex justify-between items-center text-xs">
+                                <span className="text-muted-foreground font-medium">Total estimado de tela:</span>
+                                <span className="text-sm font-bold text-foreground">
+                                    ${formatCurrency(calcTotal(editForm.meters, editForm.price_per_meter, editForm.tiene_iva))}
+                                </span>
+                            </div>
+                        </div>
+                    )}
+
+                    <DialogFooter className="gap-2 sm:gap-0">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isSavingEdit}
+                            onClick={() => {
+                                setIsEditModalOpen(false);
+                                setEditingItem(null);
+                            }}
+                        >
+                            Cancelar
+                        </Button>
+                        <Button
+                            type="button"
+                            size="sm"
+                            disabled={isSavingEdit}
+                            onClick={handleSaveEdit}
+                        >
+                            {isSavingEdit ? (
+                                <>
+                                    <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Guardando...
+                                </>
+                            ) : (
+                                "Guardar cambios"
+                            )}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </Card>
     );
 }

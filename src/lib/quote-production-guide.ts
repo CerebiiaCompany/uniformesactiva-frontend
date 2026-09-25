@@ -19,7 +19,7 @@ function escapeHtml(value: string): string {
 }
 
 function fmtMoney(value: string | number): string {
-  return `$${formatCurrency(value)}`;
+  return `$ ${formatCurrency(value)}`;
 }
 
 function fmtDate(value?: string | null): string {
@@ -29,31 +29,19 @@ function fmtDate(value?: string | null): string {
   return d.toLocaleDateString("es-CO");
 }
 
-function shortQuoteId(id: string): string {
-  return `COT-${id.slice(-3).toUpperCase()}`;
-}
-
-function estampadoLabel(
-  payload: QuoteOrderPayload | undefined,
-  _itemColor?: string | null
-): string {
-  const estampado = (payload?.estampado || "").trim();
-  const logos = getActiveLogoLabels(payload || {});
-  const printParts = [estampado, logos.length ? logos.join(", ") : ""]
-    .filter(Boolean)
-    .join(" · ");
-  return printParts || "—";
-}
-
-type QuotePrintItem = {
+export type QuotePrintItem = {
   producto_nombre?: string | null;
   subproducto_nombre?: string | null;
+  subproducto_id?: string | null;
   talla_nombre?: string | null;
   talla_id?: string | null;
   cantidad: number;
   color?: string | null;
-  /** Precio unitario mostrado (venta preferida, luego costo) */
   precio_unitario?: number | null;
+  articulo_completo?: string | null;
+  fabric_reference?: string | null;
+  fabric_proveedor?: string | null;
+  fabric_descripcion?: string | null;
 };
 
 function labelByVariantId(payload: QuoteOrderPayload): Map<string, string> {
@@ -82,8 +70,76 @@ function resolveUnitPrice(
   return null;
 }
 
+function buildArticuloText(
+  item: {
+    producto_nombre?: string | null;
+    subproducto_nombre?: string | null;
+    color?: string | null;
+  },
+  fabric: {
+    reference?: string | null;
+    proveedor_nombre?: string | null;
+    descripcion?: string | null;
+  } | null,
+  payload?: QuoteOrderPayload
+): string {
+  const prod = (item.producto_nombre || "").trim();
+  const sub = (item.subproducto_nombre || "").trim();
+
+  let name = "";
+  if (prod && sub) {
+    if (sub.toLowerCase().startsWith(prod.toLowerCase())) {
+      name = sub;
+    } else if (prod.toLowerCase().startsWith(sub.toLowerCase())) {
+      name = prod;
+    } else if (prod.toLowerCase() !== sub.toLowerCase()) {
+      name = `${prod} ${sub}`;
+    } else {
+      name = prod;
+    }
+  } else {
+    name = prod || sub || "Prenda";
+  }
+
+  let text = name;
+
+  if (fabric?.reference) {
+    text += ` en referencia ${fabric.reference}`;
+    if (fabric.proveedor_nombre) {
+      text += ` Proveedor ${fabric.proveedor_nombre}`;
+    }
+  }
+
+  if (item.color) {
+    text += `, color ${item.color}`;
+  }
+
+  if (fabric?.descripcion) {
+    const desc = fabric.descripcion.trim();
+    if (desc) {
+      if (desc.startsWith(",")) {
+        text += ` ${desc.replace(/^,\s*/, "")}`;
+      } else {
+        text += ` composicion ${desc.replace(/^composici[oó]n\s*/i, "")}`;
+      }
+    }
+  }
+
+  const hasLogos =
+    Boolean(payload?.estampado?.trim()) ||
+    (payload ? getActiveLogoLabels(payload).length > 0 : false);
+
+  if (hasLogos) {
+    text += `, con un bordado incluido y especificacion del cliente.`;
+  } else {
+    text += ` y especificacion del cliente.`;
+  }
+
+  return text;
+}
+
 /**
- * Resuelve tallas/precios faltantes (cotizaciones antiguas solo guardaban IDs).
+ * Resuelve tallas, precios y descripción de telas principales para cotización.
  */
 export async function enrichQuotePrintItems(quote: Quote): Promise<QuotePrintItem[]> {
   const payload = (quote.orderPayload || {}) as QuoteOrderPayload;
@@ -101,6 +157,7 @@ export async function enrichQuotePrintItems(quote: Quote): Promise<QuotePrintIte
         cantidad: 0,
         color: null,
         precio_unitario: null,
+        articulo_completo: label,
       }));
   }
 
@@ -119,12 +176,64 @@ export async function enrichQuotePrintItems(quote: Quote): Promise<QuotePrintIte
           (t.label || t.name || t.code || "").trim() || t.id,
         ])
       );
-      // También indexar por code por si talla_id es código
       for (const t of catalog) {
         if (t.code) tallaNameById.set(String(t.code), (t.label || t.name || t.code).trim());
       }
     } catch {
       /* catálogo opcional */
+    }
+  }
+
+  // Cargar telas principales para cada subproducto_id
+  const uniqueVariantIds = Array.from(
+    new Set(
+      rawItems
+        .map((i) => i.subproducto_id)
+        .filter(Boolean) as string[]
+    )
+  );
+
+  const fabricByVariantId = new Map<
+    string,
+    { reference: string; proveedor_nombre: string; descripcion: string }
+  >();
+
+  if (uniqueVariantIds.length > 0) {
+    try {
+      const [proveedores, ...fabricsPerVariant] = await Promise.all([
+        http<any[]>(endpoints.costos.proveedores()).catch(() => []),
+        ...uniqueVariantIds.map((vid) =>
+          http<any[]>(endpoints.costos.telaByVariant(vid)).catch(() => [])
+        ),
+      ]);
+
+      const provMap = new Map(
+        (Array.isArray(proveedores) ? proveedores : []).map((p: any) => [
+          String(p.id),
+          p.name || p.label || "",
+        ])
+      );
+
+      uniqueVariantIds.forEach((vid, idx) => {
+        const list = fabricsPerVariant[idx];
+        if (Array.isArray(list) && list.length > 0) {
+          const principal = list.find((f: any) => f.es_principal) || list[0];
+          const provId = String(principal.proveedor_id || principal.proveedor?.id || "");
+          const provName =
+            principal.proveedor_nombre ||
+            principal.proveedor?.name ||
+            (provId && provMap.get(provId)) ||
+            "";
+
+          fabricByVariantId.set(vid, {
+            reference: (principal.reference || principal.codigo || "").trim(),
+            proveedor_nombre: (provName || "").trim(),
+            descripcion: (principal.descripcion || "").trim(),
+          });
+        }
+      });
+    } catch {
+      /* ignore fabric loading errors */
     }
   }
 
@@ -144,53 +253,70 @@ export async function enrichQuotePrintItems(quote: Quote): Promise<QuotePrintIte
     const variantLabel = variantLabels.get(item.subproducto_id) || "";
     const tallaFromCatalog =
       (item.talla_id && tallaNameById.get(String(item.talla_id))) || "";
+    const fabric = item.subproducto_id ? fabricByVariantId.get(item.subproducto_id) || null : null;
+
+    const producto_nombre = (item.producto_nombre || "").trim() || null;
+    const subproducto_nombre =
+      (item.subproducto_nombre || "").trim() || variantLabel || null;
+
+    const articulo_completo = buildArticuloText(
+      { producto_nombre, subproducto_nombre, color: item.color },
+      fabric,
+      payload
+    );
 
     return {
-      producto_nombre: (item.producto_nombre || "").trim() || null,
-      subproducto_nombre:
-        (item.subproducto_nombre || "").trim() || variantLabel || null,
+      producto_nombre,
+      subproducto_nombre,
+      subproducto_id: item.subproducto_id || null,
       talla_nombre:
         (item.talla_nombre || "").trim() || tallaFromCatalog || null,
       talla_id: item.talla_id || null,
       cantidad: Number(item.cantidad) || 0,
       color: item.color || null,
       precio_unitario: resolveUnitPrice(item, fallbackUnit),
+      articulo_completo,
+      fabric_reference: fabric?.reference || null,
+      fabric_proveedor: fabric?.proveedor_nombre || null,
+      fabric_descripcion: fabric?.descripcion || null,
     };
   });
+}
+
+export async function loadRepresentativeSignatureDataUri(): Promise<string | null> {
+  try {
+    const url = `${window.location.origin}/branding/firma-representante-legal.jpg`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
 }
 
 function buildQuoteGuideHtml(
   quote: Quote,
   client: OrderGuideClientInfo | null,
   items: QuotePrintItem[],
-  logoDataUri?: string | null
+  logoDataUri?: string | null,
+  signatureDataUri?: string | null
 ): string {
   const payload = (quote.orderPayload || {}) as QuoteOrderPayload;
-  const quoteCode = shortQuoteId(quote.id);
-  const printedAt = new Date().toLocaleString("es-CO", {
-    dateStyle: "short",
-    timeStyle: "medium",
-  });
-  const totalQty = items.reduce((s, i) => s + (Number(i.cantidad) || 0), 0);
   const clientName = client?.name || quote.customerName || "—";
-  const contact = client?.contact || "—";
+  const contact = client?.contact || client?.phone || "—";
   const address = client?.address || "—";
-  const tomadaPor = (quote.takenBy || "").trim() || "—";
-  const creacionEnvio = `${fmtDate(quote.createdAt)} | ${fmtDate(
-    quote.shippingDate || payload.fecha_estimada_entrega
-  )}`;
-  const comments = (payload.comentarios || "").trim();
+  const quoteDate = fmtDate(quote.createdAt || payload.fecha_estimada_entrega || new Date().toISOString());
   const saleValue = Number(payload.valor_venta_proyectado ?? quote.totalAmount) || 0;
 
   let linesSaleSum = 0;
   const rows = items
     .map((item) => {
-      const product = (item.producto_nombre || "").trim();
-      const variant = (item.subproducto_nombre || "").trim();
-      const productLabel =
-        product && variant && product !== variant
-          ? `${product} · ${variant}`
-          : product || variant || "—";
       const qty = Number(item.cantidad) || 0;
       const unit =
         item.precio_unitario !== null &&
@@ -198,16 +324,17 @@ function buildQuoteGuideHtml(
         Number.isFinite(item.precio_unitario)
           ? Number(item.precio_unitario)
           : null;
-      const lineTotal = unit !== null ? unit * qty : null;
+      const lineTotal = unit !== null && qty > 0 ? unit * qty : null;
       if (lineTotal !== null) linesSaleSum += lineTotal;
+
+      const articuloText = item.articulo_completo || item.producto_nombre || "—";
+
       return `
         <tr>
-          <td>${escapeHtml(productLabel)}</td>
-          <td>${escapeHtml((item.talla_nombre || "—").trim() || "—")}</td>
-          <td>${escapeHtml(estampadoLabel(payload, item.color))}</td>
-          <td class="num">${qty || "—"}</td>
-          <td class="num">${escapeHtml(unit !== null ? fmtMoney(unit) : "—")}</td>
-          <td class="num">${escapeHtml(lineTotal !== null ? fmtMoney(lineTotal) : "—")}</td>
+          <td class="cell-cant">${qty > 0 ? qty : ""}</td>
+          <td class="cell-art">${escapeHtml(articuloText)}</td>
+          <td class="cell-num">${unit !== null ? escapeHtml(fmtMoney(unit)) : "$ -"}</td>
+          <td class="cell-num">${lineTotal !== null ? escapeHtml(fmtMoney(lineTotal)) : "$ -"}</td>
         </tr>`;
     })
     .join("");
@@ -215,8 +342,12 @@ function buildQuoteGuideHtml(
   const invoiceTotal = linesSaleSum > 0 ? linesSaleSum : saleValue;
 
   const logoBlock = logoDataUri
-    ? `<img class="logo" src="${logoDataUri}" alt="Activa Uniformes" />`
-    : `<h1 class="brand">ACTIVA UNIFORMES</h1>`;
+    ? `<img class="logo-img" src="${logoDataUri}" alt="Activa Uniformes" />`
+    : `<div class="logo-text">ACTIVA<br/><span style="font-size:12px;font-weight:600;letter-spacing:2px;">UNIFORMES</span></div>`;
+
+  const signatureBlock = signatureDataUri
+    ? `<img class="signature-img" src="${signatureDataUri}" alt="Firma María de la Paz Parada" />`
+    : `<div class="signature-space"></div>`;
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -224,149 +355,410 @@ function buildQuoteGuideHtml(
   <meta charset="utf-8" />
   <title></title>
   <style>
-    @page { size: A4; margin: 0; }
-    * { box-sizing: border-box; }
+    @page {
+      size: auto;
+      margin: 0;
+    }
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
     html, body {
       font-family: Arial, Helvetica, sans-serif;
-      color: #111;
+      color: #000;
       margin: 0;
       padding: 0;
-      font-size: 12px;
-      line-height: 1.35;
+      font-size: 11px;
+      line-height: 1.3;
       background: #fff;
     }
     .sheet {
-      max-width: 190mm;
+      max-width: 195mm;
       margin: 0 auto;
-      padding: 14mm 14mm 16mm;
+      padding: 7mm 12mm 8mm;
     }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 16px;
-      padding-bottom: 10px;
-      border-bottom: 1px solid #222;
-      margin-bottom: 14px;
+
+    /* HEADER */
+    .header-container {
+      position: relative;
+      width: 100%;
+      margin-bottom: 8px;
+      min-height: 74px;
     }
-    .brand-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-    .logo {
-      display: block;
-      height: 92px;
-      width: auto;
-      max-width: 280px;
+    .header-logo-wrap {
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 100px;
+      text-align: left;
+    }
+    .logo-img {
+      max-width: 95px;
+      max-height: 70px;
       object-fit: contain;
-      background: transparent;
-      padding: 0;
     }
-    .brand { font-size: 22px; font-weight: 800; letter-spacing: 0.02em; margin: 0; }
-    .subtitle { margin: 0; color: #555; font-size: 13px; font-weight: 500; }
-    .meta { text-align: right; }
-    .meta .order { font-size: 14px; font-weight: 700; margin: 0; }
-    .meta .when { margin: 4px 0 0; color: #555; font-size: 11px; }
-    .info { margin-bottom: 16px; }
-    .info-row { margin: 3px 0; }
-    .info-row .k { font-weight: 700; }
-    .section-title {
-      font-size: 13px; font-weight: 800; margin: 0 0 8px;
-      padding-bottom: 4px; border-bottom: 1px solid #ddd;
+    .logo-text {
+      font-size: 16px;
+      font-weight: 900;
+      color: #111;
+      text-align: left;
+      line-height: 1.1;
     }
-    table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
-    thead th {
-      text-align: left; font-size: 11px; font-weight: 700;
-      border-bottom: 1px solid #222; padding: 6px 4px;
+    .header-info-wrap {
+      width: 100%;
+      text-align: center;
+      margin: 0 auto;
     }
-    tbody td {
-      padding: 7px 4px; border-bottom: 1px solid #e5e5e5;
-      vertical-align: top; font-size: 11.5px;
+    .company-title {
+      font-size: 25px;
+      font-weight: 900;
+      color: #c00000;
+      margin: 0 0 2px;
+      letter-spacing: 0.5px;
     }
-    th.num, td.num { text-align: right; white-space: nowrap; }
-    .totals {
-      text-align: right; margin: 8px 0 18px; font-size: 13px;
+    .company-nit {
+      font-size: 12px;
+      font-weight: 800;
+      margin: 1px 0;
+      color: #111;
     }
-    .totals div { margin: 4px 0; }
-    .totals .strong { font-weight: 800; }
-    .comments-title { font-weight: 800; margin: 0 0 6px; }
-    .comments-body { margin: 0 0 28px; color: #222; white-space: pre-wrap; }
-    .signs {
-      display: flex; justify-content: space-between; gap: 40px;
-      margin-top: 48px; padding-top: 8px;
+    .company-desc {
+      font-size: 10px;
+      margin: 2px 0;
+      color: #222;
     }
-    .sign { width: 42%; text-align: center; }
-    .sign .line {
-      border-top: 1px solid #222; margin-bottom: 6px; height: 1px;
+    .company-address {
+      font-size: 10px;
+      font-weight: 600;
+      margin: 1.5px 0;
     }
-    .sign span { font-size: 11px; color: #333; }
-    .muted { color: #666; }
+    .company-contact {
+      font-size: 10px;
+      font-weight: 600;
+      margin: 1.5px 0;
+    }
+
+    /* TITLE */
+    .quote-title {
+      color: #c00000;
+      font-size: 20px;
+      font-weight: 900;
+      text-align: center;
+      margin: 8px 0 8px;
+      letter-spacing: 1.5px;
+    }
+
+    /* CLIENT TABLE */
+    .client-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 0;
+    }
+    .client-table td {
+      border: 1px solid #000;
+      padding: 4px 6px;
+      font-size: 10.5px;
+    }
+    .client-header {
+      background-color: #c00000 !important;
+      color: #fff !important;
+      font-weight: 800;
+      text-align: center;
+      width: 13%;
+      text-transform: uppercase;
+    }
+    .client-val {
+      color: #000;
+      font-weight: 600;
+    }
+    .date-header {
+      background-color: #c00000 !important;
+      color: #fff !important;
+      font-weight: 800;
+      text-align: center;
+      width: 10%;
+    }
+    .date-val {
+      text-align: center;
+      font-weight: 800;
+      width: 15%;
+    }
+
+    /* PRODUCTS TABLE */
+    .items-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: -1px;
+      margin-bottom: 0;
+    }
+    .items-table th {
+      background-color: #c00000 !important;
+      color: #fff !important;
+      font-weight: 800;
+      font-size: 10.5px;
+      border: 1px solid #000;
+      padding: 5px 4px;
+      text-align: center;
+      text-transform: uppercase;
+    }
+    .col-cant { width: 8%; }
+    .col-art { width: 66%; }
+    .col-unit { width: 13%; }
+    .col-tot { width: 13%; }
+
+    .items-table td {
+      border: 1px solid #000;
+      padding: 5px 6px;
+      font-size: 10px;
+      vertical-align: middle;
+    }
+    .cell-cant {
+      text-align: center;
+      font-weight: 700;
+    }
+    .cell-art {
+      text-align: center;
+      line-height: 1.3;
+    }
+    .cell-num {
+      text-align: center;
+      white-space: nowrap;
+      font-weight: 600;
+    }
+
+    /* TOTAL ROW */
+    .total-header {
+      background-color: #c00000 !important;
+      color: #fff !important;
+      font-weight: 900;
+      text-align: right;
+      padding-right: 12px !important;
+      font-size: 11px;
+      border: 1px solid #000;
+    }
+    .total-val {
+      font-weight: 800;
+      font-size: 11px;
+      text-align: center;
+      white-space: nowrap;
+      border: 1px solid #000;
+    }
+
+    /* NOTE BOX */
+    .note-box {
+      border: 1px solid #000;
+      border-top: none;
+      padding: 6px 10px;
+      font-size: 9.5px;
+      line-height: 1.3;
+      text-align: center;
+      margin-bottom: 8px;
+    }
+    .note-line {
+      margin: 0 0 3px;
+    }
+    .note-zese {
+      font-weight: 800;
+      margin: 3px 0 0;
+    }
+
+    /* CONDITIONS SECTION */
+    .conditions-wrapper {
+      margin-top: 4px;
+    }
+    .conditions-main-title {
+      font-family: 'Times New Roman', Times, Georgia, serif;
+      font-size: 14.5px;
+      font-weight: 900;
+      text-align: center;
+      margin: 6px 0 5px;
+      letter-spacing: 0.5px;
+    }
+    .condition-block {
+      margin-bottom: 4px;
+      font-size: 9.5px;
+      line-height: 1.28;
+    }
+    .condition-block-title {
+      font-size: 10px;
+      font-weight: 800;
+      margin-bottom: 1px;
+    }
+    .condition-text {
+      margin: 1.5px 0 1.5px 12px;
+      text-indent: -8px;
+    }
+    .condition-alert {
+      margin: 2px 0 2px 12px;
+      font-weight: 800;
+      font-size: 9.5px;
+    }
+
+    /* CLOSING & SIGNATURE */
+    .closing-text {
+      font-size: 9.5px;
+      margin: 6px 0 4px;
+    }
+    .signature-area {
+      margin-top: 6px;
+      font-size: 10px;
+      page-break-inside: avoid;
+    }
+    .signature-wrapper {
+      margin-top: 4px;
+      display: inline-block;
+      text-align: left;
+    }
+    .signature-img {
+      display: block;
+      height: 46px;
+      width: auto;
+      max-width: 190px;
+      object-fit: contain;
+      margin-bottom: 1px;
+      mix-blend-mode: multiply;
+    }
+    .signature-space {
+      height: 32px;
+    }
+    .signature-name {
+      font-weight: 800;
+      font-size: 11px;
+      line-height: 1.2;
+    }
+    .signature-role {
+      font-weight: 400;
+      font-size: 10px;
+      line-height: 1.2;
+    }
+
     @media print {
-      html, body { background: #fff; }
-      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      html, body {
+        background: #fff;
+        margin: 0;
+        padding: 0;
+      }
       .no-print { display: none !important; }
-      .sheet { padding: 12mm 12mm 14mm; }
+      .sheet {
+        padding: 7mm 12mm 8mm;
+        width: 100%;
+      }
     }
   </style>
 </head>
 <body>
   <div class="sheet">
-    <div class="header">
-      <div class="brand-wrap">
+    <!-- HEADER -->
+    <div class="header-container">
+      <div class="header-logo-wrap">
         ${logoBlock}
-        <p class="subtitle">Cotización</p>
       </div>
-      <div class="meta">
-        <p class="order">Cotización ${escapeHtml(quoteCode)}</p>
-        <p class="when">${escapeHtml(printedAt)}</p>
+      <div class="header-info-wrap">
+        <div class="company-title">Uniformes Activa</div>
+        <div class="company-nit">NIT 1090431678-0 &nbsp; Régimen Simplificado</div>
+        <div class="company-desc">Empresa productora y comercializadora de prendas de alta calidad para dotación empresarial e institucional</div>
+        <div class="company-address">📍 Calle 2 N° 5-53 Barrio Pescadero-Cúcuta</div>
+        <div class="company-contact">📞 3208931421 &nbsp;&nbsp; ✉ comercialuniformesactiva@gmail.com</div>
       </div>
     </div>
 
-    <div class="info">
-      <div class="info-row"><span class="k">Cliente:</span> ${escapeHtml(clientName)}</div>
-      <div class="info-row"><span class="k">Contacto:</span> ${escapeHtml(contact)}</div>
-      <div class="info-row"><span class="k">Dirección:</span> ${escapeHtml(address)}</div>
-      <div class="info-row"><span class="k">Tomada por:</span> ${escapeHtml(tomadaPor)}</div>
-      <div class="info-row"><span class="k">Creación / Envío estimado:</span> ${escapeHtml(creacionEnvio)}</div>
-      <div class="info-row"><span class="k">Válida hasta:</span> ${escapeHtml(fmtDate(quote.validUntil))}</div>
-      <div class="info-row"><span class="k">Cantidad total:</span> ${totalQty || "—"} unidades</div>
-    </div>
+    <div class="quote-title">COTIZACIÓN</div>
 
-    <h2 class="section-title">Prendas</h2>
-    <table>
+    <!-- CLIENT INFO -->
+    <table class="client-table">
+      <tr>
+        <td class="client-header">CLIENTE</td>
+        <td class="client-val" colspan="3">${escapeHtml(clientName)}</td>
+      </tr>
+      <tr>
+        <td class="client-header">CONTACTO</td>
+        <td class="client-val" colspan="3">${escapeHtml(contact)}</td>
+      </tr>
+      <tr>
+        <td class="client-header">DIRECCIÓN</td>
+        <td class="client-val">${escapeHtml(address)}</td>
+        <td class="date-header">FECHA:</td>
+        <td class="date-val">${escapeHtml(quoteDate)}</td>
+      </tr>
+    </table>
+
+    <!-- PRODUCTS TABLE -->
+    <table class="items-table">
       <thead>
         <tr>
-          <th>Producto</th>
-          <th>Talla</th>
-          <th>Estampado</th>
-          <th class="num">Cant.</th>
-          <th class="num">P. unit.</th>
-          <th class="num">Total</th>
+          <th class="col-cant">CANT</th>
+          <th class="col-art">ARTICULO</th>
+          <th class="col-unit">VR. UNIT</th>
+          <th class="col-tot">VR. TOTAL</th>
         </tr>
       </thead>
       <tbody>
         ${
           rows ||
-          `<tr><td colspan="6" class="muted">Sin prendas registradas en esta cotización.</td></tr>`
+          `<tr><td colspan="4" style="text-align: center; padding: 10px;">Sin prendas registradas en esta cotización.</td></tr>`
         }
+        <tr>
+          <td colspan="3" class="total-header">TOTAL</td>
+          <td class="total-val">${invoiceTotal > 0 ? escapeHtml(fmtMoney(invoiceTotal)) : "$ -"}</td>
+        </tr>
       </tbody>
     </table>
 
-    <div class="totals">
-      <div><span class="strong">Valor total:</span> ${escapeHtml(fmtMoney(invoiceTotal))}</div>
+    <!-- NOTE BOX -->
+    <div class="note-box">
+      <div class="note-line"><strong>Nota:</strong> La Fecha de entrega es de 20 dias hábiles, para iniciar el proceso de producción de la presente cotización es importante dar un abono del 50% del valor de la factura. &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; La presente cotización tiene una validez 8 dias calendario a partir de la fecha la cual fue recibida.</div>
+      <div class="note-zese">Favor abstenerse de aplicar retenciones ya que nos encontramos acogidos al regimen especial ZESE art 268 ley 1955/2019</div>
     </div>
 
-    <p class="comments-title">Comentarios / Observaciones</p>
-    <p class="comments-body">${escapeHtml(comments || "—")}</p>
+    <!-- CONDICIONES DE LA OFERTA -->
+    <div class="conditions-wrapper">
+      <div class="conditions-main-title">CONDICIONES DE LA OFERTA</div>
 
-    <div class="signs">
-      <div class="sign">
-        <div class="line"></div>
-        <span>Elaborado por</span>
+      <div class="condition-block">
+        <div class="condition-block-title">1. CONDICIONES PARA LA TOMA DE MEDIDAS Y ENTREGA DE UNIFORMES</div>
+        <div class="condition-text">- Las tallas se miden de acuerdo a nuestro tallaje para confirmar con exactitud la talla solicitada.</div>
+        <div class="condition-text">- El personal de la organización debe permitir que el asesor de Uniformes Activa verifique que la talla seleccionada sea la indicada, y tener en cuenta las recomendaciones realizadas, de lo contrario no se responderá por ajustes en el momento de la entrega.</div>
+        <div class="condition-text">- Las personas que se mida las tallas con faja, deberá así mismo tenerla el día de la entrega de las prendas, esto con el fin de evitar inconformidades en los ajustes.</div>
+        <div class="condition-text">- Se realizará un único ajuste posterior a la entrega de los uniformes relacionados a corrección de defectos de fábrica, tamaño de las prendas y/o especificaciones indicadas en el momento del tallaje. Por lo tanto, el personal debe comprobar el uniforme en el momento de la entrega o hasta el tiempo permitido y reportar todas las novedades, ya que no se realizará una segunda revisión.</div>
+        <div class="condition-text">- No se realizarán ajustes personalizados que no correspondan al diseño inicial de los uniformes. Los pantalones serán entregan sin ruedos.</div>
       </div>
-      <div class="sign">
-        <div class="line"></div>
-        <span>Aceptado por el cliente</span>
+
+      <div class="condition-block">
+        <div class="condition-block-title">2. TIEMPO DE ENTREGA</div>
+        <div class="condition-text">- El tiempo de entrega es de 20 días hábiles. El tiempo de entrega inicia desde que se recibe el anticipo y se completa la toma del tallaje. En caso de modificaciones en el tiempo de entrega ocasionada por cambios con el proveedor, se informará al cliente oportunamente.</div>
+        <div class="condition-alert">(PARA MAS DE 100 PRENDAS EL TIEMPO DE ENTREGA ES DE 30 DÍAS HABILES)</div>
+      </div>
+
+      <div class="condition-block">
+        <div class="condition-block-title">3. TIEMPO DE MODIFICACIONES</div>
+        <div class="condition-text">- Las modificaciones deben ser reportadas máximo un día hábil posterior a la entrega de la dotación. No se realizarán ajustes a prendas ya utilizadas o sucias o que hayan sido alteradas o modificadas por terceros.</div>
+      </div>
+
+      <div class="condition-block">
+        <div class="condition-block-title">4. FORMA DE PAGO</div>
+        <div class="condition-text">- Para el ingreso del pedido a producción se requiere el pago del 50% del valor total de la oferta, el 50% restante será cancelado dentro de los 8 días hábiles siguientes al recibido a satisfacción del pedido.</div>
+      </div>
+
+      <div class="condition-block">
+        <div class="condition-block-title">5. VALIDEZ DE LA OFERTA</div>
+        <div class="condition-text">- La oferta presentada tendrá una validez de 8 días calendario</div>
+      </div>
+
+      <div class="closing-text">Agradecemos su atención y estamos a su orden ante cualquier solicitud o requerimiento adicional.</div>
+
+      <div class="signature-area">
+        <div>Atentamente,</div>
+        <div class="signature-wrapper">
+          ${signatureBlock}
+          <div class="signature-name">María de la Paz Parada</div>
+          <div class="signature-role">Representante Legal</div>
+        </div>
       </div>
     </div>
   </div>
+
   <script>
     window.onload = function () {
       setTimeout(function () { window.print(); }, 280);
@@ -393,7 +785,7 @@ export async function printQuoteProductionGuide(
 
   win.document.open();
   win.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="utf-8" />
-    <title></title>
+    <title>Generando cotización…</title>
     <style>body{font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#444}
     p{font-size:14px}</style></head>
     <body><p>Generando cotización…</p></body></html>`);
@@ -411,9 +803,10 @@ export async function printQuoteProductionGuide(
       ((finalQuote.orderPayload || {}) as QuoteOrderPayload).cliente_id ||
       "";
 
-    const [client, logoDataUri, printItems] = await Promise.all([
+    const [client, logoDataUri, signatureDataUri, printItems] = await Promise.all([
       clienteId ? fetchClientForOrderGuide(clienteId) : Promise.resolve(null),
       loadCompanyLogoDataUri(),
+      loadRepresentativeSignatureDataUri(),
       enrichQuotePrintItems(finalQuote),
     ]);
 
@@ -421,7 +814,13 @@ export async function printQuoteProductionGuide(
       throw new Error("La ventana de impresión se cerró antes de generar la cotización.");
     }
 
-    const html = buildQuoteGuideHtml(finalQuote, client, printItems, logoDataUri);
+    const html = buildQuoteGuideHtml(
+      finalQuote,
+      client,
+      printItems,
+      logoDataUri,
+      signatureDataUri
+    );
     win.document.open();
     win.document.write(html);
     win.document.close();
