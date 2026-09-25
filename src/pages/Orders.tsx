@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, FileText, Settings, Loader2, ChevronLeft, ChevronRight, SlidersHorizontal, Eye, Check, X, Pencil, Printer, Package, Calculator } from "lucide-react";
+import { Plus, Search, FileText, Settings, Loader2, ChevronLeft, ChevronRight, SlidersHorizontal, Eye, Check, X, Pencil, Printer, Package, Calculator, FileSpreadsheet } from "lucide-react";
 import { useOrders, Order, OrderListFilters, fetchAllOrdersMatchingFilters } from "@/hooks/useOrders";
 import { printReportDocument } from "@/lib/report-print";
 import { NewOrderDialog } from "@/components/NewOrderDialog";
@@ -31,7 +31,10 @@ import {
   summarizeOrderArticles,
   itemsToArticleDetailLines,
 } from "@/lib/order-fields";
-import { printOrderProductionGuide } from "@/lib/order-production-guide";
+import {
+  printOrderProductionGuide,
+  downloadOrderProductionGuideExcel,
+} from "@/lib/order-production-guide";
 import {
   computeRealAccumulatedCost,
   emptyRealCost,
@@ -90,6 +93,7 @@ export default function Orders() {
   const [paymentDetailOrder, setPaymentDetailOrder] = useState<Order | null>(null);
   const [paymentDetailOpen, setPaymentDetailOpen] = useState(false);
   const [printingOrderId, setPrintingOrderId] = useState<string | null>(null);
+  const [exportingExcelOrderId, setExportingExcelOrderId] = useState<string | null>(null);
   const [articlesOrder, setArticlesOrder] = useState<Order | null>(null);
   const [articlesOpen, setArticlesOpen] = useState(false);
   const [realCostOrder, setRealCostOrder] = useState<Order | null>(null);
@@ -382,6 +386,30 @@ export default function Orders() {
       });
     } finally {
       setPrintingOrderId(null);
+    }
+  };
+
+  const handleExportExcelOrder = async (order: Order) => {
+    setExportingExcelOrderId(order.id);
+    try {
+      await downloadOrderProductionGuideExcel(order, {
+        refreshOrder: () => fetchOrderById(order.id),
+      });
+      toast({
+        title: "Guía de producción descargada",
+        description: "El archivo Excel se generó correctamente con el formato oficial.",
+      });
+    } catch (err) {
+      toast({
+        title: "No se pudo descargar el Excel",
+        description:
+          err instanceof Error
+            ? err.message
+            : "Ocurrió un error al generar el archivo Excel.",
+        variant: "destructive",
+      });
+    } finally {
+      setExportingExcelOrderId(null);
     }
   };
 
@@ -1046,6 +1074,22 @@ export default function Orders() {
                                   <Loader2 className="h-4 w-4 animate-spin" />
                                 ) : (
                                   <Printer className="h-4 w-4" />
+                                )}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                title="Descargar guía de producción (Excel .xlsx)"
+                                aria-label="Descargar guía de producción en Excel"
+                                disabled={exportingExcelOrderId === order.id}
+                                onClick={() => handleExportExcelOrder(order)}
+                                className="h-8 w-8 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
+                              >
+                                {exportingExcelOrderId === order.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
+                                ) : (
+                                  <FileSpreadsheet className="h-4 w-4" />
                                 )}
                               </Button>
                               {order.estado === "pending" && (
