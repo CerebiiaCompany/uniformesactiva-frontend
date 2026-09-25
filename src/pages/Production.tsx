@@ -172,19 +172,47 @@ function calcDuration(from: string, to: string) {
 
 function isStageRequiredForCard(stageKey: string, card: ProductionOrder | null): boolean {
   if (!card) return true;
-  const k = stageKey.toLowerCase();
+  const k = stageKey.toLowerCase().trim();
+  const cardEstampado = ((card as any).estampado || card.tipoBordado || "").toLowerCase();
+  const cardTokens: string[] = ((card as any).personalizationTypes || []).map((t: string) => t.toLowerCase());
 
   // Bordado
   if (k === "embroidery" || k === "bordado" || k.includes("bordado")) {
     if (card.hasBordado === false) return false;
     if (card.tipoBordado === "—" && !card.hasBordado) return false;
+    if (cardTokens.length > 0 && !cardTokens.some((t) => t.includes("borda")) && !card.hasBordado) return false;
+    return true;
   }
 
-  // Estampado
+  // Serigrafía
+  if (k === "serigrafia" || k.includes("serigraf")) {
+    if ((card as any).hasSerigrafia === false) return false;
+    return cardTokens.some((t) => t.includes("serigraf")) || cardEstampado.includes("serigraf");
+  }
+
+  // Transfer
+  if (k === "transfer" || k.includes("transfer")) {
+    if ((card as any).hasTransfer === false) return false;
+    return cardTokens.some((t) => t.includes("transfer")) || cardEstampado.includes("transfer");
+  }
+
+  // Sublimado
+  if (k === "sublimado" || k === "sublimacion" || k.includes("sublima")) {
+    if ((card as any).hasSublimado === false) return false;
+    return cardTokens.some((t) => t.includes("sublima")) || cardEstampado.includes("sublima");
+  }
+
+  // DTF
+  if (k === "dtf" || k.includes("dtf")) {
+    return cardTokens.some((t) => t.includes("dtf")) || cardEstampado.includes("dtf");
+  }
+
+  // Estampado general (printing)
   if (k === "printing" || k === "estampado" || k.includes("estampado")) {
     if ((card as any).hasEstampado === false) return false;
     const est = ((card as any).estampado || "").trim().toLowerCase();
     if (!est || est === "—" || est === "sin" || est.includes("sin estampado") || est.includes("sin estampa")) return false;
+    return true;
   }
 
   return true;
@@ -1403,7 +1431,16 @@ export default function Production() {
         const rawStage = (o.etapa_produccion || "design") as ProductionOrder["stage"];
         const stage = resolveValidStageForCard(
           rawStage,
-          { hasBordado: factory.hasBordado, tipoBordado: factory.tipoBordado, hasEstampado: (o as any).hasEstampado, estampado: (o as any).estampado } as any,
+          {
+            hasBordado: factory.hasBordado,
+            hasEstampado: factory.hasEstampado,
+            hasSerigrafia: factory.hasSerigrafia,
+            hasTransfer: factory.hasTransfer,
+            hasSublimado: factory.hasSublimado,
+            personalizationTypes: factory.personalizationTypes,
+            tipoBordado: factory.tipoBordado,
+            estampado: factory.estampado,
+          } as any,
           etapas.length ? etapas : stages
         ) as ProductionOrder["stage"];
         const history = (o.etapa_historial || []).map((h) => ({
@@ -1442,8 +1479,12 @@ export default function Production() {
           stageHistory,
           color: factory.color,
           hasBordado: factory.hasBordado,
+          hasEstampado: factory.hasEstampado,
+          personalizationTypes: factory.personalizationTypes,
           bordadoLabel: factory.bordadoLabel,
           tipoBordado: factory.tipoBordado,
+          estampado: factory.estampado,
+          observacionBordado: factory.observacionBordado,
           variants,
         };
 
@@ -1560,8 +1601,12 @@ export default function Production() {
               isDelayed: card.isDelayed ?? isDelayed,
               color: factory.color,
               hasBordado: factory.hasBordado,
+              hasEstampado: factory.hasEstampado,
+              personalizationTypes: factory.personalizationTypes,
               bordadoLabel: factory.bordadoLabel,
               tipoBordado: factory.tipoBordado,
+              estampado: factory.estampado,
+              observacionBordado: factory.observacionBordado,
               variants: card.variants?.length ? card.variants : variants,
               dueDate:
                 card.dueDate ||
@@ -2780,6 +2825,7 @@ export default function Production() {
         hasBordado: factory.hasBordado,
         bordadoLabel: factory.bordadoLabel,
         tipoBordado: factory.tipoBordado,
+        observacionBordado: factory.observacionBordado,
         variants,
         satelliteId,
         satelliteName: values.satelliteName,
@@ -3283,10 +3329,17 @@ export default function Production() {
                 </div>
 
                 {factory.hasBordado && factory.tipoBordado !== "—" && (
-                  <p className="mt-2 text-[10px] text-muted-foreground leading-snug">
-                    Tipo bordado:{" "}
-                    <span className="font-medium text-foreground">{factory.tipoBordado}</span>
-                  </p>
+                  <div className="mt-2 space-y-1">
+                    <p className="text-[10px] text-muted-foreground leading-snug">
+                      Tipo bordado:{" "}
+                      <span className="font-medium text-foreground">{factory.tipoBordado}</span>
+                    </p>
+                    {factory.observacionBordado && (
+                      <p className="text-[10px] rounded bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 text-amber-800 dark:text-amber-300">
+                        <span className="font-semibold">Obs. bordado/estampado:</span> {factory.observacionBordado}
+                      </p>
+                    )}
+                  </div>
                 )}
               </button>
               );
@@ -3598,6 +3651,12 @@ export default function Production() {
                         <span className="text-muted-foreground shrink-0">Tipo</span>
                         <span className="font-medium text-foreground text-right">{order.tipoBordado || "—"}</span>
                       </div>
+                      {order.observacionBordado && (
+                        <div className="mt-1.5 rounded-md bg-amber-500/10 border border-amber-500/25 px-2 py-1 text-[10px] text-amber-900 dark:text-amber-200 leading-tight">
+                          <span className="font-semibold block text-[9.5px]">Obs. bordado / estampado:</span>
+                          <span className="break-words block mt-0.5">{order.observacionBordado}</span>
+                        </div>
+                      )}
                       <div className="flex items-start justify-between gap-2 border-t border-border/50 pt-1 mt-1">
                         <span className="text-muted-foreground shrink-0 inline-flex items-center gap-1 font-medium">
                           <DollarSign className="h-3 w-3 text-emerald-600 dark:text-emerald-400 shrink-0" />

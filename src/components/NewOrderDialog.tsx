@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -598,6 +598,7 @@ export function NewOrderDialog({
             linea_id?: string;
             linea_nombre?: string;
             estampado?: string;
+            observacion_estampado?: string;
         };
         const rawItems: PayloadLineItem[] = productEntries.flatMap((entry) =>
             entry.size_lines.map((line) => ({
@@ -616,6 +617,7 @@ export function NewOrderDialog({
                 linea_id: entry.line_id || undefined,
                 linea_nombre: entry.line_name || entry.line_label || undefined,
                 estampado: entry.estampado?.trim() || undefined,
+                observacion_estampado: entry.observacion_estampado?.trim() || undefined,
             }))
         );
 
@@ -644,6 +646,9 @@ export function NewOrderDialog({
                 if (!existing.estampado && item.estampado) {
                     existing.estampado = item.estampado;
                 }
+                if (!existing.observacion_estampado && item.observacion_estampado) {
+                    existing.observacion_estampado = item.observacion_estampado;
+                }
             } else {
                 mergedItemsMap.set(key, { ...item });
             }
@@ -656,8 +661,13 @@ export function NewOrderDialog({
         }
 
         const logoFields = buildLogoFields(logoPositions);
+        const obsEstampadoLabel = [
+            ...new Set(productEntries.map((e) => e.observacion_estampado?.trim()).filter(Boolean)),
+        ].join(" · ");
+
         const comentariosFinal = [
             isRepair ? "[Arreglo / reparación de prenda]" : "",
+            obsEstampadoLabel ? `[Bordado/Estampado: ${obsEstampadoLabel}]` : "",
             orderComments.trim(),
         ]
             .filter(Boolean)
@@ -818,7 +828,7 @@ export function NewOrderDialog({
                                 <ClipboardList className="h-5 w-5" />
                             </div>
                             <div>
-                                <h2 className="text-lg font-bold tracking-tight">
+                                <DialogTitle className="text-lg font-bold tracking-tight">
                                     {isQuoteMode
                                         ? isEditMode
                                             ? "Editar cotización"
@@ -828,8 +838,8 @@ export function NewOrderDialog({
                                           : fromQuote
                                             ? "Crear orden desde cotización"
                                             : "Nueva orden"}
-                                </h2>
-                                <p className="text-sm text-muted-foreground mt-0.5">
+                                </DialogTitle>
+                                <DialogDescription className="text-sm text-muted-foreground mt-0.5">
                                     {isQuoteMode
                                         ? isEditMode
                                             ? "Actualiza cliente, productos y vigencia de la cotización."
@@ -839,7 +849,7 @@ export function NewOrderDialog({
                                           : fromQuote
                                             ? "Completa productos, tallas y datos de la orden. Al guardar, la cotización pasará a Ordenado."
                                             : "Selecciona productos del catálogo, define tallas, atributos y comentarios."}
-                                </p>
+                                </DialogDescription>
                             </div>
                         </div>
                     </div>
@@ -1064,12 +1074,28 @@ export function NewOrderDialog({
                                                                     </p>
                                                                 </div>
                                                                 <div className="flex flex-wrap gap-1.5">
-                                                                    {entry.estampado?.trim() && (
-                                                                        <Badge variant="outline" className="text-[10px] font-normal">
-                                                                            {entry.estampado}
-                                                                        </Badge>
+                                                                    {entry.estampado?.trim() && entry.estampado !== "Sin estampado" ? (
+                                                                        entry.estampado.split(/[,;\/]+/).map((t, idx) => (
+                                                                            <Badge
+                                                                                key={idx}
+                                                                                variant="outline"
+                                                                                className="text-[10px] font-medium border-primary/30 text-primary bg-primary/5"
+                                                                            >
+                                                                                {t.trim()}
+                                                                            </Badge>
+                                                                        ))
+                                                                    ) : (
+                                                                        <span className="text-[10px] text-muted-foreground italic">
+                                                                            Sin estampado
+                                                                        </span>
                                                                     )}
                                                                 </div>
+                                                                {entry.observacion_estampado && (
+                                                                    <div className="rounded-md bg-amber-500/10 border border-amber-500/25 px-2 py-1 text-[11px] text-amber-900 dark:text-amber-200 leading-tight">
+                                                                        <span className="font-semibold block">Obs. bordado / estampado:</span>
+                                                                        <span className="break-words">{entry.observacion_estampado}</span>
+                                                                    </div>
+                                                                )}
                                                                 <div className="flex flex-wrap gap-1">
                                                                     {entry.size_lines.map((l) => (
                                                                         <span

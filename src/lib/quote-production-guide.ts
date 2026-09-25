@@ -77,6 +77,8 @@ function buildArticuloText(
     subproducto_nombre?: string | null;
     talla_nombre?: string | null;
     color?: string | null;
+    estampado?: string | null;
+    observacion_estampado?: string | null;
   },
   fabric: {
     reference?: string | null;
@@ -132,12 +134,56 @@ function buildArticuloText(
     }
   }
 
-  const hasLogos =
-    Boolean(payload?.estampado?.trim()) ||
-    (payload ? getActiveLogoLabels(payload).length > 0 : false);
+  const itemEstampado = (item.estampado || "").trim();
+  const payloadEstampado = (payload?.estampado || "").trim();
+  const rawEstampado = itemEstampado || payloadEstampado;
 
-  if (hasLogos) {
-    text += `, con un bordado incluido y especificacion del cliente.`;
+  const isSinEstampado =
+    !rawEstampado ||
+    rawEstampado.toLowerCase() === "sin estampado" ||
+    rawEstampado.toLowerCase() === "ninguno" ||
+    rawEstampado.toLowerCase() === "none";
+
+  const itemObs = (
+    item.observacion_estampado ||
+    (item as any).observacion ||
+    (item as any).observacion_bordado ||
+    ""
+  ).trim();
+  const payloadObs = (
+    (payload as any)?.observacion_estampado ||
+    (payload as any)?.observacion_bordado ||
+    ""
+  ).trim();
+
+  let commentObs = "";
+  if (payload?.comentarios) {
+    const match = payload.comentarios.match(
+      /\[(?:Bordado\/Estampado|Obs\.?\s*bordado|Estampado):\s*([^\]]+)\]/i
+    );
+    if (match) commentObs = match[1].trim();
+  }
+
+  const effectiveObs = itemObs || payloadObs || commentObs;
+  const activeLogos = payload ? getActiveLogoLabels(payload) : [];
+
+  if (!isSinEstampado) {
+    let personalizacionText = `con ${rawEstampado.toLowerCase()} incluido`;
+    if (activeLogos.length > 0) {
+      personalizacionText += ` en ${activeLogos.join(", ")}`;
+    }
+    if (effectiveObs) {
+      personalizacionText += ` (${effectiveObs})`;
+    }
+    text += `, ${personalizacionText} y especificacion del cliente.`;
+  } else if (activeLogos.length > 0) {
+    let personalizacionText = `con bordado en ${activeLogos.join(", ")} incluido`;
+    if (effectiveObs) {
+      personalizacionText += ` (${effectiveObs})`;
+    }
+    text += `, ${personalizacionText} y especificacion del cliente.`;
+  } else if (effectiveObs) {
+    text += `, con personalización (${effectiveObs}) y especificacion del cliente.`;
   } else {
     text += ` y especificacion del cliente.`;
   }
@@ -269,7 +315,17 @@ export async function enrichQuotePrintItems(quote: Quote): Promise<QuotePrintIte
       (item.talla_nombre || "").trim() || tallaFromCatalog || null;
 
     const articulo_completo = buildArticuloText(
-      { producto_nombre, subproducto_nombre, talla_nombre, color: item.color },
+      {
+        producto_nombre,
+        subproducto_nombre,
+        talla_nombre,
+        color: item.color,
+        estampado: item.estampado,
+        observacion_estampado:
+          item.observacion_estampado ||
+          (item as any).observacion ||
+          (item as any).observacion_bordado,
+      },
       fabric,
       payload
     );

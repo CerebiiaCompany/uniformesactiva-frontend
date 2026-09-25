@@ -384,6 +384,13 @@ function ArticleLineCard({
           value={money(line.unitCost)}
         />
       </div>
+
+      {line.observacionEstampado && (
+        <div className="rounded-lg bg-amber-500/10 border border-amber-500/25 px-2.5 py-1.5 text-[11px] text-amber-900 dark:text-amber-200">
+          <span className="font-semibold block">Obs. bordado / estampado:</span>
+          <span>{line.observacionEstampado}</span>
+        </div>
+      )}
     </div>
   );
 }

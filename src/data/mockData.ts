@@ -83,8 +83,12 @@ export interface ProductionOrder {
   stageHistory: StageHistoryEntry[];
   color?: string;
   hasBordado?: boolean;
+  hasEstampado?: boolean;
   bordadoLabel?: string;
   tipoBordado?: string;
+  estampado?: string;
+  observacionBordado?: string;
+  personalizationTypes?: string[];
   /** Satélite (taller externo) asignado a la tarjeta Kanban */
   satelliteId?: string | null;
   satelliteName?: string | null;
