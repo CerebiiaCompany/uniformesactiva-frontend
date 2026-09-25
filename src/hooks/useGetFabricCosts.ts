@@ -30,6 +30,7 @@ const mapFabric = (item: any, catalogById: Map<string, string>): FabricRecord =>
         proveedor_id: proveedorId,
         proveedor_nombre: resolveProveedorNombre(item, catalogById),
         reference: item.reference ?? "",
+        descripcion: item.descripcion ?? "",
         codigo: String(item.codigo ?? item.code ?? "").trim(),
         meters: String(item.meters ?? "0"),
         price_per_meter: String(item.price_per_meter ?? "0"),

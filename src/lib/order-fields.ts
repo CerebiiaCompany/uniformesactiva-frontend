@@ -71,6 +71,7 @@ export interface ArticleDetailLine {
     size: string;
     color: string;
     print: string;
+    observacionEstampado?: string;
     quantity: number;
     unitCost: number | null;
 }
@@ -86,6 +87,7 @@ type ArticleSourceItem = {
     linea_nombre?: string | null;
     color?: string | null;
     estampado?: string | null;
+    observacion_estampado?: string | null;
 };
 
 /** Convierte ítems de orden/cotización a líneas de detalle (una por talla). */
@@ -124,6 +126,7 @@ export function itemsToArticleDetailLines(
         const size = (item.talla_nombre || "").trim() || "—";
         const material = (item.linea_nombre || "").trim() || "—";
         const print = (item.estampado || "").trim() || fallbackPrint;
+        const observacionEstampado = (item.observacion_estampado || "").trim() || undefined;
         const variantId = item.subproducto_id;
 
         return {
@@ -136,6 +139,7 @@ export function itemsToArticleDetailLines(
             size,
             color,
             print,
+            observacionEstampado,
             quantity: qty,
             unitCost: unitCost != null && Number.isFinite(unitCost) ? unitCost : null,
         };
@@ -316,32 +320,103 @@ export function quotePayloadToArticleLines(
 export function resolveFactoryCardInfo(order: {
     color?: string | null;
     estampado?: string | null;
+    observacion_estampado?: string | null;
+    observacion_bordado?: string | null;
+    comentarios?: string | null;
+    items?: Array<{
+        estampado?: string | null;
+        observacion_estampado?: string | null;
+        observacion?: string | null;
+        comentario?: string | null;
+    }>;
 } & Partial<OrderLogoFields>) {
     const color = (order.color || "").trim() || "—";
-    const estampado = (order.estampado || "").trim();
+    const rawEstampado = (order.estampado || "").trim();
+
+    // Extraer tokens de personalización de la orden e items
+    const rawTokens: string[] = [];
+    if (rawEstampado && !/^sin\s+/i.test(rawEstampado) && rawEstampado !== "—") {
+        rawEstampado.split(/[,/|;]+/).forEach((t) => {
+            const clean = t.trim();
+            if (clean && !/^sin\s+/i.test(clean) && clean !== "—") rawTokens.push(clean);
+        });
+    }
+    (order.items || []).forEach((it) => {
+        const est = (it.estampado || "").trim();
+        if (est && !/^sin\s+/i.test(est) && est !== "—") {
+            est.split(/[,/|;]+/).forEach((t) => {
+                const clean = t.trim();
+                if (clean && !/^sin\s+/i.test(clean) && clean !== "—" && !rawTokens.includes(clean)) {
+                    rawTokens.push(clean);
+                }
+            });
+        }
+    });
+
     const logoLabels = getActiveLogoLabels(order);
     const hasLogo = logoLabels.length > 0;
-    const hasBordado = /bordado/i.test(estampado) || hasLogo;
+    const hasBordado = rawTokens.some((t) => /borda/i.test(t)) || /bordado/i.test(rawEstampado) || hasLogo;
+    const hasSerigrafia = rawTokens.some((t) => /serigraf[ií]a/i.test(t)) || /serigraf[ií]a/i.test(rawEstampado);
+    const hasTransfer = rawTokens.some((t) => /transfer/i.test(t)) || /transfer/i.test(rawEstampado);
+    const hasSublimado = rawTokens.some((t) => /sublima/i.test(t)) || /sublima/i.test(rawEstampado);
+    const hasEstampado = hasSerigrafia || hasTransfer || hasSublimado || (/estampa/i.test(rawEstampado) && !/^sin\s+estampa/i.test(rawEstampado)) || (rawTokens.length > 0 && !hasBordado);
 
     let tipoBordado = "—";
-    if (hasBordado) {
-        if (/bordado/i.test(estampado) && hasLogo) {
+    if (rawTokens.length > 0 || hasLogo) {
+        const parts: string[] = [];
+        rawTokens.forEach((t) => {
+            if (/borda/i.test(t) && hasLogo) {
+                parts.push(`Bordado (${logoLabels.join(", ")})`);
+            } else {
+                parts.push(t);
+            }
+        });
+        if (hasLogo && !rawTokens.some((t) => /borda/i.test(t))) {
+            parts.push(`Bordado (${logoLabels.join(", ")})`);
+        }
+        tipoBordado = parts.join(", ") || rawEstampado || "Bordado";
+    } else if (hasBordado) {
+        if (/bordado/i.test(rawEstampado) && hasLogo) {
             tipoBordado = `Bordado · ${logoLabels.join(", ")}`;
-        } else if (/bordado/i.test(estampado)) {
-            tipoBordado = estampado;
+        } else if (/bordado/i.test(rawEstampado)) {
+            tipoBordado = rawEstampado;
         } else if (hasLogo) {
             tipoBordado = logoLabels.join(", ");
         } else {
-            tipoBordado = estampado || "Bordado";
+            tipoBordado = rawEstampado || "Bordado";
         }
     }
+
+    const itemObs = (order.items || [])
+        .map((i) => (i.observacion_estampado || i.observacion || i.comentario || "").trim())
+        .filter(Boolean);
+    const orderObs = (
+        order.observacion_estampado ||
+        order.observacion_bordado ||
+        ""
+    ).trim();
+
+    // Extraer también si en comentarios hay un tag [Bordado/Estampado: ...]
+    let commentObs = "";
+    if (order.comentarios) {
+        const match = order.comentarios.match(/\[(?:Bordado\/Estampado|Obs\.?\s*bordado|Estampado):\s*([^\]]+)\]/i);
+        if (match) commentObs = match[1].trim();
+    }
+
+    const observacionBordado = orderObs || commentObs || (itemObs.length > 0 ? itemObs.join(" · ") : "");
 
     return {
         color,
         hasBordado,
+        hasEstampado,
+        hasSerigrafia,
+        hasTransfer,
+        hasSublimado,
+        personalizationTypes: rawTokens,
         bordadoLabel: hasBordado ? "Sí" : "No",
         tipoBordado,
-        estampado: estampado || "—",
+        estampado: rawTokens.join(", ") || rawEstampado || "—",
+        observacionBordado,
     };
 }
 

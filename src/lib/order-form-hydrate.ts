@@ -94,6 +94,7 @@ type RawItem = {
     linea_nombre?: string | null;
     color?: string | null;
     estampado?: string | null;
+    observacion_estampado?: string | null;
 };
 
 function itemsToProductEntries(
@@ -156,6 +157,12 @@ function itemsToProductEntries(
             options.fallbackProductName ||
             `Producto ${index + 1}`;
 
+        const observacion_estampado =
+            (first.observacion_estampado ||
+                (first as any).observacion ||
+                (first as any).observacion_bordado ||
+                "").trim();
+
         return {
             key: `edit-${variantId}-${index}`,
             line_id: first.linea_id || "",
@@ -168,6 +175,7 @@ function itemsToProductEntries(
             variant_label: first.subproducto_nombre || label,
             color: (first.color || options.fallbackColor || "").trim(),
             estampado: (first.estampado || options.fallbackEstampado || "").trim(),
+            observacion_estampado: observacion_estampado || undefined,
             comentario: "",
             unit_cost: qty > 0 ? costSum / qty : 0,
             ingreso_proyectado_unitario:

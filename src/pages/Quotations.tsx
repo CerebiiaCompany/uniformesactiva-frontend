@@ -3,7 +3,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, X, ShoppingCart, MessageSquare, FileText, Pencil, Package, Printer, Loader2 } from "lucide-react";
+import { Plus, X, ShoppingCart, MessageSquare, FileText, Pencil, Package, Printer, Loader2, FileSpreadsheet } from "lucide-react";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
 import { http } from "@/lib/http";
 import { endpoints } from "@/lib/api-endpoints";
 import { quotePayloadToArticleLines } from "@/lib/order-fields";
-import { printQuoteProductionGuide } from "@/lib/quote-production-guide";
+import { printQuoteProductionGuide, exportQuoteToExcel } from "@/lib/quote-production-guide";
 import { isAdminUser } from "@/lib/auth-roles";
 
 interface FilterUserOption {
@@ -503,6 +503,8 @@ function isUserAllowedForTomadaPor(u: any): boolean {
     }
   };
 
+  const [exportingExcelQuoteId, setExportingExcelQuoteId] = useState<string | null>(null);
+
   const handlePrintQuote = async (quote: Quote) => {
     setPrintingQuoteId(quote.id);
     try {
@@ -520,6 +522,28 @@ function isUserAllowedForTomadaPor(u: any): boolean {
       });
     } finally {
       setPrintingQuoteId(null);
+    }
+  };
+
+  const handleExportExcelQuote = async (quote: Quote) => {
+    setExportingExcelQuoteId(quote.id);
+    try {
+      await exportQuoteToExcel(quote, {
+        refreshQuote: () => fetchQuoteById(quote.id),
+      });
+      toast({
+        title: "Excel descargado",
+        description: "El archivo de cotización se ha descargado correctamente.",
+      });
+    } catch (err) {
+      toast({
+        title: "No se pudo exportar a Excel",
+        description:
+          err instanceof Error ? err.message : "Intenta de nuevo.",
+        variant: "destructive",
+      });
+    } finally {
+      setExportingExcelQuoteId(null);
     }
   };
 
@@ -809,22 +833,40 @@ function isUserAllowedForTomadaPor(u: any): boolean {
                     </TableCell>
                     <TableCell className="text-center">
                       <div className="flex flex-col items-center gap-1.5">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          title="Imprimir cotización (PDF)"
-                          aria-label="Imprimir cotización"
-                          disabled={printingQuoteId === q.id}
-                          onClick={() => handlePrintQuote(q)}
-                          className="h-8 w-8 text-slate-600 hover:text-slate-800 hover:bg-slate-100"
-                        >
-                          {printingQuoteId === q.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Printer className="h-4 w-4" />
-                          )}
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            title="Imprimir cotización (PDF)"
+                            aria-label="Imprimir cotización"
+                            disabled={printingQuoteId === q.id}
+                            onClick={() => handlePrintQuote(q)}
+                            className="h-8 w-8 text-slate-600 hover:text-slate-800 hover:bg-slate-100"
+                          >
+                            {printingQuoteId === q.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Printer className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            title="Descargar cotización (Excel .xlsx)"
+                            aria-label="Descargar cotización en Excel"
+                            disabled={exportingExcelQuoteId === q.id}
+                            onClick={() => handleExportExcelQuote(q)}
+                            className="h-8 w-8 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
+                          >
+                            {exportingExcelQuoteId === q.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
+                            ) : (
+                              <FileSpreadsheet className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
                         {canEditQuotes &&
                           q.status !== "ordered" &&
                           q.status !== "inactive" && (

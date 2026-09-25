@@ -44,6 +44,7 @@ export interface FabricRecord {
     proveedor_id: string;
     proveedor_nombre?: string;
     reference: string;
+    descripcion?: string;
     /** Código exacto TNS (prod_Dist_Cod) para descuentos de inventario */
     codigo?: string;
     meters: string;
@@ -119,6 +120,7 @@ export interface CreateFabricPayload {
     variant_id: string;
     proveedor_id?: string;
     reference: string;
+    descripcion?: string;
     codigo?: string;
     meters: string | number;
     price_per_meter: string | number;
@@ -129,6 +131,7 @@ export interface CreateFabricPayload {
 export interface UpdateFabricPayload {
     proveedor_id?: string;
     reference?: string;
+    descripcion?: string;
     codigo?: string;
     meters?: string | number;
     price_per_meter?: string | number;

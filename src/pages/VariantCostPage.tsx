@@ -1465,20 +1465,18 @@ export default function VariantCostPage() {
                             inventoryFabricRefs={inventoryFabricRefs}
                             isSettingPrincipal={isFabricLoading}
                             onAdd={handleAddFabric}
+                            onUpdate={async (id, payload) => {
+                                const ok = await updateFabric(id, payload, activeVariantId);
+                                if (ok) toast.success("Costo de tela actualizado correctamente");
+                                else toast.error("No se pudo actualizar el costo de tela");
+                                return ok;
+                            }}
                             onSetPrincipal={async (id) => {
                                 const ok = await setFabricPrincipal(id, activeVariantId);
                                 if (ok) toast.success("Tela marcada como principal para el costeo");
                                 else toast.error("No se pudo marcar la tela como principal");
                                 return ok;
                             }}
-                            onEdit={(item) =>
-                                handleOpenModal("edit_fabric", "Editar costo de tela", fabricEditFields, {
-                                    ...item,
-                                    meters: formatForInput(item.meters),
-                                    price_per_meter: formatForInput(item.price_per_meter),
-                                    tiene_iva: item.tiene_iva ? "true" : "false",
-                                })
-                            }
                             onDelete={async (id) => {
                                 const ok = await deleteFabric(id, activeVariantId);
                                 if (ok) toast.success("Costo de tela eliminado");

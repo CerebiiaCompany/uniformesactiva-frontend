@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
     Select,
     SelectContent,
@@ -47,6 +48,7 @@ export interface OrderProductEntry {
     variant_label: string;
     color: string;
     estampado: string;
+    observacion_estampado?: string;
     comentario: string;
     unit_cost: number;
     /** Precio de venta proyectado por unidad (con IVA) */
@@ -211,7 +213,7 @@ interface AddOrderProductDialogProps {
     onAdd: (entry: OrderProductEntry) => void;
 }
 
-const ESTAMPADO_OPTIONS = ["Sin estampado", "Bordado", "Serigrafía", "Transfer", "Sublimado"];
+const PERSONALIZACION_OPTIONS = ["Bordado", "Serigrafía", "Transfer", "Sublimado"];
 
 const formatMoney = (value: number) => formatCurrency(value);
 
@@ -232,7 +234,8 @@ export function AddOrderProductDialog({
     const [selectedVariantId, setSelectedVariantId] = useState("");
     const [selectedGenero, setSelectedGenero] = useState<TallaGenero>("mujer");
     const [selectedColor, setSelectedColor] = useState("");
-    const [selectedEstampado, setSelectedEstampado] = useState("Sin estampado");
+    const [selectedEstampados, setSelectedEstampados] = useState<string[]>([]);
+    const [observacionEstampado, setObservacionEstampado] = useState("");
     const [unitCostRaw, setUnitCostRaw] = useState("");
     const [ingresoProyectadoRaw, setIngresoProyectadoRaw] = useState("");
     /** Si false, el ingreso viene de la variante y solo se edita con el lápiz */
@@ -277,7 +280,8 @@ export function AddOrderProductDialog({
         setSelectedVariantId("");
         setSelectedGenero("mujer");
         setSelectedColor("");
-        setSelectedEstampado("Sin estampado");
+        setSelectedEstampados([]);
+        setObservacionEstampado("");
         setUnitCostRaw("");
         setIngresoProyectadoRaw("");
         setIngresoEditable(true);
@@ -339,13 +343,14 @@ export function AddOrderProductDialog({
                     resolveTallaGenero({ name: firstSizeName, label: firstSizeName })
                 );
             }
-            setSelectedEstampado(
-                editEntry.estampado?.trim()
-                    ? ESTAMPADO_OPTIONS.includes(editEntry.estampado)
-                        ? editEntry.estampado
-                        : editEntry.estampado
-                    : "Sin estampado"
-            );
+            const rawEst = (editEntry.estampado || "").trim();
+            if (rawEst && rawEst.toLowerCase() !== "sin estampado" && rawEst.toLowerCase() !== "ninguno") {
+                const parts = rawEst.split(/[,;\/]+/).map((s) => s.trim()).filter(Boolean);
+                setSelectedEstampados(parts);
+            } else {
+                setSelectedEstampados([]);
+            }
+            setObservacionEstampado(editEntry.observacion_estampado || "");
             setComentario(editEntry.comentario || "");
             setIngresoProyectadoRaw(
                 editEntry.ingreso_proyectado_unitario > 0
@@ -551,15 +556,12 @@ export function AddOrderProductDialog({
                 const hasBordado = hasActiveLabor(["BORDAD", "BORDA"]);
                 const hasSublimado = hasActiveLabor(["SUBLIM", "ESTAMP", "SERIGRAF", "TRANSF", "VINIL", "DTF"]);
 
-                let suggestedEstampado = "Sin estampado";
-                if (hasBordado) {
-                    suggestedEstampado = "Bordado";
-                } else if (hasSublimado) {
-                    suggestedEstampado = "Sublimado";
-                }
+                const initialSuggested: string[] = [];
+                if (hasBordado) initialSuggested.push("Bordado");
+                if (hasSublimado) initialSuggested.push("Sublimado");
 
                 if (!hydrate || !hydrate.estampado) {
-                    setSelectedEstampado(suggestedEstampado);
+                    setSelectedEstampados(initialSuggested);
                 }
 
                 // Resolver color real de la tela configurada en la variante
@@ -835,6 +837,8 @@ export function AddOrderProductDialog({
             return;
         }
 
+        const finalEstampado = selectedEstampados.length > 0 ? selectedEstampados.join(", ") : "Sin estampado";
+
         onAdd({
             key: editEntry?.key || `${selectedVariant.id}-${Date.now()}`,
             line_id: selectedLine.id,
@@ -846,7 +850,8 @@ export function AddOrderProductDialog({
             variant_id: selectedVariant.id,
             variant_label: selectedVariant.name,
             color: "",
-            estampado: selectedEstampado,
+            estampado: finalEstampado,
+            observacion_estampado: selectedEstampados.length > 0 ? observacionEstampado.trim() : "",
             comentario: comentario.trim(),
             unit_cost: weightedUnitCost || fallbackUnit,
             ingreso_proyectado_unitario: ingresoProyectadoUnitario,
@@ -865,14 +870,14 @@ export function AddOrderProductDialog({
                             <Package className="h-4 w-4" />
                         </div>
                         <div>
-                            <h2 className="text-base font-bold">
+                            <DialogTitle className="text-base font-bold">
                                 {isEdit ? "Editar producto" : "Agregar producto"}
-                            </h2>
-                            <p className="text-xs text-muted-foreground mt-0.5">
+                            </DialogTitle>
+                            <DialogDescription className="text-xs text-muted-foreground mt-0.5">
                                 {isEdit
                                     ? "Modifica tallas, estampado o ingreso proyectado."
                                     : "Selecciona desde el catálogo de Líneas."}
-                            </p>
+                            </DialogDescription>
                         </div>
                     </div>
                 </div>
@@ -962,7 +967,7 @@ export function AddOrderProductDialog({
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-4">
                                 <div className="space-y-1.5">
                                     <Label className="text-xs font-medium">Variante</Label>
                                     <Select
@@ -995,20 +1000,84 @@ export function AddOrderProductDialog({
                                         </SelectContent>
                                     </Select>
                                 </div>
-                                <div className="space-y-1.5">
-                                    <Label className="text-xs font-medium">Estampado</Label>
-                                    <Select value={selectedEstampado} onValueChange={setSelectedEstampado}>
-                                        <SelectTrigger className="h-10">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {ESTAMPADO_OPTIONS.map((opt) => (
-                                                <SelectItem key={opt} value={opt}>
-                                                    {opt}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
+
+                                {/* Estampado / Bordado Checkboxes */}
+                                <div className="space-y-2 rounded-xl border border-border/80 bg-muted/20 p-3.5">
+                                    <div className="flex items-center justify-between">
+                                        <Label className="text-xs font-semibold text-foreground">
+                                            Estampado / Bordado
+                                        </Label>
+                                        {selectedEstampados.length > 0 ? (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setSelectedEstampados([]);
+                                                    setObservacionEstampado("");
+                                                }}
+                                                className="text-[11px] text-muted-foreground hover:text-destructive transition-colors font-medium"
+                                            >
+                                                Limpiar selección (Sin estampado)
+                                            </button>
+                                        ) : (
+                                            <span className="text-[11px] text-muted-foreground">
+                                                Sin estampado seleccionado
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                                        {PERSONALIZACION_OPTIONS.map((opt) => {
+                                            const isChecked = selectedEstampados.includes(opt);
+                                            return (
+                                                <label
+                                                    key={opt}
+                                                    className={cn(
+                                                        "flex items-center gap-2 rounded-lg border p-2.5 cursor-pointer text-xs font-medium transition-all select-none",
+                                                        isChecked
+                                                            ? "border-primary bg-primary/10 text-primary font-semibold shadow-xs"
+                                                            : "border-border/70 bg-background hover:bg-muted/40 text-muted-foreground hover:text-foreground"
+                                                    )}
+                                                >
+                                                    <Checkbox
+                                                        checked={isChecked}
+                                                        onCheckedChange={(checked) => {
+                                                            if (checked) {
+                                                                setSelectedEstampados((prev) => [...prev, opt]);
+                                                            } else {
+                                                                setSelectedEstampados((prev) => prev.filter((id) => id !== opt));
+                                                            }
+                                                        }}
+                                                        className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                                                    />
+                                                    <span>{opt}</span>
+                                                </label>
+                                            );
+                                        })}
+                                    </div>
+
+                                    {/* Input de observación desplegable cuando se selecciona al menos uno */}
+                                    {selectedEstampados.length > 0 && (
+                                        <div className="mt-2.5 space-y-1.5 pt-2 border-t border-border/50 animate-in fade-in-50 duration-200">
+                                            <div className="flex items-center justify-between">
+                                                <Label className="text-xs font-semibold text-primary flex items-center gap-1.5">
+                                                    <Pencil className="h-3.5 w-3.5" />
+                                                    Observación de bordado / estampado
+                                                </Label>
+                                                <span className="text-[10px] text-muted-foreground">
+                                                    Precios diferentes, posiciones, detalles
+                                                </span>
+                                            </div>
+                                            <Input
+                                                type="text"
+                                                value={observacionEstampado}
+                                                onChange={(e) => setObservacionEstampado(e.target.value)}
+                                                placeholder="Ej. Bordado pecho $5.000, bordado espalda $12.000 / diferentes precios..."
+                                                className="h-9 text-xs bg-background"
+                                            />
+                                            <p className="text-[10px] text-muted-foreground">
+                                                Esta observación se mostrará en el tablero operativo de cada tipo de bordado asignado.
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
