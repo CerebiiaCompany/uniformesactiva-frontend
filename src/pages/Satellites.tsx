@@ -186,7 +186,7 @@ export default function Satellites() {
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deletingSatellite, setDeletingSatellite] = useState<SatelliteDashboardCard | null>(null);
-  const [detailPagoFilter, setDetailPagoFilter] = useState<"todos" | "pending" | "paid">("pending");
+  const [detailPagoFilter, setDetailPagoFilter] = useState<"todos" | "pending" | "paid">("todos");
   const [detailFechaDesde, setDetailFechaDesde] = useState<string>("");
   const [detailFechaHasta, setDetailFechaHasta] = useState<string>("");
   const [showDetailFilters, setShowDetailFilters] = useState(false);
@@ -1329,7 +1329,9 @@ export default function Satellites() {
             type="button"
             onClick={() => {
               setSelectedId(null);
-              setDetailPagoFilter("pending");
+              setDetailPagoFilter("todos");
+              setDetailFechaDesde("");
+              setDetailFechaHasta("");
               setShowDetailFilters(false);
             }}
             className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
@@ -1363,80 +1365,103 @@ export default function Satellites() {
             </CardContent>
           </Card>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setShowDetailFilters((v) => !v)}
-              className={cn(showDetailFilters && "bg-muted")}
-            >
-              <Filter className="h-4 w-4 mr-1" />
-              Filtros
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              className="bg-red-600 hover:bg-red-700 text-white"
-              onClick={() => {
-                const pending = selectedOrderDetails.filter((d) => d.paymentStatus === "pending");
-                exportSettlementCsv(
-                  selectedCard.name,
-                  pending.length ? pending : selectedOrderDetails
-                );
-              }}
-              disabled={selectedOrderDetails.length === 0}
-            >
-              <Download className="h-4 w-4 mr-1" />
-              Exportar liquidación (
-              {selectedOrderDetails.filter((d) => d.paymentStatus === "pending").length ||
-                selectedOrderDetails.length}
-              )
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
-              disabled={!canDeleteSatellite(selectedCard) || isDeletingSatellite}
-              title={
-                canDeleteSatellite(selectedCard)
-                  ? "Eliminar satélite"
-                  : "No se puede eliminar: tiene deudas pendientes"
-              }
-              onClick={() => requestDeleteSatellite(selectedCard)}
-            >
-              <Trash2 className="h-4 w-4 mr-1" />
-              Eliminar
-            </Button>
-            <span className="ml-auto text-xs text-muted-foreground">
-              Mostrando {filteredOrderDetails.length} de {selectedOrderDetails.length}
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <div className="inline-flex rounded-lg border bg-muted/30 p-0.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setDetailPagoFilter("todos")}
+                  className={cn(
+                    "px-3 py-1.5 rounded-md font-medium transition-colors",
+                    detailPagoFilter === "todos"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  Todos ({selectedOrderDetails.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDetailPagoFilter("pending")}
+                  className={cn(
+                    "px-3 py-1.5 rounded-md font-medium transition-colors",
+                    detailPagoFilter === "pending"
+                      ? "bg-background text-red-600 shadow-sm font-semibold"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  Por pagar ({selectedOrderDetails.filter((d) => d.paymentStatus === "pending").length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDetailPagoFilter("paid")}
+                  className={cn(
+                    "px-3 py-1.5 rounded-md font-medium transition-colors",
+                    detailPagoFilter === "paid"
+                      ? "bg-background text-emerald-600 shadow-sm font-semibold"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  Pagados ({selectedOrderDetails.filter((d) => d.paymentStatus === "paid").length})
+                </button>
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowDetailFilters((v) => !v)}
+                className={cn("h-8 text-xs", (showDetailFilters || detailFechaDesde || detailFechaHasta) && "bg-muted font-medium")}
+              >
+                <Filter className="h-3.5 w-3.5 mr-1" />
+                Fechas {detailFechaDesde || detailFechaHasta ? "●" : ""}
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 text-xs bg-red-600 hover:bg-red-700 text-white"
+                onClick={() => {
+                  const pending = selectedOrderDetails.filter((d) => d.paymentStatus === "pending");
+                  exportSettlementCsv(
+                    selectedCard.name,
+                    pending.length ? pending : selectedOrderDetails
+                  );
+                }}
+                disabled={selectedOrderDetails.length === 0}
+              >
+                <Download className="h-3.5 w-3.5 mr-1" />
+                Exportar liquidación (
+                {selectedOrderDetails.filter((d) => d.paymentStatus === "pending").length ||
+                  selectedOrderDetails.length}
+                )
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
+                disabled={!canDeleteSatellite(selectedCard) || isDeletingSatellite}
+                title={
+                  canDeleteSatellite(selectedCard)
+                    ? "Eliminar satélite"
+                    : "No se puede eliminar: tiene deudas pendientes"
+                }
+                onClick={() => requestDeleteSatellite(selectedCard)}
+              >
+                <Trash2 className="h-3.5 w-3.5 mr-1" />
+                Eliminar
+              </Button>
+              <span className="text-xs text-muted-foreground ml-1">
+                {filteredOrderDetails.length} de {selectedOrderDetails.length}
+              </span>
+            </div>
           </div>
 
           {showDetailFilters ? (
             <div className="rounded-xl border bg-muted/20 px-4 py-3 flex flex-wrap items-end gap-3">
-              <div className="space-y-1 min-w-[150px]">
-                <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                  Estado de pago
-                </Label>
-                <Select
-                  value={detailPagoFilter}
-                  onValueChange={(v) =>
-                    setDetailPagoFilter(v as "todos" | "pending" | "paid")
-                  }
-                >
-                  <SelectTrigger className="h-9 bg-background">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todos">Todos</SelectItem>
-                    <SelectItem value="pending">Por pagar</SelectItem>
-                    <SelectItem value="paid">Pagados</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
               <div className="space-y-1 min-w-[140px]">
                 <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
                   Fecha desde
@@ -1461,19 +1486,18 @@ export default function Satellites() {
                 />
               </div>
 
-              {detailPagoFilter !== "pending" || detailFechaDesde || detailFechaHasta ? (
+              {detailFechaDesde || detailFechaHasta ? (
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
                   className="h-9 text-xs text-muted-foreground hover:text-foreground"
                   onClick={() => {
-                    setDetailPagoFilter("pending");
                     setDetailFechaDesde("");
                     setDetailFechaHasta("");
                   }}
                 >
-                  Limpiar filtros
+                  Limpiar fechas
                 </Button>
               ) : null}
             </div>
@@ -1481,8 +1505,26 @@ export default function Satellites() {
 
           {filteredOrderDetails.length === 0 ? (
             <Card>
-              <CardContent className="py-10 text-center text-sm text-muted-foreground">
-                No hay pedidos asignados ni registrados en TNS para este satélite todavía.
+              <CardContent className="py-10 text-center text-sm text-muted-foreground space-y-3">
+                {selectedOrderDetails.length > 0 ? (
+                  <>
+                    <p>No hay pedidos con el filtro actual ({detailPagoFilter === "pending" ? "Por pagar" : detailPagoFilter === "paid" ? "Pagados" : "con las fechas seleccionadas"}).</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setDetailPagoFilter("todos");
+                        setDetailFechaDesde("");
+                        setDetailFechaHasta("");
+                      }}
+                    >
+                      Ver todos los pedidos ({selectedOrderDetails.length})
+                    </Button>
+                  </>
+                ) : (
+                  <p>No hay pedidos asignados ni registrados en TNS para este satélite todavía.</p>
+                )}
               </CardContent>
             </Card>
           ) : (
@@ -1502,7 +1544,14 @@ export default function Satellites() {
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-lg font-semibold tracking-tight">Resumen de liquidación</CardTitle>
+              <CardTitle className="text-lg font-semibold tracking-tight flex items-center justify-between">
+                <span>Resumen de liquidación</span>
+                {detailPagoFilter !== "todos" || detailFechaDesde || detailFechaHasta ? (
+                  <span className="text-xs font-normal text-muted-foreground">
+                    (Filtrado: {filteredOrderDetails.length} de {selectedOrderDetails.length} órdenes)
+                  </span>
+                ) : null}
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -1853,7 +1902,9 @@ export default function Satellites() {
                         selected={selectedId === card.id}
                         onSelect={() => {
                           setSelectedId(card.id);
-                          setDetailPagoFilter("pending");
+                          setDetailPagoFilter("todos");
+                          setDetailFechaDesde("");
+                          setDetailFechaHasta("");
                           setShowDetailFilters(false);
                         }}
                         canDelete={canDeleteSatellite(card)}
@@ -1893,7 +1944,9 @@ export default function Satellites() {
                         selected={selectedId === card.id}
                         onSelect={() => {
                           setSelectedId(card.id);
-                          setDetailPagoFilter("pending");
+                          setDetailPagoFilter("todos");
+                          setDetailFechaDesde("");
+                          setDetailFechaHasta("");
                           setShowDetailFilters(false);
                         }}
                         canDelete={false}

@@ -613,6 +613,57 @@ export default function Production() {
     });
   };
 
+function getStageAssigneeDetails(stageAssignees: Record<string, any> | undefined, stageKey: string) {
+  if (!stageAssignees) {
+    return {
+      assigneeId: null as string | null,
+      assignee: "Sin asignar",
+      satelliteAssigneeId: null as string | null,
+      satelliteAssignee: "Sin asignar",
+    };
+  }
+  const satKeyAssign = stageAssignees[`${stageKey}__satellite`];
+  const directAssign = stageAssignees[stageKey];
+  const prodKeyAssign = stageAssignees[`${stageKey}__production`];
+
+  const curSat = (satKeyAssign && satKeyAssign.userId)
+    ? satKeyAssign
+    : (directAssign && directAssign.kind === "satellite" && directAssign.userId)
+      ? directAssign
+      : null;
+
+  if (curSat && curSat.userId) {
+    return {
+      assigneeId: null as string | null,
+      assignee: "Sin asignar",
+      satelliteAssigneeId: String(curSat.userId),
+      satelliteAssignee: curSat.name || "Satélite",
+    };
+  }
+
+  const curProd = (prodKeyAssign && prodKeyAssign.userId)
+    ? prodKeyAssign
+    : (!curSat && directAssign && directAssign.userId && directAssign.kind !== "satellite")
+      ? directAssign
+      : null;
+
+  if (curProd && curProd.userId) {
+    return {
+      assigneeId: String(curProd.userId),
+      assignee: curProd.name || "Producción",
+      satelliteAssigneeId: null as string | null,
+      satelliteAssignee: "Sin asignar",
+    };
+  }
+
+  return {
+    assigneeId: null as string | null,
+    assignee: "Sin asignar",
+    satelliteAssigneeId: null as string | null,
+    satelliteAssignee: "Sin asignar",
+  };
+}
+
   const assignCardToMultipleStages = async (
     card: ProductionOrder,
     targetStages: string[],
@@ -636,27 +687,27 @@ export default function Production() {
           name: userName,
           kind,
         };
-
-        await updateKanbanAssignment(card.orderId, {
-          card_id: card.id,
-          stage: sKey,
-          assignee_id: userId,
-          assignee_name: userName,
-          kind,
-        });
       }
+
+      // 1. Guardar en backend (soporta stages lista y deep merge en kanban_asignaciones)
+      await updateKanbanAssignment(card.orderId, {
+        card_id: card.id,
+        stages: targetStages,
+        assignee_id: userId,
+        assignee_name: userName,
+        kind,
+      });
 
       // Persistir stageAssignees completo en el backend
       try {
+        const currentDetails = getStageAssigneeDetails(stageAssignees, card.stage);
         await http(endpoints.orders.kanbanAsignacion(card.orderId), {
           method: "PATCH",
           body: JSON.stringify({
             kanban_asignaciones: {
               [card.id]: {
                 stage: card.stage,
-                ...(kind === "satellite"
-                  ? { satelliteAssigneeId: userId, satelliteAssignee: userName, assigneeId: null, assignee: "Sin asignar" }
-                  : { assigneeId: userId, assignee: userName, satelliteAssigneeId: null, satelliteAssignee: "Sin asignar" }),
+                ...currentDetails,
                 stageAssignees,
               },
             },
@@ -667,24 +718,11 @@ export default function Production() {
       }
 
       const isCurrentStageIncluded = targetStages.includes(card.stage);
+      const currentDetails = getStageAssigneeDetails(stageAssignees, card.stage);
 
       const patch: Partial<ProductionOrder> = {
         stageAssignees,
-        ...(isCurrentStageIncluded
-          ? kind === "satellite"
-            ? {
-                assigneeId: null,
-                assignee: "Sin asignar",
-                satelliteAssigneeId: userId,
-                satelliteAssignee: userName,
-              }
-            : {
-                assigneeId: userId,
-                assignee: userName,
-                satelliteAssigneeId: null,
-                satelliteAssignee: "Sin asignar",
-              }
-          : {}),
+        ...(isCurrentStageIncluded ? currentDetails : {}),
       };
 
       toast({
@@ -1106,6 +1144,7 @@ export default function Production() {
       );
 
       const nextLabor = stageLaborConfig[nextStage];
+      const nextStageAssignee = getStageAssigneeDetails(stageAssignees, nextStage);
       const movedPatch = {
         ...frozenCosts,
         costLedger: frozenLedger,
@@ -1116,10 +1155,7 @@ export default function Production() {
           nextLabor && nextLabor.perUnit != null ? Number(nextLabor.perUnit) : null,
         stage: nextStage as ProductionOrder["stage"],
         daysInStage: 0,
-        assignee: "Sin asignar",
-        assigneeId: null as string | null,
-        satelliteAssignee: "Sin asignar",
-        satelliteAssigneeId: null as string | null,
+        ...nextStageAssignee,
         stageHistory: [
           ...(workingOrder.stageHistory || []),
           { stage: nextStage as ProductionOrder["stage"], enteredAt: now },
@@ -1131,17 +1167,16 @@ export default function Production() {
         await commitOrderCards(targetOrderId, (cards) =>
           cards.map((o) => (o.id !== workingOrder.id ? o : { ...o, ...movedPatch }))
         );
-        // 2) Avanzar etapa (BE exige que la capa saliente tuviera asignado)
+        // 2) Avanzar etapa en BE
         await updateOrderStage(targetOrderId, nextStage);
-        // 3) Limpiar asignación viva de la nueva capa
-        void updateKanbanAssignment(targetOrderId, {
-          card_id: workingOrder.id,
-          stage: nextStage,
-          clear: true,
-          assignee_id: null,
-          kind: "both",
-        });
       }
+
+      const nextAssigneeName =
+        nextStageAssignee.assignee !== "Sin asignar"
+          ? nextStageAssignee.assignee
+          : nextStageAssignee.satelliteAssignee !== "Sin asignar"
+            ? nextStageAssignee.satelliteAssignee
+            : null;
 
       toast({
         title: isDispatchStageKey(currentStage) ? "Enviado a despacho" : "Trabajo terminado",
@@ -1149,7 +1184,9 @@ export default function Production() {
           ? `Capa «${prevLabel}» marcada. El pedido queda disponible en Despacho → Pedidos listos${
               nextStage !== currentStage ? ` y avanzó a «${nextLabel}»` : ""
             }.`
-          : `Trabajo de «${prevLabel}» finalizado. El pedido avanzó a la fase de «${nextLabel}» (pendiente por asignar) y se sumaron ${new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(amount)} a POR PAGAR.`,
+          : `Trabajo de «${prevLabel}» finalizado. El pedido avanzó a la fase de «${nextLabel}»${
+              nextAssigneeName ? ` (asignado a ${nextAssigneeName})` : " (pendiente por asignar)"
+            } y se sumaron ${new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(amount)} a POR PAGAR.`,
       });
 
       await fetchOrders({ estado: "in_production" });
@@ -1497,31 +1534,11 @@ export default function Production() {
           };
 
           // 1. Revisar si hay un responsable específico en stageAssignees para esta capa (card.stage)
-          const curSatAssign = stageAssignees[`${card.stage}__satellite`] ||
-            (stageAssignees[card.stage]?.kind === "satellite" ? stageAssignees[card.stage] : null);
-
-          const curProdAssign = stageAssignees[card.stage]?.kind === "production"
-            ? stageAssignees[card.stage]
-            : null;
-
-          if (curSatAssign?.userId) {
+          const details = getStageAssigneeDetails(stageAssignees, card.stage);
+          if (details.assigneeId || details.satelliteAssigneeId) {
             return {
               ...card,
-              assigneeId: null,
-              assignee: "Sin asignar",
-              satelliteAssigneeId: String(curSatAssign.userId),
-              satelliteAssignee: curSatAssign.name || "Satélite",
-              stageAssignees,
-            };
-          }
-
-          if (curProdAssign?.userId) {
-            return {
-              ...card,
-              assigneeId: String(curProdAssign.userId),
-              assignee: curProdAssign.name || "Producción",
-              satelliteAssigneeId: null,
-              satelliteAssignee: "Sin asignar",
+              ...details,
               stageAssignees,
             };
           }
@@ -2253,17 +2270,14 @@ export default function Production() {
           ? Number(targetLaborConfig.perUnit)
           : null;
 
-      // Al cambiar de capa se limpia Producción y Satélite: el admin reasigna
+      const targetStageAssignee = getStageAssigneeDetails(stageAssignees, targetStage);
       const movedPatch = {
         ...frozenCosts,
         costLedger: frozenLedger,
         stageAssignees,
         stage: targetStage as ProductionOrder["stage"],
         daysInStage: 0,
-        assignee: "Sin asignar",
-        assigneeId: null as string | null,
-        satelliteAssignee: "Sin asignar",
-        satelliteAssigneeId: null as string | null,
+        ...targetStageAssignee,
         stageLaborConfig,
         laborCostEnabled: targetLaborEnabled,
         laborCostPerUnit: targetLaborPerUnit,
@@ -2277,23 +2291,24 @@ export default function Production() {
         await commitOrderCards(orderId, (cards) =>
           cards.map((o) => (o.id !== movedCardId ? o : { ...o, ...movedPatch }))
         );
-        void updateKanbanAssignment(orderId, {
-          card_id: movedCardId,
-          stage: targetStage,
-          clear: true,
-          assignee_id: null,
-          kind: "both",
-        });
       } else {
         setProdOrders((prev) =>
           prev.map((o) => (o.id !== movedCardId ? o : { ...o, ...movedPatch }))
         );
       }
 
+      const targetAssigneeName =
+        targetStageAssignee.assignee !== "Sin asignar"
+          ? targetStageAssignee.assignee
+          : targetStageAssignee.satelliteAssignee !== "Sin asignar"
+            ? targetStageAssignee.satelliteAssignee
+            : null;
+
       toast({
         title: "Tarjeta movida",
-        description:
-          "Asigna usuarios de Producción y/o Satélite para la nueva capa.",
+        description: targetAssigneeName
+          ? `Capa «${targetStage}» (asignado a ${targetAssigneeName}).`
+          : "Asigna usuarios de Producción y/o Satélite para la nueva capa.",
       });
 
       setPendingCardMove(null);

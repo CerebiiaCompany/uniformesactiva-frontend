@@ -164,17 +164,22 @@ export default function Orders() {
     let cancelled = false;
     setTnsMaterialsHydrated(false);
     void (async () => {
-      await Promise.all(
-        missing.map(async (order) => {
-          try {
-            const data = await getTNSOrderRealMaterialCost(order.id);
-            if (cancelled || !data) return;
-            setTnsMaterialCosts((prev) => ({ ...prev, [order.id]: data }));
-          } catch {
-            /* se usa desglose persistido */
-          }
-        })
-      );
+      const concurrency = 3;
+      for (let i = 0; i < missing.length; i += concurrency) {
+        if (cancelled) break;
+        const chunk = missing.slice(i, i + concurrency);
+        await Promise.all(
+          chunk.map(async (order) => {
+            try {
+              const data = await getTNSOrderRealMaterialCost(order.id);
+              if (cancelled || !data) return;
+              setTnsMaterialCosts((prev) => ({ ...prev, [order.id]: data }));
+            } catch {
+              /* se usa desglose persistido */
+            }
+          })
+        );
+      }
       if (!cancelled) setTnsMaterialsHydrated(true);
     })();
     return () => {
